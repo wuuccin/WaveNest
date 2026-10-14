@@ -1,0 +1,68 @@
+services:
+  # 数据库：14 张表，建库须 utf8mb4（技术栈 §2.2）
+  mysql:
+    image: mysql:8.0
+    container_name: wavenest-mysql
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: wavenest
+      MYSQL_DATABASE: wavenest
+      TZ: Asia/Shanghai
+    command: >
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --default-time-zone=+08:00
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-pwavenest"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # 缓存：实时最新状态（船位/机位/任务态），历史异步落库
+  redis:
+    image: redis:7-alpine
+    container_name: wavenest-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # 消息队列：模块间异步解耦；管理台 http://localhost:15672（guest/guest）
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: wavenest-rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  # MQTT broker：遥测上行与指令下行链路
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: wavenest-mosquitto
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto-data:/mosquitto/data
+
+volumes:
+  mysql-data:
+  redis-data:
+  rabbitmq-data:
+  mosquitto-data:
