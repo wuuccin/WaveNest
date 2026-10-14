@@ -1,0 +1,24 @@
+# 行尾纪律：本项目 markdown 文档长期保留混合行尾（docs/ 为 CRLF，分发/ 为 LF）。
+# 因此对所有文本文件显式关闭 Git 的自动换行转换，确保“按字节原样进仓库”，
+# 避免 core.autocrlf 在提交时静默重写行尾（历史事故：整片文档空行丢失）。
+* -text
+
+# 二进制一律按 binary 处理，禁止 diff / 换行转换
+*.doc    binary
+*.docx   binary
+*.wps    binary
+*.xls    binary
+*.xlsx   binary
+*.ppt    binary
+*.pptx   binary
+*.pdf    binary
+*.zip    binary
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.gif    binary
+*.jar    binary
+*.mp4    binary
+*.ttf    binary
+*.woff   binary
+*.woff2  binary

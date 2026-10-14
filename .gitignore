@@ -1,0 +1,67 @@
+# ---------- Gradle ----------
+.gradle/
+build/
+out/
+!gradle/wrapper/gradle-wrapper.jar
+!gradle/wrapper/gradle-wrapper.properties
+!**/src/main/**/build/
+!**/src/test/**/build/
+
+# ---------- Java ----------
+*.class
+*.log
+hs_err_pid*
+replay_pid*
+*.jfr
+
+# ---------- IntelliJ IDEA ----------
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# ---------- VS Code ----------
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+
+# ---------- Frontend (Vue3 + Vite + pnpm) ----------
+frontend/node_modules/
+frontend/dist/
+frontend/dist-ssr/
+frontend/.vite/
+frontend/coverage/
+frontend/*.local
+frontend/.env
+frontend/.env.*
+!frontend/.env.example
+frontend/pnpm-debug.log*
+frontend/npm-debug.log*
+frontend/yarn-error.log*
+.vite/
+
+# 本项目统一使用 pnpm，禁止提交其他包管理器的锁文件
+package-lock.json
+yarn.lock
+
+# ---------- Python 脚本环境 ----------
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# ---------- 本地环境 & 密钥 ----------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ---------- 临时产物（约定前缀 _tmp_）----------
+_tmp_*
+*.tmp
+
+# ---------- OS ----------
+.DS_Store
+Thumbs.db
+desktop.ini
