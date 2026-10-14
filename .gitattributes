@@ -1,9 +1,32 @@
-# 行尾纪律：本项目 markdown 文档长期保留混合行尾（docs/ 为 CRLF，分发/ 为 LF）。
-# 因此对所有文本文件显式关闭 Git 的自动换行转换，确保“按字节原样进仓库”，
-# 避免 core.autocrlf 在提交时静默重写行尾（历史事故：整片文档空行丢失）。
-* -text
+# WaveNest 换行惯例（由 Git 显式接管，不依赖任何人的本地配置）
+#
+# 为什么需要它：
+# Windows 侧常见配置为系统级 core.autocrlf=true，克隆时仓库里的 LF 会被换成 CRLF 落盘。
+# 若不由仓库显式接管，同一份文件在不同机器上字节不一致，
+# 且容易出现"整篇文档空行丢失"的事故。本文件统一约定：
+#   仓库内一律 LF；工作区按目录分纪律。
+#
+# 规则优先级：同属性以最后一条匹配的规则为准，故 binary 必须放在最后。
 
-# 二进制一律按 binary 处理，禁止 diff / 换行转换
+# 默认：文本自动识别，入库 LF，Windows 检出 LF
+* text=auto eol=lf
+
+# 项目共用库 docs/ 的 markdown：Windows 工作区保持 CRLF
+# 依据：check_meta.py / check_style.py 按字节校验文档的既有约定
+docs/**/*.md       text eol=crlf
+docs/**/*.markdown text eol=crlf
+
+# 对外分发目录：任何时候都必须是 LF
+分发/**/*.md       text eol=lf
+分发/**/*.markdown text eol=lf
+
+# Windows 批处理在 Unix 换行下有已知解析问题（cmd.exe 对 label/goto 敏感），
+# 必须强制 CRLF；同一目录下的 gradlew（sh 脚本）保持上面的 LF。
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# 二进制：禁止 diff 与任何换行转换
 *.doc    binary
 *.docx   binary
 *.wps    binary
@@ -17,6 +40,7 @@
 *.jpg    binary
 *.jpeg   binary
 *.gif    binary
+*.ico    binary
 *.jar    binary
 *.mp4    binary
 *.ttf    binary
