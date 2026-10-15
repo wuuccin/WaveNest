@@ -1,8 +1,10 @@
 package com.waterlogistics.contract;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.waterlogistics.contract.mq.TaskPlanMessage;
 import com.waterlogistics.contract.mq.TopicName;
 import com.waterlogistics.contract.rest.GateSource;
 import com.waterlogistics.contract.rest.GateStatus;
@@ -14,6 +16,7 @@ import com.waterlogistics.contract.state.GoodsStatus;
 import com.waterlogistics.contract.state.OrderStatus;
 import com.waterlogistics.contract.state.TaskStatus;
 import com.waterlogistics.contract.ws.WsFrameType;
+import java.lang.reflect.RecordComponent;
 import java.util.Arrays;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -101,6 +104,32 @@ class ContractDoctrineTest {
     void wsFrameTypes_shouldBeFive() {
         assertEquals(List.of("ship_traj", "drone_state", "rendezvous", "alarm", "order_state"),
                 Arrays.stream(WsFrameType.values()).map(WsFrameType::getType).toList());
+    }
+
+    /**
+     * 《22》§2.1 投影纪律：{@code task.plan} 只认子集——
+     * 被裁字段一律不得混入（须回算法层取、不得反推），六项内容与标识必须在位。
+     */
+    @Test
+    void taskPlan_shouldCarryOnlyProjectedSubset() {
+        List<String> components = Arrays.stream(TaskPlanMessage.class.getRecordComponents())
+                .map(RecordComponent::getName)
+                .toList();
+
+        for (String forbidden : List.of("tauFine", "energyExact", "pathRisk", "tauCoarse",
+                "snapshotVersion", "landingPointsAlong", "avoidZones",
+                "infeasibleReason", "tauCoarseUsed", "noSolutionReason")) {
+            assertFalse(components.contains(forbidden),
+                    "《22》§2.1：被裁字段 " + forbidden + " 不得进 task.plan，须回算法层取");
+        }
+
+        for (String required : List.of("taskId", "orderId", "droneId", "homeNestId",
+                "meetLon", "meetLat", "meetTMin", "meetTMax",
+                "takeoffT", "takeoffFeasible", "routeVersion", "waypoints", "shipTrack")) {
+            assertTrue(components.contains(required),
+                    "《22》§1.2：task.plan 缺字段 " + required);
+        }
+        assertEquals(TopicName.TASK_PLAN, TaskPlanMessage.TOPIC);
     }
 
     private static List<String> values(Enum<?>[] enums) {
