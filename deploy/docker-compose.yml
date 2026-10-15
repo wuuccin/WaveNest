@@ -1,8 +1,13 @@
+# WaveNest 中间件一键起（MySQL 8 / Redis 7 / RabbitMQ 3.13 management / Mosquitto 2）
+# 用法：docker compose up -d
+# 首次启动 MySQL 会自动执行 ./sql/ 下的 001_init.sql（建 14 表）与 002_sys_param.sql（灌参数）
+# 连接信息与 backend/wl-app/src/main/resources/application.yml 默认值配套（root/wavenest、RabbitMQ guest/guest）
 services:
   # 数据库：14 张表，建库须 utf8mb4（技术栈 §2.2）
   mysql:
     image: mysql:8.0
     container_name: wavenest-mysql
+    restart: unless-stopped
     ports:
       - "3306:3306"
     environment:
@@ -14,17 +19,19 @@ services:
       --collation-server=utf8mb4_unicode_ci
       --default-time-zone=+08:00
     volumes:
+      - ./sql:/docker-entrypoint-initdb.d:ro
       - mysql-data:/var/lib/mysql
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-pwavenest"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-pwavenest"]
       interval: 10s
       timeout: 5s
       retries: 10
 
   # 缓存：实时最新状态（船位/机位/任务态），历史异步落库
   redis:
-    image: redis:7-alpine
+    image: redis:7
     container_name: wavenest-redis
+    restart: unless-stopped
     ports:
       - "6379:6379"
     command: redis-server --appendonly yes
@@ -40,6 +47,7 @@ services:
   rabbitmq:
     image: rabbitmq:3.13-management-alpine
     container_name: wavenest-rabbitmq
+    restart: unless-stopped
     ports:
       - "5672:5672"
       - "15672:15672"
@@ -55,6 +63,7 @@ services:
   mosquitto:
     image: eclipse-mosquitto:2
     container_name: wavenest-mosquitto
+    restart: unless-stopped
     ports:
       - "1883:1883"
     volumes:
