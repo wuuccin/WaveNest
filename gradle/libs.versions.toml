@@ -1,0 +1,39 @@
+# WaveNest 后端依赖版本目录（Version Catalog）
+# 纪律：版本只写在这一处，模块 build.gradle.kts 一律不带版本号。
+# 精确版本依据见《技术栈与运行环境》§六「精确版本速查」。
+#   Spring Boot 4.1.1 / MyBatis-Plus 3.5.17 已于 2026-10-15 实测坐标存在于中央仓库。
+#   Paho 1.2.5、Lombok 1.18.48 取自 repo1.maven.org 的 maven-metadata.xml release。
+#   Netty 取 4.2.x 当前 GA 线 4.2.19.Final（4.1.x 已非主流线，5.0 仍是 Alpha 不用）。
+[versions]
+spring-boot = "4.1.1"
+mybatis-plus = "3.5.17"
+paho = "1.2.5"
+netty = "4.2.19.Final"
+lombok = "1.18.48"
+# MySQL 连接器 9.x 对应 MySQL 8.0/8.4 服务器，与 compose 起的 8.0 匹配。
+mysql-connector = "9.7.0"
+
+[libraries]
+# Spring Boot 4.x 三处差异：starter 名 webmvc（非 web）、Jackson 3 包名 tools.jackson、
+# MyBatis-Plus 必须用 spring-boot4 starter。踩这三点会直接编译失败。
+spring-boot-starter-webmvc = { module = "org.springframework.boot:spring-boot-starter-webmvc", version.ref = "spring-boot" }
+spring-boot-starter-websocket = { module = "org.springframework.boot:spring-boot-starter-websocket", version.ref = "spring-boot" }
+spring-boot-starter-amqp = { module = "org.springframework.boot:spring-boot-starter-amqp", version.ref = "spring-boot" }
+spring-boot-starter-data-redis = { module = "org.springframework.boot:spring-boot-starter-data-redis", version.ref = "spring-boot" }
+spring-boot-starter-validation = { module = "org.springframework.boot:spring-boot-starter-validation", version.ref = "spring-boot" }
+spring-boot-configuration-processor = { module = "org.springframework.boot:spring-boot-configuration-processor", version.ref = "spring-boot" }
+mybatis-plus-spring-boot4-starter = { module = "com.baomidou:mybatis-plus-spring-boot4-starter", version.ref = "mybatis-plus" }
+paho-mqttv3-client = { module = "org.eclipse.paho:org.eclipse.paho.client.mqttv3", version.ref = "paho" }
+netty-all = { module = "io.netty:netty-all", version.ref = "netty" }
+lombok = { module = "org.projectlombok:lombok", version.ref = "lombok" }
+mysql-connector-j = { module = "com.mysql:mysql-connector-j", version.ref = "mysql-connector" }
+
+[bundles]
+# 业务模块通用件：Web 层 + 校验 + Lombok，全组共用一份，避免各模块各写一遍。
+web-common = ["spring-boot-starter-webmvc", "spring-boot-starter-validation", "lombok"]
+# 消息队列：仅需要收发 MQ 的模块引入（m1 / m2 / m4）。
+mq = ["spring-boot-starter-amqp"]
+
+[plugins]
+spring-boot = { id = "org.springframework.boot", version.ref = "spring-boot" }
+spring-dependency-management = { id = "io.spring.dependency-management", version = "1.1.7" }

@@ -1,0 +1,45 @@
+# WaveNest 组装层配置。★ 本文件只放连接与占位，不含业务参数。
+# 中间件连接信息对应 deploy/docker-compose.yml 起的那四件套（演示期本机 compose 全起）。
+server:
+  port: 8080
+
+spring:
+  application:
+    name: wavenest
+  profiles:
+    # 仿真 profile：数据源走 m1 的 Sim 连接器，不连真实 AIS/气象
+    active: sim
+  datasource:
+    url: jdbc:mysql://${MYSQL_HOST:127.0.0.1}:${MYSQL_PORT:3306}/wavenest?useUnicode=true&characterEncoding=utf8mb4&serverTimezone=Asia/Shanghai
+    username: ${MYSQL_USER:root}
+    password: ${MYSQL_PASSWORD:wavenest}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
+      database: 0
+  rabbitmq:
+    host: ${RABBITMQ_HOST:127.0.0.1}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USER:guest}
+    password: ${RABBITMQ_PASSWORD:guest}
+    virtual-host: /
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+  global-config:
+    banner: false
+
+# MQTT broker：演示期 m1 可不起 Mosquitto，由仿真器直发业务 MQ
+wavenest:
+  mqtt:
+    enabled: ${MQTT_ENABLED:false}
+    host: ${MQTT_HOST:127.0.0.1}
+    port: ${MQTT_PORT:1883}
+
+logging:
+  level:
+    root: INFO
+    com.waterlogistics: INFO
