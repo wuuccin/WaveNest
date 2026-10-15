@@ -1,0 +1,4 @@
+@media (max-width: 560px) {
+  .demo-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .demo-actions button { min-width: 0; }
+}
