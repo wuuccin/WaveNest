@@ -67,5 +67,8 @@ cd deploy && docker compose up -d
 
 连接信息全部在 `backend/wl-app/src/main/resources/application.yml`，均可用环境变量覆盖
 （`MYSQL_HOST`、`REDIS_PORT`、`RABBITMQ_HOST` 等），默认指向 compose 起的本机四件套。
+**该文件是全组共享的，禁止写入个人端口与口令**：本机有差异时复制
+`application-local.yml.example` 为 `application-local.yml`（已被 `.gitignore` 忽略，永不入库）
+并在其中覆盖，主配置不会被污染。
 
 RabbitMQ 管理台：<http://localhost:15672>（guest/guest）。

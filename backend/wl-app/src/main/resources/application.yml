@@ -9,6 +9,13 @@ spring:
   profiles:
     # 仿真 profile：数据源走 m1 的 Sim 连接器，不连真实 AIS/气象
     active: sim
+  # 个人本地覆盖：端口/口令/profile 等差异化配置写在这里，本文件已被 .gitignore 忽略，
+  # 每个人各有一份、永不入库；不存在时 skip，不影响 clone 即跑。
+  # 两条路径分别对应「仓库根目录启动」与「wl-app 模块目录启动（bootRun）」两种习惯。
+  config:
+    import:
+      - optional:file:./application-local.yml
+      - optional:file:./backend/wl-app/application-local.yml
   datasource:
     url: jdbc:mysql://${MYSQL_HOST:127.0.0.1}:${MYSQL_PORT:3306}/wavenest?useUnicode=true&characterEncoding=utf8mb4&serverTimezone=Asia/Shanghai
     username: ${MYSQL_USER:root}

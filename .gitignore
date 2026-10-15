@@ -66,5 +66,10 @@ _tmp_*
 Thumbs.db
 desktop.ini
 
+# ---------- 本地独到配置（每人一份，永不入库）----------
+application-local.yml
+application-local.yaml
+application-local.properties
+
 # ---------- 本地工具会话数据（不入库）----------
 .codebuddy/
