@@ -22,4 +22,8 @@ dependencies {
     runtimeOnly(libs.mysql.connector.j)
 
     annotationProcessor(libs.spring.boot.configuration.processor)
+
+    // 冒烟/集成测试（版本由 Spring Boot BOM 提供，模块内不写版本号）
+    testImplementation("org.springframework.boot:spring-boot-starter-test")
+    testRuntimeOnly(libs.mysql.connector.j)
 }
