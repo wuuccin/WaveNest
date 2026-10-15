@@ -17,7 +17,12 @@ spring:
       - optional:file:./application-local.yml
       - optional:file:./backend/wl-app/application-local.yml
   datasource:
-    url: jdbc:mysql://${MYSQL_HOST:127.0.0.1}:${MYSQL_PORT:3306}/wavenest?useUnicode=true&characterEncoding=utf8mb4&serverTimezone=Asia/Shanghai
+    # characterEncoding 必须填 Java 字符集名（utf8），不能填 MySQL 字符集名（utf8mb4）——
+    # Connector/J 8.x 会把 utf8 自动映射到服务端的 utf8mb4；写 utf8mb4 会直接抛
+    # "Unsupported character encoding 'utf8mb4'" 而连不上库。
+    # allowPublicKeyRetrieval + useSSL=false：MySQL 8 默认 caching_sha2_password，
+    # 非 SSL 连接需允许取公钥，否则报 "Public Key Retrieval is not allowed"。
+    url: jdbc:mysql://${MYSQL_HOST:127.0.0.1}:${MYSQL_PORT:3306}/wavenest?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
     username: ${MYSQL_USER:root}
     password: ${MYSQL_PASSWORD:wavenest}
     driver-class-name: com.mysql.cj.jdbc.Driver
