@@ -1,0 +1,74 @@
+{
+  "meta": {
+    "name": "replay-1016-full",
+    "title": "10-16 全流程回放数据包（下单→变向→重派→完成）",
+    "author": "杨添爻（M1）",
+    "date": "2026-10-16",
+    "purpose": "现场兜底回放：彭紫情一键演示/时间轴回放的数据源；录制口径＝真实节拍帧序列脱噪快照",
+    "topics": ["data.ais", "data.uav_telemetry", "data.weather", "order_state（事件标记）"],
+    "clock": "ts 为相对演示起点的毫秒偏移；回放器按偏移等比/原速播放均可",
+    "calib": {
+      "tickMillis": 1000,
+      "ship": { "mmsi": "123456789", "name": "SIM-SHIP-01", "startLon": 114.3, "startLat": 30.6, "cog0": 90.0, "sog": 8.0 },
+      "turnAtSec": 60, "turnDeltaDeg": 60,
+      "weatherGrid": { "lon0": 114.29, "lat0": 30.59, "step": 0.01, "grid": 2, "windBase": 5.0, "dirBase": 135.0, "gustAdd": 3.0 },
+      "uav": { "centerLon": 114.305, "centerLat": 30.605, "radiusDeg": 0.003, "count": 2 }
+    }
+  },
+  "timeline": [
+    { "seg": 1, "title": "下单（演示开场）", "fromMs": 0, "toMs": 59999,
+      "note": "船沿 90° 正东直航；下单事件在 t=5s" },
+    { "seg": 2, "title": "变向（6b 触发）", "fromMs": 60000, "toMs": 119999,
+      "note": "t=60s 注入 +60°（订单触发模式，orderId=ORD-20261016-01），船转 150° 航向" },
+    { "seg": 3, "title": "放弃会面→返航→重入队→重派", "fromMs": 120000, "toMs": 179999,
+      "note": "6b 判据命中（t≈120s）；原机返航、货物回收、订单重入队（t=150s）；重派新机（t=170s）" },
+    { "seg": 4, "title": "重算会面点→交接→完成", "fromMs": 180000, "toMs": 299999,
+      "note": "6a 重算会面点、重生成航迹、起飞时刻回填；交接完成确认（t=280s）、投送确认（t=290s）" }
+  ],
+  "events": [
+    { "ts": 5000,   "type": "ORDER_CREATED",   "topic": "order_state", "payload": { "orderId": "ORD-20261016-01", "pickupLon": 114.312, "pickupLat": 30.598, "dropLon": 114.335, "dropLat": 30.61, "payloadKg": 1.2 } },
+    { "ts": 60000,  "type": "TURN_INJECTED",   "topic": "data.ais",    "payload": { "triggerMode": "order", "orderId": "ORD-20261016-01", "deltaDeg": 60, "newCog": 150.0, "turnCount": 1 } },
+    { "ts": 120000, "type": "6B_JUDGE_HIT",    "topic": "event",       "payload": { "judge": "IntentChangeJudge", "deviationDeg": 58.3, "result": "intent_changed" } },
+    { "ts": 121000, "type": "RENDEZVOUS_ABORT","topic": "event",       "payload": { "reason": "6b", "originalRendezvous": { "lon": 114.3228, "lat": 30.6047 } } },
+    { "ts": 150000, "type": "ORDER_REQUEUED",  "topic": "order_state", "payload": { "orderId": "ORD-20261016-01", "cargoRecovered": true, "timelineNode": "requeued" } },
+    { "ts": 170000, "type": "RESCHEDULED",     "topic": "event",       "payload": { "newDrone": "UAV-02", "newNest": "NEST-B", "candidates": ["CMB-001"], "feasibility": "FEASIBLE" } },
+    { "ts": 180000, "type": "RENDEZVOUS_RECALC","topic": "event",      "payload": { "entry": "6a", "newMeetLon": 114.3412, "newMeetLat": 30.5961, "takeoffTsBackfill": 181000 } },
+    { "ts": 280000, "type": "HANDOVER_DONE",   "topic": "event",       "payload": { "phase": "handover", "confirmed": true } },
+    { "ts": 290000, "type": "DELIVERY_CONFIRM","topic": "order_state", "payload": { "orderId": "ORD-20261016-01", "status": "已完成" } }
+  ],
+  "frames": {
+    "data.ais": [
+      { "ts": 0,     "mmsi": "123456789", "shipName": "SIM-SHIP-01", "lon": 114.30005, "lat": 30.6,     "sog": 8.0, "cog": 90.0 },
+      { "ts": 10000, "mmsi": "123456789", "shipName": "SIM-SHIP-01", "lon": 114.30794, "lat": 30.59998, "sog": 8.0, "cog": 90.0 },
+      { "ts": 30000, "mmsi": "123456789", "shipName": "SIM-SHIP-01", "lon": 114.32372, "lat": 30.59993, "sog": 8.0, "cog": 90.0 },
+      { "ts": 59000, "mmsi": "123456789", "shipName": "SIM-SHIP-01", "lon": 114.33649, "lat": 30.5999,  "sog": 8.0, "cog": 90.0 },
+      { "ts": 61000, "mmsi": "123456789", "shipName": "SIM-SHIP-01", "lon": 114.33733, "lat": 30.59963, "sog": 8.0, "cog": 150.0 },
+      { "ts": 90000, "mmsi": "123456789", "shipName": "SIM-SHIP-01", "lon": 114.34937, "lat": 30.59402, "sog": 8.0, "cog": 150.0 },
+      { "ts": 120000,"mmsi": "123456789", "shipName": "SIM-SHIP-01", "lon": 114.35906, "lat": 30.58959, "sog": 8.0, "cog": 150.0 },
+      { "ts": 180000,"mmsi": "123456789", "shipName": "SIM-SHIP-01", "lon": 114.37345, "lat": 30.58311, "sog": 8.0, "cog": 150.0 },
+      { "ts": 299000,"mmsi": "123456789", "shipName": "SIM-SHIP-01", "lon": 114.39786, "lat": 30.57226, "sog": 8.0, "cog": 150.0 }
+    ],
+    "data.uav_telemetry": [
+      { "ts": 0,     "uavId": "UAV-01", "lon": 114.308,  "lat": 30.605,   "alt": 80, "soc": 92.0, "state": "待命" },
+      { "ts": 60000, "uavId": "UAV-01", "lon": 114.3088, "lat": 30.60735, "alt": 80, "soc": 90.1, "state": "巡航" },
+      { "ts": 121000,"uavId": "UAV-01", "lon": 114.3074, "lat": 30.6028,  "alt": 80, "soc": 86.4, "state": "返航" },
+      { "ts": 150000,"uavId": "UAV-01", "lon": 114.305,  "lat": 30.605,   "alt": 0,  "soc": 83.2, "state": "已归巢" },
+      { "ts": 170000,"uavId": "UAV-02", "lon": 114.3018, "lat": 30.6036,  "alt": 90, "soc": 95.0, "state": "起飞（重派）" },
+      { "ts": 280000,"uavId": "UAV-02", "lon": 114.3409, "lat": 30.5964,  "alt": 90, "soc": 78.5, "state": "末段交接" },
+      { "ts": 290000,"uavId": "UAV-02", "lon": 114.3421, "lat": 30.5962,  "alt": 90, "soc": 77.9, "state": "投送确认" }
+    ],
+    "data.weather": [
+      { "ts": 0, "lon": 114.29, "lat": 30.59, "wind": 5.0, "dir": 135.0, "gust": 8.0, "obsTs": 0, "targetTs": 0 },
+      { "ts": 0, "lon": 114.3,  "lat": 30.59, "wind": 5.0, "dir": 135.0, "gust": 8.0, "obsTs": 0, "targetTs": 0 },
+      { "ts": 0, "lon": 114.29, "lat": 30.6,  "wind": 5.0, "dir": 135.0, "gust": 8.0, "obsTs": 0, "targetTs": 0 },
+      { "ts": 0, "lon": 114.3,  "lat": 30.6,  "wind": 5.0, "dir": 135.0, "gust": 8.0, "obsTs": 0, "targetTs": 0 },
+      { "ts": 60000, "lon": 114.29, "lat": 30.59, "wind": 5.9, "dir": 141.0, "gust": 8.6, "obsTs": 60000, "targetTs": 60000 },
+      { "ts": 180000,"lon": 114.3,  "lat": 30.6,  "wind": 6.2, "dir": 138.0, "gust": 9.1, "obsTs": 180000, "targetTs": 180000 }
+    ]
+  },
+  "replayHints": [
+    "回放器把 frames 里各主题按 ts 合并成一个时间轴顺序吐出；事件流 events 用于驱动前端时间线节点",
+    "拖回 60000ms（变向）→150000ms（重入队）可重演 6b 桥段",
+    "若现场 MQ/后端不可用，彭紫情侧可直接吃本文件模拟 WS 帧流（原速 5 分钟跑完）"
+  ]
+}
