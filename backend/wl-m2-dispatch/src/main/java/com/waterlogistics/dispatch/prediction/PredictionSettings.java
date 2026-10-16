@@ -1,50 +1,34 @@
 package com.waterlogistics.dispatch.prediction;
 
 import com.waterlogistics.algo.estimation.PredictionParams;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Component;
 
 /**
- * 预测参数入口（M2 · 卢肄文）。
+ * 预测参数载体（M2 · 卢肄文）——<b>纯数据，不含 Spring 注解</b>。
  *
- * <p><b>纪律落点</b>：阈值不得硬编码（《技术栈与运行环境》§六 第 3 条），正式取值应读
- * {@code sys_param}（M6 的 {@code SysParamLoader}）。今天 {@code storage/param} 尚未落地，
- * 故此处用 {@code @Value} ＋ 缺省值作为<b>唯一</b>的可覆盖入口：
- * 业务代码只 {@link #toParams()} 取参数，绝不内联数字。
+ * <p>为什么刻意不标注 {@code @Component}：算法链路要能<b>脱离 Spring 与数据库独立单测</b>
+ * （《技术栈与运行环境》§2.3 第 3 条）。本类只做不可变载体，「从哪来」由
+ * {@link PredictionConfig} 决定；单测直接 {@code new PredictionSettings(...)} 即可。
  *
- * <p>待 {@code SysParamLoader} 可用后，只改本类一处：把 {@code @Value} 换成读参数表，
- * 调用方零改动。
+ * <p><b>纪律落点</b>：阈值不得硬编码、不得臆造键名。正式取值由 {@link PredictionConfig}
+ * 从 {@code sys_param}（《37》§5.14.1）读出后注入；本类内部<b>不做任何默认值兜底</b>
+ * ——缺省值只在 {@link PredictionConfig} 一处出现，便于将来统一改为读表。
  *
- * <p>注意：本类<b>不写进 {@code application.yml}</b>——该文件由收口方维护且明确
- * 「只放连接与占位，不含业务参数」。
+ * @param sigma0AlongM 沿航道方向 1σ 初值，m（<b>标准差，不是方差</b>）
+ * @param alphaAlongMs 沿航道方向 1σ 增长率，m/s
+ * @param sigma0CrossM 横向 1σ 初值，m
+ * @param alphaCrossMs 横向 1σ 增长率，m/s
+ * @param horizonSec   预测时长，s
+ * @param stepSec      相邻预测点间隔，s
+ * @param validitySec  快照有效期，s
  */
-@Component
-public class PredictionSettings {
-
-    private final double sigma0AlongM;
-    private final double alphaAlongMs;
-    private final double sigma0CrossM;
-    private final double alphaCrossMs;
-    private final long horizonSec;
-    private final long stepSec;
-    private final long validitySec;
-
-    public PredictionSettings(
-            @Value("${wavenest.prediction.sigma0-along-m:30.0}") double sigma0AlongM,
-            @Value("${wavenest.prediction.alpha-along-ms:0.15}") double alphaAlongMs,
-            @Value("${wavenest.prediction.sigma0-cross-m:10.0}") double sigma0CrossM,
-            @Value("${wavenest.prediction.alpha-cross-ms:0.02}") double alphaCrossMs,
-            @Value("${wavenest.prediction.horizon-sec:1800}") long horizonSec,
-            @Value("${wavenest.prediction.step-sec:60}") long stepSec,
-            @Value("${wavenest.prediction.validity-sec:900}") long validitySec) {
-        this.sigma0AlongM = sigma0AlongM;
-        this.alphaAlongMs = alphaAlongMs;
-        this.sigma0CrossM = sigma0CrossM;
-        this.alphaCrossMs = alphaCrossMs;
-        this.horizonSec = horizonSec;
-        this.stepSec = stepSec;
-        this.validitySec = validitySec;
-    }
+public record PredictionSettings(
+        double sigma0AlongM,
+        double alphaAlongMs,
+        double sigma0CrossM,
+        double alphaCrossMs,
+        long horizonSec,
+        long stepSec,
+        long validitySec) {
 
     /** 组装算法层参数对象（算法层不读配置，只收参数）。 */
     public PredictionParams toParams() {

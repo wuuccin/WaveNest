@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.waterlogistics.algo.inflight.HeadingSample;
 import com.waterlogistics.contract.mq.AisMessage;
 import com.waterlogistics.contract.ws.ShipTrajFrame;
 import com.waterlogistics.contract.ws.ShipTrajPoint;
@@ -31,12 +32,15 @@ class PredictionServiceTest {
 
     private PredictionService service;
 
+    private LoggingRecomputeRequester recomputeRequester;
+
     @BeforeEach
     void setUp() {
-        // 与 PredictionSettings 的 @Value 缺省同构，但显式传入以便断言确定值
+        // 与 PredictionConfig 从 sys_param 取值的形状同构，但显式传入以便断言确定值
         PredictionSettings settings = new PredictionSettings(
                 30.0, 0.15, 10.0, 0.02, 600L, 60L, 900L);
-        service = new PredictionService(settings);
+        recomputeRequester = new LoggingRecomputeRequester();
+        service = new PredictionService(settings, recomputeRequester);
     }
 
     private static AisMessage ais(String mmsi, double sogKnots, double cogDeg, long ts) {
@@ -146,5 +150,78 @@ class PredictionServiceTest {
 
         assertThrows(IllegalArgumentException.class, () -> service.refresh(bad));
         assertEquals(0, service.trackedShipCount(), "脏数据不得建出快照");
+    }
+
+    // ───────────────────────── 预测刷新驱动链（10-16 任务） ─────────────────────────
+
+    @Test
+    @DisplayName("★ 驱动链：航向跳变超阈 → 发出重算请求（解锁 6a）")
+    void courseJump_shouldRequestRecompute() {
+        service.refresh(ais("413000001", 8.0, 0.0, T0));
+        assertEquals(0, recomputeRequester.requestCount(), "首帧没有可比上一版，不算跳变");
+
+        service.refresh(ais("413000001", 8.0, 90.0, T0 + 1000L));
+        assertEquals(1, recomputeRequester.requestCount(), "90° 跳变应触发重算请求");
+
+        RecomputeRequest request = recomputeRequester.recentRequests().get(0);
+        assertEquals("413000001", request.mmsi());
+        assertEquals(2L, request.snapshotVersion(), "带上触发时的快照版本，供 M3 做一致性锚");
+        assertEquals(0.0, request.previousCourseDeg(), 1e-9);
+        assertEquals(90.0, request.currentCourseDeg(), 1e-9);
+        assertEquals(90.0, request.courseDeltaDeg(), 1e-9);
+        assertEquals(PredictionService.REASON_COURSE_JUMP, request.triggerReason());
+    }
+
+    @Test
+    @DisplayName("小幅航向变化不触发重算（避免噪声刷请求）")
+    void smallCourseChange_shouldNotRequestRecompute() {
+        service.refresh(ais("413000001", 8.0, 0.0, T0));
+        service.refresh(ais("413000001", 8.0, 10.0, T0 + 1000L));
+
+        assertEquals(0, recomputeRequester.requestCount(),
+                "10° 小于阈值 " + PredictionService.RECOMPUTE_COURSE_DELTA_THRESHOLD_DEG + "°，不应触发");
+    }
+
+    @Test
+    @DisplayName("★ 航向跨 360° 要取最短弧：350° → 10° 只算 20°")
+    void shortestArc_shouldHandleWrapAround() {
+        assertEquals(20.0, PredictionService.shortestArcDeg(350.0, 10.0), 1e-9);
+        assertEquals(20.0, PredictionService.shortestArcDeg(10.0, 350.0), 1e-9);
+        assertEquals(180.0, PredictionService.shortestArcDeg(0.0, 180.0), 1e-9);
+        assertEquals(0.0, PredictionService.shortestArcDeg(90.0, 90.0), 1e-9);
+    }
+
+    @Test
+    @DisplayName("跨 360° 的跳变按最短弧判：15° 不触发，25° 触发")
+    void wrapAroundJump_shouldFollowThreshold() {
+        service.refresh(ais("413000001", 8.0, 350.0, T0));
+
+        service.refresh(ais("413000001", 8.0, 5.0, T0 + 1000L));
+        assertEquals(0, recomputeRequester.requestCount(), "350°→5° 实为 15°，未达阈值");
+
+        // 与「上一版 5°」比（不是与第一版 350° 累计比）：比较基线是相邻两版，否则会反复触发
+        service.refresh(ais("413000001", 8.0, 30.0, T0 + 2000L));
+        assertEquals(1, recomputeRequester.requestCount(), "5°→30° 为 25°，越过阈值 20°");
+    }
+
+    @Test
+    @DisplayName("★ 给 E 组 6b 的配对样本：预测切向来自快照，不经 WS 帧反推")
+    void toHeadingSample_shouldPairMeasuredCogWithPredictedTangent() {
+        AisMessage measured = ais("413000001", 10.0, 45.0, T0);
+        service.refresh(measured);
+
+        HeadingSample sample = service.toHeadingSample(measured).orElseThrow();
+
+        assertEquals(45.0, sample.cogDeg(), 1e-9, "实测 COG 原样带入");
+        assertEquals(45.0, sample.predictedTangentDeg(), 0.5,
+                "简化版匀速直线航迹：切向应约等于主轴方位");
+        assertEquals(10.0 * (1852.0 / 3600.0), sample.sogMs(), 1e-9, "节 → m/s");
+        assertEquals(T0, sample.tsMs());
+    }
+
+    @Test
+    @DisplayName("未知船取配对样本应为空（调用方跳过本拍）")
+    void toHeadingSample_shouldBeEmptyForUnknownShip() {
+        assertTrue(service.toHeadingSample(ais("999999999", 10.0, 0.0, T0)).isEmpty());
     }
 }
