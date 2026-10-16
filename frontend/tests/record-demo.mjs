@@ -6,10 +6,10 @@ import { dirname, join } from 'node:path'
 const projectRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))))
 const output = join(projectRoot, 'demo')
 await mkdir(output, { recursive: true })
-const browser = await chromium.launch({
-  headless: true,
-  executablePath: 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'
-})
+// 浏览器路径可用环境变量 BROWSER_PATH 覆盖；未指定时不传 executablePath，交给 playwright 自动解析
+const launchOptions = { headless: true }
+if (process.env.BROWSER_PATH) launchOptions.executablePath = process.env.BROWSER_PATH
+const browser = await chromium.launch(launchOptions)
 const context = await browser.newContext({
   viewport: { width: 1440, height: 900 },
   recordVideo: { dir: output, size: { width: 1440, height: 900 } }
