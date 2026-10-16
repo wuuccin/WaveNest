@@ -1,8 +1,8 @@
 package com.waterlogistics.algo.measurement;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static com.waterlogistics.algo.measurement.FlightState.*;
 import static com.waterlogistics.algo.measurement.RouteMeasurement.*;
+import com.waterlogistics.contract.mq.UavTelemetry;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
@@ -10,18 +10,18 @@ class MeasurementTest {
     private static final TelemetryCleaner.Limits LIMITS = new TelemetryCleaner.Limits(50, 5000, 15, 20, 30, 1000);
     @Test void batteryOutlierIsFlaggedAndFilledWithProvenance() {
         var cleaner = new TelemetryCleaner(LIMITS);
-        var previous = cleaner.clean(new Raw("F1", 1000, 29.7, 115.8, 100.0, 10.0, 90.0, 0.0, 88.0), null);
-        var next = cleaner.clean(new Raw("F1", 2000, 29.7, 115.8001, 100.0, 10.0, 90.0, 0.0, 140.0), previous);
+        var previous = cleaner.clean(new UavTelemetry("F1", 115.8, 29.7, 100.0, 10.0, 88.0, 90.0, 1000), null);
+        var next = cleaner.clean(new UavTelemetry("F1", 115.8001, 29.7, 100.0, 10.0, 140.0, 90.0, 2000), previous);
         assertEquals(88, next.battery()); assertTrue(next.imputed());
         assertEquals(140.0, next.rawValues().get("battery")); assertTrue(next.anomalyFlags().contains("BATTERY_RANGE"));
         assertTrue(next.anomalyFlags().contains("BATTERY_IMPUTED"));
     }
     @Test void longGapIsMissingAndNeverChainedFromImputedPoint() {
         var cleaner = new TelemetryCleaner(LIMITS);
-        var real = cleaner.clean(new Raw("F1", 1000, 29.7, 115.8, 100.0, 10.0, 90.0, 0.0, 88.0), null);
-        var shortGap = cleaner.clean(new Raw("F1", 2000, null, null, 100.0, 10.0, 90.0, 0.0, null), real);
+        var real = cleaner.clean(new UavTelemetry("F1", 115.8, 29.7, 100.0, 10.0, 88.0, 90.0, 1000), null);
+        var shortGap = cleaner.clean(new UavTelemetry("F1", Double.NaN, Double.NaN, 100.0, 10.0, Double.NaN, 90.0, 2000), real);
         assertEquals("imputed_valid", shortGap.stateStatus());
-        var longGap = cleaner.clean(new Raw("F1", 4001, null, null, 100.0, 10.0, 90.0, 0.0, null), real);
+        var longGap = cleaner.clean(new UavTelemetry("F1", Double.NaN, Double.NaN, 100.0, 10.0, Double.NaN, 90.0, 4001), real);
         assertEquals("missing", longGap.stateStatus());
     }
     @Test void projectionAndRemainingDistanceFollowRouteNotDirectLine() {
@@ -43,8 +43,8 @@ class MeasurementTest {
     }
     @Test void interpolationHandlesHeadingWrapAndMarksBatteryEstimated() {
         var cleaner = new TelemetryCleaner(LIMITS);
-        var left = cleaner.clean(new Raw("F1",1000,0.0,179.9,100.0,10.0,350.0,0.0,90.0),null);
-        var right = cleaner.clean(new Raw("F1",3000,0.0,-179.9,100.0,10.0,10.0,0.0,80.0),null);
+        var left = cleaner.clean(new UavTelemetry("F1",179.9,0.0,100.0,10.0,90.0,350.0,1000),null);
+        var right = cleaner.clean(new UavTelemetry("F1",-179.9,0.0,100.0,10.0,80.0,10.0,3000),null);
         var middle = cleaner.interpolate(left,right,2000);
         assertTrue(Math.abs(middle.longitude()) > 179.9); assertEquals(85,middle.battery());
         assertEquals(0,middle.track(),1e-6); assertTrue(middle.imputed());

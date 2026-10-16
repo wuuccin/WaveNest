@@ -1,0 +1,37 @@
+import { chromium } from 'playwright'
+import { mkdir, unlink } from 'node:fs/promises'
+import { fileURLToPath } from 'node:url'
+import { dirname, join } from 'node:path'
+
+const projectRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))))
+const output = join(projectRoot, 'demo')
+await mkdir(output, { recursive: true })
+const browser = await chromium.launch({
+  headless: true,
+  executablePath: 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'
+})
+const context = await browser.newContext({
+  viewport: { width: 1440, height: 900 },
+  recordVideo: { dir: output, size: { width: 1440, height: 900 } }
+})
+const page = await context.newPage()
+await page.goto('http://127.0.0.1:5173', { waitUntil: 'networkidle' })
+await page.waitForTimeout(1200)
+for (let i = 0; i < 6; i++) {
+  await page.getByRole('button', { name: '下一段' }).click()
+  await page.waitForTimeout(1500)
+}
+await page.getByRole('button', { name: '查看回放' }).click()
+await page.waitForTimeout(800)
+await page.getByRole('slider', { name: '回放进度' }).fill('3')
+await page.waitForTimeout(1000)
+await page.getByRole('slider', { name: '回放进度' }).fill('6')
+await page.waitForTimeout(1200)
+const video = page.video()
+await page.close()
+const temporary = await video.path()
+await video.saveAs(join(output, 'six-stage-demo.webm'))
+await context.close()
+await browser.close()
+await unlink(temporary)
+console.log(join(output, 'six-stage-demo.webm'))

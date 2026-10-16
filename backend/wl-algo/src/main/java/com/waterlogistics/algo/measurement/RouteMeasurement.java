@@ -1,5 +1,6 @@
 package com.waterlogistics.algo.measurement;
 
+import com.waterlogistics.contract.mq.UavTelemetry;
 import java.util.List;
 
 public final class RouteMeasurement {
@@ -19,6 +20,13 @@ public final class RouteMeasurement {
     public record Landing(String landingType, String landingId, Geo.Point point, long decisionVersion, Integer waypointIndex) {}
     public record Remaining(boolean computable, Double distanceM, String reason, long routeVersion,
                             Long decisionVersion, String calculationQuality) {}
+
+    /** Contract-facing entry point used by M4 and the detection owner. */
+    public static Projection project(Route route, UavTelemetry telemetry) {
+        if (telemetry == null || !Double.isFinite(telemetry.lon()) || !Double.isFinite(telemetry.lat()))
+            throw new IllegalArgumentException("usable telemetry position required");
+        return project(route, new Geo.Point(telemetry.lon(), telemetry.lat()), telemetry.ts());
+    }
 
     public static Projection project(Route route, Geo.Point current, long inputTs) {
         double best = Double.POSITIVE_INFINITY, bestAlong = 0, bestLength = 0;
