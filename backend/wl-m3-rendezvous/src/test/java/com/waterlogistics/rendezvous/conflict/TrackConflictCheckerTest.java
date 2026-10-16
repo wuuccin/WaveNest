@@ -103,6 +103,9 @@ class TrackConflictCheckerTest {
         assertThrows(IllegalArgumentException.class,
                 () -> TrackConflictChecker.check(eastTrack(), northTrack(T0, 60.0),
                         new ConflictParams(100, 25, 0)), "采样步长非正应拒绝");
+        assertThrows(IllegalArgumentException.class,
+                () -> new ConflictParams(Double.POSITIVE_INFINITY, 25, 1_000),
+                "无穷大安全间隔应拒绝（防判据恒真——Infinity 不得穿透）");
     }
 
     /** 航点时刻非严格递增：前置校验拒绝（时间窗与线性插值均依赖该不变量）。 */

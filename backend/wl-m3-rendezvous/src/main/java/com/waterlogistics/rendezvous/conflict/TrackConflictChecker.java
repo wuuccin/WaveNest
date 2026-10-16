@@ -43,9 +43,9 @@ public final class TrackConflictChecker {
      *
      * @param route  被查航迹（{@code checksumVersion} 取它的 {@code routeVersion}）
      * @param other  对照航迹
-     * @param params 间隔与采样参数（调用方注入）
+     * @param params 间隔与采样参数（调用方注入；数值前置由 {@link ConflictParams} 构造期校验）
      * @return 冲突结论；包围盒粗筛或时间窗短路时不产 CPA，绕行几何首版恒为 null
-     * @throws IllegalArgumentException 航迹航点不足、航点时刻非严格递增或采样步长非正
+     * @throws IllegalArgumentException 航迹航点不足或航点时刻非严格递增
      * @throws NullPointerException     route／other／params 为 null
      */
     public static B_ConflictResult check(B_FlyableRoute route, B_FlyableRoute other,
@@ -55,9 +55,6 @@ public final class TrackConflictChecker {
         Objects.requireNonNull(params, "params 不能为空");
         requireUsable(route, "route");
         requireUsable(other, "other");
-        if (params.sampleStepMs() <= 0) {
-            throw new IllegalArgumentException("采样步长必须为正，实际 " + params.sampleStepMs());
-        }
 
         Waypoint origin = route.waypoints().get(0);
         List<LocalPoint> a = toLocal(route.waypoints(), origin);
@@ -116,7 +113,7 @@ public final class TrackConflictChecker {
         }
 
         CpaPoint cpaPoint = new CpaPoint(
-                origin.lon() + bestMidX / (METERS_PER_DEG * Math.cos(Math.toRadians(origin.lat()))),
+                origin.lon() + bestMidX / mPerDegLon(origin.lat()),
                 origin.lat() + bestMidY / METERS_PER_DEG,
                 bestMidAlt);
         ConflictSpaceTime interval = anyConflict
@@ -196,12 +193,20 @@ public final class TrackConflictChecker {
         return last;
     }
 
+    /**
+     * 经度方向米/度——高纬处 cos(φ)→0，取 1 m 兜底避免除零／精度崩
+     * （同 {@code ConstantVelocityPredictor} 既有写法，正反变换共用同一取值）。
+     */
+    private static double mPerDegLon(double lat) {
+        return Math.max(METERS_PER_DEG * Math.cos(Math.toRadians(lat)), 1.0);
+    }
+
     private static List<LocalPoint> toLocal(List<Waypoint> waypoints, Waypoint origin) {
-        double cosLat = Math.cos(Math.toRadians(origin.lat()));
+        double metersPerDegLon = mPerDegLon(origin.lat());
         List<LocalPoint> out = new ArrayList<>(waypoints.size());
         for (Waypoint w : waypoints) {
             out.add(new LocalPoint(
-                    (w.lon() - origin.lon()) * METERS_PER_DEG * cosLat,
+                    (w.lon() - origin.lon()) * metersPerDegLon,
                     (w.lat() - origin.lat()) * METERS_PER_DEG,
                     w.altM(),
                     w.t()));

@@ -55,17 +55,24 @@ public record RendezvousCommand(
         Objects.requireNonNull(comboId, "comboId 不能为空");
         Objects.requireNonNull(shipMmsi, "shipMmsi 不能为空");
         Objects.requireNonNull(representativeWind, "representativeWind 不能为空");
-        if (!(cruiseSpeedMs > 0)) {
-            throw new IllegalArgumentException("巡航速度必须为正，实际 " + cruiseSpeedMs);
+        if (!Double.isFinite(nestLon) || !Double.isFinite(nestLat)) {
+            throw new IllegalArgumentException("机巢坐标必须为有限数");
+        }
+        if (!Double.isFinite(cruiseSpeedMs) || !(cruiseSpeedMs > 0)) {
+            throw new IllegalArgumentException("巡航速度必须为正的有限数，实际 " + cruiseSpeedMs);
         }
         if (meetWindowMarginSec < 0) {
             throw new IllegalArgumentException("会面时间窗余量不能为负，实际 " + meetWindowMarginSec);
         }
-        if (!(convergeEpsilonSec > 0)) {
-            throw new IllegalArgumentException("收敛阈值必须为正，实际 " + convergeEpsilonSec);
+        if (!Double.isFinite(convergeEpsilonSec) || !(convergeEpsilonSec > 0)) {
+            throw new IllegalArgumentException("收敛阈值必须为正的有限数，实际 " + convergeEpsilonSec);
         }
         if (maxIterations <= 0) {
             throw new IllegalArgumentException("最大迭代次数必须为正，实际 " + maxIterations);
+        }
+        if (deadlineMs < nowMs) {
+            throw new IllegalArgumentException(
+                    "最晚会面时刻不得早于求解起点，实际 nowMs=" + nowMs + ", deadlineMs=" + deadlineMs);
         }
     }
 }

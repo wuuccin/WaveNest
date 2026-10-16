@@ -12,7 +12,7 @@ import java.util.Objects;
  * @param plannedMeetLon 计划会面点经度（取自 B_RendezvousSolution 对应组合）
  * @param plannedMeetLat 计划会面点纬度
  * @param plannedMeetT   计划会面时刻，Unix 毫秒
- * @param samples        末段采样（时间严格升序；构造时防御拷贝，外部再改不影响本值）
+ * @param samples        末段采样（非空且时间严格升序——构造期即拒绝违规；构造时防御拷贝）
  * @param params         判定阈值（调用方注入）
  */
 public record HandoverCommand(
@@ -35,6 +35,17 @@ public record HandoverCommand(
         Objects.requireNonNull(taskId, "taskId 不能为空");
         Objects.requireNonNull(droneId, "droneId 不能为空");
         Objects.requireNonNull(params, "params 不能为空");
+        if (!Double.isFinite(plannedMeetLon) || !Double.isFinite(plannedMeetLat)) {
+            throw new IllegalArgumentException("计划会面点坐标必须为有限数");
+        }
         samples = List.copyOf(Objects.requireNonNull(samples, "samples 不能为空"));
+        if (samples.isEmpty()) {
+            throw new IllegalArgumentException("末段样本序列不能为空");
+        }
+        for (int i = 1; i < samples.size(); i++) {
+            if (samples.get(i).t() <= samples.get(i - 1).t()) {
+                throw new IllegalArgumentException("样本时间必须严格升序，第 " + i + " 个样本时间非增");
+            }
+        }
     }
 }

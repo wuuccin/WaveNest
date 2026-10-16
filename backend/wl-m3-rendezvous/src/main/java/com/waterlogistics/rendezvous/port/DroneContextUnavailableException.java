@@ -8,11 +8,19 @@ public class DroneContextUnavailableException extends RuntimeException {
 
     private static final long serialVersionUID = 1L;
 
+    private final String droneId;
+
     /**
      * @param droneId 执行机实例
      */
     public DroneContextUnavailableException(String droneId) {
         super("查无执行机台账，拒绝求解：机 "
                 + (droneId == null || droneId.isBlank() ? "<unknown>" : droneId));
+        this.droneId = droneId;
+    }
+
+    /** 返回触发本异常的执行机实例（原样保留，可能为 null） */
+    public String getDroneId() {
+        return droneId;
     }
 }

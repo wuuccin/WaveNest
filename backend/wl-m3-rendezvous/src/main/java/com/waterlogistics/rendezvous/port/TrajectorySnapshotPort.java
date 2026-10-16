@@ -21,7 +21,7 @@ public interface TrajectorySnapshotPort {
     /**
      * 取指定船的最新预测快照。
      *
-     * @param shipMmsi 目标船标识
+     * @param shipMmsi 目标船标识（调用方保证非空、非空白）
      * @return 该船当前快照；查无此船（或尚无预测）时为 {@code null}，由调用方按「拒绝求解」处理
      */
     ShipTrackSnapshot latest(String shipMmsi);

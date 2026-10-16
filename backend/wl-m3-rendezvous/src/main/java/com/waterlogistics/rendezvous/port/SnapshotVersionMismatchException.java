@@ -19,6 +19,7 @@ public class SnapshotVersionMismatchException extends RuntimeException {
     public SnapshotVersionMismatchException(String shipMmsi, String expected, String actual) {
         super("快照版本不一致，拒绝求解：船 "
                 + (shipMmsi == null || shipMmsi.isBlank() ? "<unknown>" : shipMmsi)
-                + "，期望版本 " + expected + "，实际版本 " + actual);
+                + "，期望版本 " + (expected == null || expected.isBlank() ? "<none>" : expected)
+                + "，实际版本 " + (actual == null || actual.isBlank() ? "<none>" : actual));
     }
 }

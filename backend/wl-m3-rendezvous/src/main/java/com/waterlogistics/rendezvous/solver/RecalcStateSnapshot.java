@@ -35,4 +35,13 @@ public record RecalcStateSnapshot(
         Double droneBattery,
 
         Long droneStateT) {
+
+    public RecalcStateSnapshot {
+        if (!Double.isFinite(shipLon) || !Double.isFinite(shipLat) || !Double.isFinite(shipCogDeg)
+                || !Double.isFinite(sogMs) || !(sogMs >= 0)) {
+            throw new IllegalArgumentException(
+                    "船侧求解字段非法：shipLon=" + shipLon + ", shipLat=" + shipLat
+                            + ", shipCogDeg=" + shipCogDeg + ", sogMs=" + sogMs);
+        }
+    }
 }

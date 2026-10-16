@@ -26,19 +26,12 @@ public final class TakeoffTimeCalculator {
     /**
      * 反推一个候选组合的起飞时刻。
      *
-     * @param cmd 回填入参（全量注入）
+     * @param cmd 回填入参（全量注入；时长与粒度等前置由 {@link TakeoffTimeCommand} 构造期校验）
      * @return 算式结果；不可行时 {@code feasible=false}、原因「早于当前时刻」，
      *         {@code takeoffT} 仍给算式值（追溯用）
-     * @throws IllegalArgumentException 精算时长为负或时刻精度粒度非正
      */
     public static B_TakeoffTimeResult compute(TakeoffTimeCommand cmd) {
         Objects.requireNonNull(cmd, "cmd 不能为空");
-        if (cmd.tauFineSec() < 0) {
-            throw new IllegalArgumentException("精算飞行时长不能为负，实际 " + cmd.tauFineSec());
-        }
-        if (cmd.timeGridMs() <= 0) {
-            throw new IllegalArgumentException("时刻精度粒度必须为正，实际 " + cmd.timeGridMs());
-        }
 
         long rawT = cmd.meetTMs() - cmd.tauFineSec() * 1000L;
         long takeoffT = rawT - Math.floorMod(rawT, cmd.timeGridMs());

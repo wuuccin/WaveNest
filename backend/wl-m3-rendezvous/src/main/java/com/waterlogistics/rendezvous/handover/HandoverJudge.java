@@ -22,6 +22,9 @@ import java.util.Objects;
  * <p>判据（照 §3.6）：接近退出＝相对距离低于收敛阈值；匹配退出＝相对位置误差与
  * 相对速度<b>持续</b>达标满稳定时长；交接完成＝投放反馈出现<b>且</b>当时风况满足交接
  * 风阈值。相对距离与相对速度在局部米制平移系下计算（同 {@code GeoApprox} 近似）。
+ *
+ * <p>阈值严格性口径（与 §3.6 用词对齐，系有意为之）：距离／速度用「低于／小于」⇒
+ * <b>严格 &lt;</b>；风况用「满足阈值」⇒ <b>≤</b>（含等号）。
  */
 public final class HandoverJudge {
 
@@ -36,14 +39,12 @@ public final class HandoverJudge {
      *
      * @param cmd 判定入参（计划基准＋采样＋阈值）
      * @return 交接完成确认；失败时完成时刻与开销字段为 null，已完成接近的失败仍给实际会面点
-     * @throws IllegalArgumentException 样本为空或时间非严格升序
+     * @throws NullPointerException cmd 为 null（样本非空与时间严格升序已由
+     *                              {@link HandoverCommand} 构造期拒绝）
      */
     public static B_HandoverConfirmation judge(HandoverCommand cmd) {
         Objects.requireNonNull(cmd, "cmd 不能为空");
         List<HandoverSample> samples = cmd.samples();
-        if (samples.isEmpty()) {
-            throw new IllegalArgumentException("末段样本序列不能为空");
-        }
         HandoverParams params = cmd.params();
 
         HandoverSample origin = samples.get(0);
@@ -51,10 +52,10 @@ public final class HandoverJudge {
 
         HandoverPhase phase = HandoverPhase.APPROACH;
         Long stableSince = null;
-        Long transferStartT = null;
+        long transferStartT = 0;
         Double actualMeetLon = null;
         Double actualMeetLat = null;
-        Long handoverDoneT = null;
+        long handoverDoneT = 0;
         boolean success = false;
 
         double prevDx = relativeX(origin, cosLat);
@@ -63,9 +64,6 @@ public final class HandoverJudge {
         for (int i = 1; i < samples.size(); i++) {
             HandoverSample s = samples.get(i);
             long dtMs = s.t() - samples.get(i - 1).t();
-            if (dtMs <= 0) {
-                throw new IllegalArgumentException("样本时间必须严格升序，第 " + i + " 个样本时间非增");
-            }
 
             double dx = relativeX(s, cosLat);
             double dy = relativeY(s);
@@ -102,7 +100,6 @@ public final class HandoverJudge {
                 if (s.windSpeedMs() <= params.windLimitMs()) {
                     success = true;
                     handoverDoneT = s.t();
-                    phase = HandoverPhase.DEPART;
                     break;
                 }
             }
@@ -120,7 +117,7 @@ public final class HandoverJudge {
         return new B_HandoverConfirmation(cmd.taskId(), cmd.droneId(),
                 actualMeetLon, actualMeetLat,
                 cmd.plannedMeetLon(), cmd.plannedMeetLat(), cmd.plannedMeetT(),
-                handoverDoneT, escortTimeCost, handoverTimeCost, energyCost,
+                success ? handoverDoneT : null, escortTimeCost, handoverTimeCost, energyCost,
                 success ? HandoverResult.SUCCESS : HandoverResult.FAILED);
     }
 

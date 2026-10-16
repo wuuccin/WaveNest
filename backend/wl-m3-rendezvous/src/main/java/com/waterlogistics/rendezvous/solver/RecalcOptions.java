@@ -27,11 +27,14 @@ public record RecalcOptions(
 
     public RecalcOptions {
         Objects.requireNonNull(representativeWind, "representativeWind 不能为空");
+        if (deadlineMs <= 0) {
+            throw new IllegalArgumentException("最晚会面时刻必须为正，实际 " + deadlineMs);
+        }
         if (meetWindowMarginSec < 0) {
             throw new IllegalArgumentException("会面时间窗余量不能为负，实际 " + meetWindowMarginSec);
         }
-        if (!(convergeEpsilonSec > 0)) {
-            throw new IllegalArgumentException("收敛阈值必须为正，实际 " + convergeEpsilonSec);
+        if (!Double.isFinite(convergeEpsilonSec) || !(convergeEpsilonSec > 0)) {
+            throw new IllegalArgumentException("收敛阈值必须为正的有限数，实际 " + convergeEpsilonSec);
         }
         if (maxIterations <= 0) {
             throw new IllegalArgumentException("最大迭代次数必须为正，实际 " + maxIterations);

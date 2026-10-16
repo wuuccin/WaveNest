@@ -61,8 +61,21 @@ public record GenerateRouteCommand(
         landingPointsAlong = List.copyOf(Objects.requireNonNull(landingPointsAlong,
                 "landingPointsAlong 不能为空"));
         avoidZones = List.copyOf(Objects.requireNonNull(avoidZones, "avoidZones 不能为空"));
-        if (!(speedMs > 0)) {
-            throw new IllegalArgumentException("速度必须为正，实际 " + speedMs);
+        if (!Double.isFinite(startLon) || !Double.isFinite(startLat)
+                || !Double.isFinite(endLon) || !Double.isFinite(endLat)) {
+            throw new IllegalArgumentException("起终点坐标必须为有限数");
+        }
+        if (waypointCount < 2) {
+            throw new IllegalArgumentException("航点数至少为 2，实际 " + waypointCount);
+        }
+        if (!Double.isFinite(speedMs) || !(speedMs > 0)) {
+            throw new IllegalArgumentException("速度必须为正的有限数，实际 " + speedMs);
+        }
+        if (!Double.isFinite(cruiseAltM) || !(cruiseAltM >= 0)) {
+            throw new IllegalArgumentException("巡航高度不能为负且须为有限数，实际 " + cruiseAltM);
+        }
+        if (!Double.isFinite(energyRatePerSecPct) || !(energyRatePerSecPct >= 0)) {
+            throw new IllegalArgumentException("能耗率不能为负且须为有限数，实际 " + energyRatePerSecPct);
         }
         if (!(pathRisk >= 0 && pathRisk <= 1)) {
             throw new IllegalArgumentException("路径风险须在 [0,1]，实际 " + pathRisk);

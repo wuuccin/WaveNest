@@ -24,4 +24,13 @@ public record TakeoffTimeCommand(
         long nowMs,
 
         long timeGridMs) {
+
+    public TakeoffTimeCommand {
+        if (tauFineSec < 0) {
+            throw new IllegalArgumentException("精算飞行时长不能为负，实际 " + tauFineSec);
+        }
+        if (timeGridMs <= 0) {
+            throw new IllegalArgumentException("时刻精度粒度必须为正，实际 " + timeGridMs);
+        }
+    }
 }

@@ -1,6 +1,7 @@
 package com.waterlogistics.rendezvous.solver;
 
 import com.waterlogistics.algo.meeting.model.B_RendezvousSolution;
+import java.util.Objects;
 
 /**
  * 6a 重算返回结构（《81-B组算法方案》§2.5「返回结构」）：{@code requestId} ＋
@@ -19,4 +20,9 @@ public record RendezvousRecalcResult(
         String requestId,
 
         B_RendezvousSolution solution) {
+
+    public RendezvousRecalcResult {
+        Objects.requireNonNull(requestId, "requestId 不能为空");
+        Objects.requireNonNull(solution, "solution 不能为空");
+    }
 }

@@ -36,8 +36,8 @@ public record HandoverSample(
                 || !Double.isFinite(shipLon) || !Double.isFinite(shipLat)) {
             throw new IllegalArgumentException("采样坐标必须为有限数");
         }
-        if (!(windSpeedMs >= 0)) {
-            throw new IllegalArgumentException("风速不能为负或非数，实际 " + windSpeedMs);
+        if (!Double.isFinite(windSpeedMs) || !(windSpeedMs >= 0)) {
+            throw new IllegalArgumentException("风速不能为负或非有限数，实际 " + windSpeedMs);
         }
     }
 }
