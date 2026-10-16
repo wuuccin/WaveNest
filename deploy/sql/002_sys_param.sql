@@ -95,6 +95,18 @@ INSERT INTO `sys_param` (`param_key`, `param_value`, `category`, `description`) 
 ('nestCapacity',        '4',      '容量', '机巢容量 C（首版不分机型档；nest 表 capacity 初始化源，nest 表为权威）'),
 ('forcedStopSlotSec',   '900',    '容量', '迫停标称时长 d（秒；占位时隙标称长度）');
 
+-- ---------------- 10-16 序4 灌库（档D + 候选生成参数） ----------------
+-- 档 D：low_battery_trigger 占位（低电量告警触发阈值，百分比；正式取值待标定）
+INSERT INTO `sys_param` (`param_key`, `param_value`, `category`, `description`) VALUES
+('low_battery_trigger', '20',     '阈值', '低电量告警触发阈值（百分比；占位值，正式标定后改）'),
+-- 候选生成过滤参数（CandidateGenerator 注入；取值为演示默认，待标定）
+('minBatteryPercent',   '30',     '阈值', '候选无人机最低电量门槛（%）'),
+('maxNestDistanceKm',   '5',      '阈值', '机巢到取货点最大半径（km）');
+
+-- TODO: 档 A 9 键——待吴可欣 37 §5.14.1 补齐清单后灌入（键名/取值未给，不臆造）
+-- TODO: 档 B 9 键——待 37 登记后灌入
+-- TODO: 档 C（L1/熔断）——暂不灌
+
 -- =====================================================================
 -- 以下键名/取值未定，暂不灌入，报组长后补：
 --   E 组 26 项（84）：改向累计航向偏量、减速速度缺口比、停车 SOG 阈值等——仅中文名目
