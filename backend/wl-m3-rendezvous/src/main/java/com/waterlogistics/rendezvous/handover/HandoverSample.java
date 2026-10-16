@@ -30,4 +30,14 @@ public record HandoverSample(
         double windSpeedMs,
 
         boolean dropDone) {
+
+    public HandoverSample {
+        if (!Double.isFinite(droneLon) || !Double.isFinite(droneLat)
+                || !Double.isFinite(shipLon) || !Double.isFinite(shipLat)) {
+            throw new IllegalArgumentException("采样坐标必须为有限数");
+        }
+        if (!(windSpeedMs >= 0)) {
+            throw new IllegalArgumentException("风速不能为负或非数，实际 " + windSpeedMs);
+        }
+    }
 }

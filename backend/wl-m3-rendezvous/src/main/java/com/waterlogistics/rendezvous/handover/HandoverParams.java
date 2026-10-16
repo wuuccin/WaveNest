@@ -25,4 +25,16 @@ public record HandoverParams(
         double windLimitMs,
 
         double energyRatePerSecPct) {
+
+    public HandoverParams {
+        if (!(approachRadiusM > 0) || !(posErrorM > 0) || !(speedErrorMs > 0)) {
+            throw new IllegalArgumentException(
+                    "收敛与误差阈值必须为正，实际 " + approachRadiusM + "/" + posErrorM + "/" + speedErrorMs);
+        }
+        if (!(stableSec >= 0) || !(windLimitMs >= 0) || !(energyRatePerSecPct >= 0)) {
+            throw new IllegalArgumentException(
+                    "持续时间、风阈与能耗率不能为负，实际 " + stableSec + "/" + windLimitMs
+                            + "/" + energyRatePerSecPct);
+        }
+    }
 }

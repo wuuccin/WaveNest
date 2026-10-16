@@ -75,6 +75,22 @@ class RendezvousRecalcTest {
                 "版本不一致必须拒绝求解");
     }
 
+    /** 版本闸门 fail-closed（重算侧）：期望版本或快照版本缺失（null）一律拒绝。 */
+    @Test
+    void recompute_shouldReject_whenVersionMissing() {
+        List<ShipPoint> points = new ArrayList<>();
+        points.add(new ShipPoint(NOW, LON0, LAT0, 90.0, 0.0, 0.0));
+        points.add(new ShipPoint(NOW + 10_000L, LON0, LAT0, 90.0, 0.0, 0.0));
+        RendezvousFacade facade = facade(
+                new ShipTrackSnapshot(null, MMSI, NOW, 86_400, points), context("combo-1", 15.0));
+
+        assertThrows(SnapshotVersionMismatchException.class,
+                () -> facade.recompute(
+                        request(null, NOW + 100_000L, LON0 + 500 / mPerDegLon(LAT0), LAT0),
+                        options(new Wind(0, 0, 0), NOW + 3_600_000L)),
+                "版本缺失必须拒绝求解（fail closed）");
+    }
+
     /** 数据缺失：查无该船快照 → 拒绝求解。 */
     @Test
     void recompute_shouldReject_whenSnapshotAbsent() {

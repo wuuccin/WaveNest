@@ -7,6 +7,7 @@ import com.waterlogistics.algo.meeting.model.CpaPoint;
 import com.waterlogistics.algo.meeting.model.Waypoint;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * 航迹级空域冲突二查（简化版）——检测对象①「机—机」两条航迹的时空冲突
@@ -25,6 +26,9 @@ import java.util.List;
  *
  * <p>坐标处理：以<b>被查航迹首点</b>为原点做局部米制平移（同 {@code GeoApprox} 近似），
  * 两航迹共用同一原点——包围盒、距离与 CPA 全部在米制下计算。
+ *
+ * <p>前置约束：两航迹的航点时刻须<b>严格递增</b>（时间窗与线性插值均基于此；不满足即
+ * 抛 {@link IllegalArgumentException}）。
  */
 public final class TrackConflictChecker {
 
@@ -41,10 +45,14 @@ public final class TrackConflictChecker {
      * @param other  对照航迹
      * @param params 间隔与采样参数（调用方注入）
      * @return 冲突结论；包围盒粗筛或时间窗短路时不产 CPA，绕行几何首版恒为 null
-     * @throws IllegalArgumentException 航迹航点不足或采样步长非正
+     * @throws IllegalArgumentException 航迹航点不足、航点时刻非严格递增或采样步长非正
+     * @throws NullPointerException     route／other／params 为 null
      */
     public static B_ConflictResult check(B_FlyableRoute route, B_FlyableRoute other,
             ConflictParams params) {
+        Objects.requireNonNull(route, "route 不能为空");
+        Objects.requireNonNull(other, "other 不能为空");
+        Objects.requireNonNull(params, "params 不能为空");
         requireUsable(route, "route");
         requireUsable(other, "other");
         if (params.sampleStepMs() <= 0) {
@@ -104,7 +112,7 @@ public final class TrackConflictChecker {
             if (t == tEnd) {
                 break;
             }
-            t = Math.min(tEnd, t + step);
+            t = (tEnd - t <= step) ? tEnd : t + step;
         }
 
         CpaPoint cpaPoint = new CpaPoint(
@@ -122,6 +130,12 @@ public final class TrackConflictChecker {
     private static void requireUsable(B_FlyableRoute route, String name) {
         if (route.waypoints() == null || route.waypoints().size() < 2) {
             throw new IllegalArgumentException(name + " 至少需要 2 个航点");
+        }
+        List<Waypoint> waypoints = route.waypoints();
+        for (int i = 1; i < waypoints.size(); i++) {
+            if (waypoints.get(i).t() <= waypoints.get(i - 1).t()) {
+                throw new IllegalArgumentException(name + " 航点时刻必须严格递增（第 " + i + " 个非增）");
+            }
         }
     }
 

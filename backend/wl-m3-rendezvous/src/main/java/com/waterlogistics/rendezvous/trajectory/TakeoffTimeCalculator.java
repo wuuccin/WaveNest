@@ -2,6 +2,7 @@ package com.waterlogistics.rendezvous.trajectory;
 
 import com.waterlogistics.algo.meeting.model.B_TakeoffTimeResult;
 import com.waterlogistics.algo.meeting.model.TakeoffInfeasibleReason;
+import java.util.Objects;
 
 /**
  * 起飞时刻回填（算式部分）——一个反推算式 ＋ 不可行回退判定（《81-B组算法方案》§3.3、
@@ -31,6 +32,7 @@ public final class TakeoffTimeCalculator {
      * @throws IllegalArgumentException 精算时长为负或时刻精度粒度非正
      */
     public static B_TakeoffTimeResult compute(TakeoffTimeCommand cmd) {
+        Objects.requireNonNull(cmd, "cmd 不能为空");
         if (cmd.tauFineSec() < 0) {
             throw new IllegalArgumentException("精算飞行时长不能为负，实际 " + cmd.tauFineSec());
         }

@@ -6,10 +6,13 @@ package com.waterlogistics.rendezvous.port;
  */
 public class DroneContextUnavailableException extends RuntimeException {
 
+    private static final long serialVersionUID = 1L;
+
     /**
      * @param droneId 执行机实例
      */
     public DroneContextUnavailableException(String droneId) {
-        super("查无执行机台账，拒绝求解：机 " + droneId);
+        super("查无执行机台账，拒绝求解：机 "
+                + (droneId == null || droneId.isBlank() ? "<unknown>" : droneId));
     }
 }

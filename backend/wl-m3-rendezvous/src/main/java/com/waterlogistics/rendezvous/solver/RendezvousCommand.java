@@ -1,6 +1,7 @@
 package com.waterlogistics.rendezvous.solver;
 
 import com.waterlogistics.algo.meeting.model.Wind;
+import java.util.Objects;
 
 /**
  * 会面点求解命令——M2 发起的组合级调用入参（《22-接口契约》§5 第 3 步 · 判「追得上」）。
@@ -49,4 +50,22 @@ public record RendezvousCommand(
         double convergeEpsilonSec,
 
         int maxIterations) {
+
+    public RendezvousCommand {
+        Objects.requireNonNull(comboId, "comboId 不能为空");
+        Objects.requireNonNull(shipMmsi, "shipMmsi 不能为空");
+        Objects.requireNonNull(representativeWind, "representativeWind 不能为空");
+        if (!(cruiseSpeedMs > 0)) {
+            throw new IllegalArgumentException("巡航速度必须为正，实际 " + cruiseSpeedMs);
+        }
+        if (meetWindowMarginSec < 0) {
+            throw new IllegalArgumentException("会面时间窗余量不能为负，实际 " + meetWindowMarginSec);
+        }
+        if (!(convergeEpsilonSec > 0)) {
+            throw new IllegalArgumentException("收敛阈值必须为正，实际 " + convergeEpsilonSec);
+        }
+        if (maxIterations <= 0) {
+            throw new IllegalArgumentException("最大迭代次数必须为正，实际 " + maxIterations);
+        }
+    }
 }

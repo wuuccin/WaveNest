@@ -9,12 +9,16 @@ package com.waterlogistics.rendezvous.port;
  */
 public class SnapshotVersionMismatchException extends RuntimeException {
 
+    private static final long serialVersionUID = 1L;
+
     /**
      * @param shipMmsi 目标船标识
      * @param expected 调用方期望的快照版本
      * @param actual   端口实际取回的版本
      */
     public SnapshotVersionMismatchException(String shipMmsi, String expected, String actual) {
-        super("快照版本不一致，拒绝求解：船 " + shipMmsi + "，期望版本 " + expected + "，实际版本 " + actual);
+        super("快照版本不一致，拒绝求解：船 "
+                + (shipMmsi == null || shipMmsi.isBlank() ? "<unknown>" : shipMmsi)
+                + "，期望版本 " + expected + "，实际版本 " + actual);
     }
 }

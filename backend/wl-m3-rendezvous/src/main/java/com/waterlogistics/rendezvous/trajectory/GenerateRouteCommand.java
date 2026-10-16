@@ -1,6 +1,7 @@
 package com.waterlogistics.rendezvous.trajectory;
 
 import java.util.List;
+import java.util.Objects;
 
 /**
  * 航迹生成入参——「一项能力、两次调用」的调用侧形态（《33-M3-路径规划》§4.1）：
@@ -53,4 +54,18 @@ public record GenerateRouteCommand(
         double energyRatePerSecPct,
 
         double pathRisk) {
+
+    public GenerateRouteCommand {
+        Objects.requireNonNull(comboId, "comboId 不能为空");
+        Objects.requireNonNull(routeId, "routeId 不能为空");
+        landingPointsAlong = List.copyOf(Objects.requireNonNull(landingPointsAlong,
+                "landingPointsAlong 不能为空"));
+        avoidZones = List.copyOf(Objects.requireNonNull(avoidZones, "avoidZones 不能为空"));
+        if (!(speedMs > 0)) {
+            throw new IllegalArgumentException("速度必须为正，实际 " + speedMs);
+        }
+        if (!(pathRisk >= 0 && pathRisk <= 1)) {
+            throw new IllegalArgumentException("路径风险须在 [0,1]，实际 " + pathRisk);
+        }
+    }
 }

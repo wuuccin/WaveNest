@@ -17,6 +17,9 @@ import java.util.List;
  * <p>「一项能力，两次调用」（《33》§4.1）：去程与返程走同一实现，只换起点、终点与
  * 风况取值；{@link #generateMissionTrack} 把三段（去程／末段交接／返程）拼成一份带
  * 分段标签的演示航迹，供大屏分段着色。
+ *
+ * <p>已知局限（首版注明）：时长按大圆距离计算、航点按经纬度<b>线性内插</b>——短航段
+ * 两者差异可忽略；跨 180° 经线的航段会绕行（演示不覆盖，精算版随寻路内核一并处理）。
  */
 public final class TrackGenerator {
 
@@ -41,7 +44,7 @@ public final class TrackGenerator {
 
         double distanceM = GeoApprox.distanceM(
                 cmd.startLon(), cmd.startLat(), cmd.endLon(), cmd.endLat());
-        int tauFine = (int) Math.round(distanceM / cmd.speedMs());
+        int tauFine = Math.max(1, (int) Math.round(distanceM / cmd.speedMs()));
 
         List<Waypoint> waypoints = new ArrayList<>(cmd.waypointCount());
         for (int i = 0; i < cmd.waypointCount(); i++) {

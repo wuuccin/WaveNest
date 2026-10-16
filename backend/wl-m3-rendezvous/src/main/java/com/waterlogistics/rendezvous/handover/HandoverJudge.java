@@ -3,6 +3,7 @@ package com.waterlogistics.rendezvous.handover;
 import com.waterlogistics.algo.meeting.model.B_HandoverConfirmation;
 import com.waterlogistics.algo.meeting.model.HandoverResult;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * 末段会面与交接判定（简化版）——把「船体随动坐标系下的前馈＋反馈控制」简化为
@@ -38,6 +39,7 @@ public final class HandoverJudge {
      * @throws IllegalArgumentException 样本为空或时间非严格升序
      */
     public static B_HandoverConfirmation judge(HandoverCommand cmd) {
+        Objects.requireNonNull(cmd, "cmd 不能为空");
         List<HandoverSample> samples = cmd.samples();
         if (samples.isEmpty()) {
             throw new IllegalArgumentException("末段样本序列不能为空");
@@ -55,8 +57,8 @@ public final class HandoverJudge {
         Long handoverDoneT = null;
         boolean success = false;
 
-        double prevDx = relativeX(origin, origin, cosLat);
-        double prevDy = relativeY(origin, origin);
+        double prevDx = relativeX(origin, cosLat);
+        double prevDy = relativeY(origin);
 
         for (int i = 1; i < samples.size(); i++) {
             HandoverSample s = samples.get(i);
@@ -65,8 +67,8 @@ public final class HandoverJudge {
                 throw new IllegalArgumentException("样本时间必须严格升序，第 " + i + " 个样本时间非增");
             }
 
-            double dx = relativeX(s, origin, cosLat);
-            double dy = relativeY(s, origin);
+            double dx = relativeX(s, cosLat);
+            double dy = relativeY(s);
             double dist = Math.hypot(dx, dy);
             double relSpeed = Math.hypot(dx - prevDx, dy - prevDy) / (dtMs / 1000.0);
             prevDx = dx;
@@ -94,7 +96,6 @@ public final class HandoverJudge {
                     phase = HandoverPhase.TRANSFER;
                     transferStartT = s.t();
                 }
-                continue;
             }
 
             if (phase == HandoverPhase.TRANSFER && s.dropDone()) {
@@ -102,8 +103,8 @@ public final class HandoverJudge {
                     success = true;
                     handoverDoneT = s.t();
                     phase = HandoverPhase.DEPART;
+                    break;
                 }
-                break;
             }
         }
 
@@ -111,8 +112,8 @@ public final class HandoverJudge {
         Integer handoverTimeCost = null;
         Double energyCost = null;
         if (success) {
-            escortTimeCost = (int) ((transferStartT - origin.t()) / 1000);
-            handoverTimeCost = (int) ((handoverDoneT - transferStartT) / 1000);
+            escortTimeCost = (int) Math.min(Integer.MAX_VALUE, (transferStartT - origin.t()) / 1000);
+            handoverTimeCost = (int) Math.min(Integer.MAX_VALUE, (handoverDoneT - transferStartT) / 1000);
             energyCost = (escortTimeCost + handoverTimeCost) * params.energyRatePerSecPct();
         }
 
@@ -123,13 +124,11 @@ public final class HandoverJudge {
                 success ? HandoverResult.SUCCESS : HandoverResult.FAILED);
     }
 
-    private static double relativeX(HandoverSample s, HandoverSample origin, double cosLat) {
-        return (s.droneLon() - origin.droneLon()) * METERS_PER_DEG * cosLat
-                - (s.shipLon() - origin.droneLon()) * METERS_PER_DEG * cosLat;
+    private static double relativeX(HandoverSample s, double cosLat) {
+        return (s.droneLon() - s.shipLon()) * METERS_PER_DEG * cosLat;
     }
 
-    private static double relativeY(HandoverSample s, HandoverSample origin) {
-        return (s.droneLat() - origin.droneLat()) * METERS_PER_DEG
-                - (s.shipLat() - origin.droneLat()) * METERS_PER_DEG;
+    private static double relativeY(HandoverSample s) {
+        return (s.droneLat() - s.shipLat()) * METERS_PER_DEG;
     }
 }

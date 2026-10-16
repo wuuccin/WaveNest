@@ -1,5 +1,7 @@
 package com.waterlogistics.rendezvous.trajectory;
 
+import java.util.Objects;
+
 /**
  * 三段任务航迹生成入参——供大屏「无人机三段航迹」分段着色的演示数据
  * （《43-编码分工说明》§6.3：去程／末段交接／返程，产出分段着色数据）。
@@ -58,4 +60,9 @@ public record MissionTrackCommand(
         long takeoffMs,
 
         int waypointsPerLeg) {
+
+    public MissionTrackCommand {
+        Objects.requireNonNull(comboId, "comboId 不能为空");
+        Objects.requireNonNull(routeId, "routeId 不能为空");
+    }
 }
