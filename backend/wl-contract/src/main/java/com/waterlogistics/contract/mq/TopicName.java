@@ -6,8 +6,9 @@ package com.waterlogistics.contract.mq;
  * <p>依据《22-接口契约》v1.2 §1.2。MQ 基调为 MQTT（遥测／指令链路，由 M1 建链）
  * ＋ RabbitMQ（业务消息），本项目不引入 Kafka（《30-M1》§5 类名裁决 C3）。
  *
- * <p>四类前缀分区：原始 {@code raw.*}、解析后 {@code data.*}、告警 {@code alert.*}、
- * 任务方案 {@code task.*}。共 12 个主题，成员见 {@link #TOPICS}（增减须由收口方裁决）。
+ * <p>五类前缀分区：原始 {@code raw.*}、解析后 {@code data.*}、告警 {@code alert.*}、
+ * 任务方案 {@code task.*}、会面偏差回流 {@code rendezvous.*}。共 13 个主题，
+ * 成员见 {@link #TOPICS}（增减须由收口方裁决）。
  */
 public final class TopicName {
 
@@ -58,6 +59,17 @@ public final class TopicName {
     public static final String TASK_PLAN = "task.plan";
 
     /**
+     * 会面偏差样本回流（功能 19）。生产方 M3（G 组），消费方 M2、E 组功能 17、A 组功能 2。
+     *
+     * <p>字段照《86》附 G-01 会面偏差样本对象级字段表全 13 项，见
+     * {@link RendezvousDeviationMessage}。
+     *
+     * <p><b>归 {@code rendezvous.*} 前缀而非 {@code alert.*}</b>：《86》§5 明写
+     * 「偏差样本经数据回流行推 M2，<b>不走告警通道</b>」——它不写 {@code alert} 表、不产级别。
+     */
+    public static final String RENDEZVOUS_DEVIATION = "rendezvous.deviation";
+
+    /**
      * 全部主题名快照，供启动自检与文档核对使用。
      *
      * <p>约定：M6 不作为 MQ 消费方（落库由 M1/M2 → M6 的调用完成），
@@ -66,7 +78,7 @@ public final class TopicName {
     public static final java.util.List<String> TOPICS = java.util.List.of(
             RAW_AIS, RAW_UAV_TELEMETRY, RAW_WEATHER, RAW_HYDRO, RAW_NOTICE,
             DATA_AIS, DATA_UAV_TELEMETRY, DATA_WEATHER, DATA_HYDRO, DATA_NOTICE,
-            ALERT_EVENT, TASK_PLAN);
+            ALERT_EVENT, TASK_PLAN, RENDEZVOUS_DEVIATION);
 
     private TopicName() {
         // 常量容器，禁止实例化

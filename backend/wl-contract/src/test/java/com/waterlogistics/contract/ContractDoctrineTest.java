@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.waterlogistics.contract.mq.RendezvousDeviationMessage;
 import com.waterlogistics.contract.mq.TaskPlanMessage;
 import com.waterlogistics.contract.mq.TopicName;
 import com.waterlogistics.contract.rest.GateSource;
@@ -29,15 +30,16 @@ import org.junit.jupiter.api.Test;
 class ContractDoctrineTest {
 
     /**
-     * 《22》§1.2 的 12 个主题：raw.* 五条、data.* 五条、alert.event、task.plan。
+     * 《22》§1.2 的 12 个主题：raw.* 五条、data.* 五条、alert.event、task.plan；
+     * ＋《86》附 G-01 新增的 {@code rendezvous.deviation}（功能 19 数据回流，非告警通道）＝ 13 个。
      */
     @Test
-    void topics_shouldBeTwelveAndAuthoritative() {
-        assertEquals(12, TopicName.TOPICS.size(), "主题数量必须为《22》§1.2 的 12 个");
+    void topics_shouldBeThirteenAndAuthoritative() {
+        assertEquals(13, TopicName.TOPICS.size(), "主题数量必须为 12＋1（rendezvous.deviation）");
         assertEquals(List.of(
                         "raw.ais", "raw.uav.telemetry", "raw.weather", "raw.hydro", "raw.notice",
                         "data.ais", "data.uav.telemetry", "data.weather", "data.hydro", "data.notice",
-                        "alert.event", "task.plan"),
+                        "alert.event", "task.plan", "rendezvous.deviation"),
                 TopicName.TOPICS);
     }
 
@@ -130,6 +132,29 @@ class ContractDoctrineTest {
                     "《22》§1.2：task.plan 缺字段 " + required);
         }
         assertEquals(TopicName.TASK_PLAN, TaskPlanMessage.TOPIC);
+    }
+
+    /**
+     * 《86》附 G-01「会面偏差样本对象级字段表」：全表 13 项，逐项照抄，一个不多一个不少。
+     * 字段被私自增删、改名或换序，这里立刻红。
+     */
+    @Test
+    void rendezvousDeviation_shouldFollowG01FieldTable() {
+        List<String> components = Arrays.stream(RendezvousDeviationMessage.class.getRecordComponents())
+                .map(RecordComponent::getName)
+                .toList();
+
+        assertEquals(13, components.size(),
+                "《86》附 G-01 会面偏差样本字段表恰 13 项，字段不得增删");
+        assertEquals(List.of("sampleId", "droneId", "orderId",
+                        "plannedRendezvous", "actualRendezvous", "plannedTime", "actualTime",
+                        "dSpaceM", "dTimeS", "model", "homeNestId",
+                        "windCondition", "shipSpeedRange"),
+                components, "须逐项照 G-01 全表，顺序即表格顺序");
+
+        assertEquals(TopicName.RENDEZVOUS_DEVIATION, RendezvousDeviationMessage.TOPIC);
+        assertFalse(TopicName.TOPICS.contains("alert.deviation"),
+                "《86》§5：偏差样本走数据回流行、不走告警通道，不得并入 alert.*");
     }
 
     private static List<String> values(Enum<?>[] enums) {
