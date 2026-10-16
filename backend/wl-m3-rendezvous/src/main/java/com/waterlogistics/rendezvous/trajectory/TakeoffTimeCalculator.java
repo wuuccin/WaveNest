@@ -2,6 +2,7 @@ package com.waterlogistics.rendezvous.trajectory;
 
 import com.waterlogistics.algo.meeting.model.B_TakeoffTimeResult;
 import com.waterlogistics.algo.meeting.model.TakeoffInfeasibleReason;
+import java.util.Objects;
 
 /**
  * 起飞时刻回填（算式部分）——一个反推算式 ＋ 不可行回退判定（《81-B组算法方案》§3.3、
@@ -25,18 +26,12 @@ public final class TakeoffTimeCalculator {
     /**
      * 反推一个候选组合的起飞时刻。
      *
-     * @param cmd 回填入参（全量注入）
+     * @param cmd 回填入参（全量注入；时长与粒度等前置由 {@link TakeoffTimeCommand} 构造期校验）
      * @return 算式结果；不可行时 {@code feasible=false}、原因「早于当前时刻」，
      *         {@code takeoffT} 仍给算式值（追溯用）
-     * @throws IllegalArgumentException 精算时长为负或时刻精度粒度非正
      */
     public static B_TakeoffTimeResult compute(TakeoffTimeCommand cmd) {
-        if (cmd.tauFineSec() < 0) {
-            throw new IllegalArgumentException("精算飞行时长不能为负，实际 " + cmd.tauFineSec());
-        }
-        if (cmd.timeGridMs() <= 0) {
-            throw new IllegalArgumentException("时刻精度粒度必须为正，实际 " + cmd.timeGridMs());
-        }
+        Objects.requireNonNull(cmd, "cmd 不能为空");
 
         long rawT = cmd.meetTMs() - cmd.tauFineSec() * 1000L;
         long takeoffT = rawT - Math.floorMod(rawT, cmd.timeGridMs());

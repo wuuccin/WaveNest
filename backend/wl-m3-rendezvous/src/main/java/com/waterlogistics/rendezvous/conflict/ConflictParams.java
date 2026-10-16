@@ -16,4 +16,15 @@ public record ConflictParams(
         double verticalSepM,
 
         long sampleStepMs) {
+
+    public ConflictParams {
+        if (!Double.isFinite(horizontalSepM) || !Double.isFinite(verticalSepM)
+                || !(horizontalSepM > 0) || !(verticalSepM > 0)) {
+            throw new IllegalArgumentException(
+                    "安全间隔必须为正的有限数，实际 " + horizontalSepM + "/" + verticalSepM);
+        }
+        if (sampleStepMs <= 0) {
+            throw new IllegalArgumentException("采样步长必须为正，实际 " + sampleStepMs);
+        }
+    }
 }

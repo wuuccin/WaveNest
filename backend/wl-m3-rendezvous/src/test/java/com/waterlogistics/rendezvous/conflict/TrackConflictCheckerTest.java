@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.waterlogistics.algo.meeting.model.B_ConflictResult;
 import com.waterlogistics.algo.meeting.model.B_FlyableRoute;
+import com.waterlogistics.algo.meeting.model.Waypoint;
 import com.waterlogistics.rendezvous.trajectory.GenerateRouteCommand;
 import com.waterlogistics.rendezvous.trajectory.TrackGenerator;
 import java.util.List;
@@ -102,6 +103,31 @@ class TrackConflictCheckerTest {
         assertThrows(IllegalArgumentException.class,
                 () -> TrackConflictChecker.check(eastTrack(), northTrack(T0, 60.0),
                         new ConflictParams(100, 25, 0)), "采样步长非正应拒绝");
+        assertThrows(IllegalArgumentException.class,
+                () -> new ConflictParams(Double.POSITIVE_INFINITY, 25, 1_000),
+                "无穷大安全间隔应拒绝（防判据恒真——Infinity 不得穿透）");
+    }
+
+    /** 航点时刻非严格递增：前置校验拒绝（时间窗与线性插值均依赖该不变量）。 */
+    @Test
+    void unsortedWaypoints_shouldBeRejected() {
+        B_FlyableRoute unsorted = new B_FlyableRoute("RT-D", "RV-D", "combo-1",
+                List.of(new Waypoint(121.0, 30.0, 60.0, 15.0, T0),
+                        new Waypoint(121.1, 30.0, 60.0, 15.0, T0)),
+                0, 0.0, 0.0, List.of(), List.of());
+
+        assertThrows(IllegalArgumentException.class,
+                () -> TrackConflictChecker.check(unsorted, eastTrack(), PARAMS),
+                "航点时刻非严格递增应拒绝");
+    }
+
+    /** 超大采样步长：推进须防溢出（旧写法 t+step 溢出为负会死循环）——快速走到 tEnd 收尾。 */
+    @Test
+    void hugeSampleStep_shouldTerminate() {
+        B_ConflictResult res = TrackConflictChecker.check(
+                eastTrack(), northTrack(T0, 60.0), new ConflictParams(100, 25, Long.MAX_VALUE));
+
+        assertFalse(res.conflictFlag(), "仅两端点采样且相距远：不判冲突");
     }
 
     // ===== 夹具 =====

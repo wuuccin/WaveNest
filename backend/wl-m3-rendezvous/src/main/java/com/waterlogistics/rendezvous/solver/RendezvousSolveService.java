@@ -34,11 +34,13 @@ public class RendezvousSolveService {
      *                                          （《81》§2.1 硬要求 1：本轮调度多候选须共用同一版本）
      */
     public B_RendezvousSolution solve(RendezvousCommand cmd) {
+        Objects.requireNonNull(cmd, "cmd 不能为空");
         ShipTrackSnapshot snapshot = snapshotPort.latest(cmd.shipMmsi());
         if (snapshot == null) {
             throw new SnapshotUnavailableException(cmd.shipMmsi());
         }
-        if (!Objects.equals(cmd.snapshotVersion(), snapshot.version())) {
+        if (cmd.snapshotVersion() == null || snapshot.version() == null
+                || !Objects.equals(cmd.snapshotVersion(), snapshot.version())) {
             throw new SnapshotVersionMismatchException(
                     cmd.shipMmsi(), cmd.snapshotVersion(), snapshot.version());
         }

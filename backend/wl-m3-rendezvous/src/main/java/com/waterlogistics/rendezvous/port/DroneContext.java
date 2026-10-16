@@ -1,5 +1,7 @@
 package com.waterlogistics.rendezvous.port;
 
+import java.util.Objects;
+
 /**
  * 执行机台账反查结果——6a 重算按 {@code droneId} 反查所需的最小上下文
  * （《81-B组算法方案》§2.5：定位机型、归属机巢；返回可带 comboId，由该机当前任务回溯）。
@@ -27,4 +29,15 @@ public record DroneContext(
         double cruiseSpeedMs,
 
         String comboId) {
+
+    public DroneContext {
+        Objects.requireNonNull(droneId, "droneId 不能为空");
+        Objects.requireNonNull(homeNestId, "homeNestId 不能为空");
+        if (!Double.isFinite(nestLon) || !Double.isFinite(nestLat)) {
+            throw new IllegalArgumentException("机巢坐标必须为有限数");
+        }
+        if (!Double.isFinite(cruiseSpeedMs) || !(cruiseSpeedMs > 0)) {
+            throw new IllegalArgumentException("机型巡航速度必须为正的有限数，实际 " + cruiseSpeedMs);
+        }
+    }
 }

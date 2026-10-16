@@ -7,6 +7,7 @@ import com.waterlogistics.algo.meeting.model.CpaPoint;
 import com.waterlogistics.algo.meeting.model.Waypoint;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * 航迹级空域冲突二查（简化版）——检测对象①「机—机」两条航迹的时空冲突
@@ -25,6 +26,9 @@ import java.util.List;
  *
  * <p>坐标处理：以<b>被查航迹首点</b>为原点做局部米制平移（同 {@code GeoApprox} 近似），
  * 两航迹共用同一原点——包围盒、距离与 CPA 全部在米制下计算。
+ *
+ * <p>前置约束：两航迹的航点时刻须<b>严格递增</b>（时间窗与线性插值均基于此；不满足即
+ * 抛 {@link IllegalArgumentException}）。
  */
 public final class TrackConflictChecker {
 
@@ -39,17 +43,18 @@ public final class TrackConflictChecker {
      *
      * @param route  被查航迹（{@code checksumVersion} 取它的 {@code routeVersion}）
      * @param other  对照航迹
-     * @param params 间隔与采样参数（调用方注入）
+     * @param params 间隔与采样参数（调用方注入；数值前置由 {@link ConflictParams} 构造期校验）
      * @return 冲突结论；包围盒粗筛或时间窗短路时不产 CPA，绕行几何首版恒为 null
-     * @throws IllegalArgumentException 航迹航点不足或采样步长非正
+     * @throws IllegalArgumentException 航迹航点不足或航点时刻非严格递增
+     * @throws NullPointerException     route／other／params 为 null
      */
     public static B_ConflictResult check(B_FlyableRoute route, B_FlyableRoute other,
             ConflictParams params) {
+        Objects.requireNonNull(route, "route 不能为空");
+        Objects.requireNonNull(other, "other 不能为空");
+        Objects.requireNonNull(params, "params 不能为空");
         requireUsable(route, "route");
         requireUsable(other, "other");
-        if (params.sampleStepMs() <= 0) {
-            throw new IllegalArgumentException("采样步长必须为正，实际 " + params.sampleStepMs());
-        }
 
         Waypoint origin = route.waypoints().get(0);
         List<LocalPoint> a = toLocal(route.waypoints(), origin);
@@ -104,11 +109,11 @@ public final class TrackConflictChecker {
             if (t == tEnd) {
                 break;
             }
-            t = Math.min(tEnd, t + step);
+            t = (tEnd - t <= step) ? tEnd : t + step;
         }
 
         CpaPoint cpaPoint = new CpaPoint(
-                origin.lon() + bestMidX / (METERS_PER_DEG * Math.cos(Math.toRadians(origin.lat()))),
+                origin.lon() + bestMidX / mPerDegLon(origin.lat()),
                 origin.lat() + bestMidY / METERS_PER_DEG,
                 bestMidAlt);
         ConflictSpaceTime interval = anyConflict
@@ -122,6 +127,12 @@ public final class TrackConflictChecker {
     private static void requireUsable(B_FlyableRoute route, String name) {
         if (route.waypoints() == null || route.waypoints().size() < 2) {
             throw new IllegalArgumentException(name + " 至少需要 2 个航点");
+        }
+        List<Waypoint> waypoints = route.waypoints();
+        for (int i = 1; i < waypoints.size(); i++) {
+            if (waypoints.get(i).t() <= waypoints.get(i - 1).t()) {
+                throw new IllegalArgumentException(name + " 航点时刻必须严格递增（第 " + i + " 个非增）");
+            }
         }
     }
 
@@ -182,12 +193,20 @@ public final class TrackConflictChecker {
         return last;
     }
 
+    /**
+     * 经度方向米/度——高纬处 cos(φ)→0，取 1 m 兜底避免除零／精度崩
+     * （同 {@code ConstantVelocityPredictor} 既有写法，正反变换共用同一取值）。
+     */
+    private static double mPerDegLon(double lat) {
+        return Math.max(METERS_PER_DEG * Math.cos(Math.toRadians(lat)), 1.0);
+    }
+
     private static List<LocalPoint> toLocal(List<Waypoint> waypoints, Waypoint origin) {
-        double cosLat = Math.cos(Math.toRadians(origin.lat()));
+        double metersPerDegLon = mPerDegLon(origin.lat());
         List<LocalPoint> out = new ArrayList<>(waypoints.size());
         for (Waypoint w : waypoints) {
             out.add(new LocalPoint(
-                    (w.lon() - origin.lon()) * METERS_PER_DEG * cosLat,
+                    (w.lon() - origin.lon()) * metersPerDegLon,
                     (w.lat() - origin.lat()) * METERS_PER_DEG,
                     w.altM(),
                     w.t()));

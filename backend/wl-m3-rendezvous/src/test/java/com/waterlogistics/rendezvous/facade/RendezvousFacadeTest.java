@@ -80,6 +80,21 @@ class RendezvousFacadeTest {
                 "异常信息带期望与实际两个版本：" + ex.getMessage());
     }
 
+    /** 版本闸门 fail-closed：期望版本或快照版本缺失（null）一律拒绝，不得因 null==null 放行。 */
+    @Test
+    void solve_shouldReject_whenVersionMissing() {
+        List<ShipPoint> points = new ArrayList<>();
+        points.add(new ShipPoint(NOW, LON0, LAT0, 90.0, 0.0, 0.0));
+        points.add(new ShipPoint(NOW + 10_000L, LON0, LAT0, 90.0, 0.0, 0.0));
+        StubSnapshotPort port = new StubSnapshotPort();
+        port.put(new ShipTrackSnapshot(null, MMSI, NOW, 86_400, points));
+        RendezvousFacade facade = new RendezvousFacade(port, droneId -> null);
+
+        assertThrows(SnapshotVersionMismatchException.class,
+                () -> facade.solve(command(null)),
+                "版本缺失必须拒绝求解（fail closed）");
+    }
+
     /** 数据缺失：端口查无该船快照 → 拒绝求解（与「算法无解」区分），异常信息带船号。 */
     @Test
     void solve_shouldReject_whenSnapshotAbsent() {

@@ -1,5 +1,7 @@
 package com.waterlogistics.rendezvous.solver;
 
+import java.util.Objects;
+
 /**
  * 6a 会面点重算请求（接收侧形态）——照《81-B组算法方案》§2.5 的字段分档；E 组
  * {@code RendezvousRecalcRequest} 按此校准（同源《29-各组算法层接口定义》§3.5.1(1a)、C-06）。
@@ -39,4 +41,11 @@ public record RendezvousRecalcRequest(
         long timestamp,
 
         RecalcStateSnapshot stateSnapshot) {
+
+    public RendezvousRecalcRequest {
+        Objects.requireNonNull(requestId, "requestId 不能为空");
+        Objects.requireNonNull(droneId, "droneId 不能为空");
+        Objects.requireNonNull(shipMmsi, "shipMmsi 不能为空");
+        Objects.requireNonNull(stateSnapshot, "stateSnapshot 不能为空");
+    }
 }

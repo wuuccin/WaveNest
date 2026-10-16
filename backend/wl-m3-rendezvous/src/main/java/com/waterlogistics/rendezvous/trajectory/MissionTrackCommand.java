@@ -1,5 +1,7 @@
 package com.waterlogistics.rendezvous.trajectory;
 
+import java.util.Objects;
+
 /**
  * 三段任务航迹生成入参——供大屏「无人机三段航迹」分段着色的演示数据
  * （《43-编码分工说明》§6.3：去程／末段交接／返程，产出分段着色数据）。
@@ -58,4 +60,31 @@ public record MissionTrackCommand(
         long takeoffMs,
 
         int waypointsPerLeg) {
+
+    public MissionTrackCommand {
+        Objects.requireNonNull(comboId, "comboId 不能为空");
+        Objects.requireNonNull(routeId, "routeId 不能为空");
+        if (!Double.isFinite(nestLon) || !Double.isFinite(nestLat)
+                || !Double.isFinite(meetLon) || !Double.isFinite(meetLat)
+                || !Double.isFinite(handoverEndLon) || !Double.isFinite(handoverEndLat)
+                || !Double.isFinite(returnTargetLon) || !Double.isFinite(returnTargetLat)) {
+            throw new IllegalArgumentException("三段几何坐标必须为有限数");
+        }
+        if (!Double.isFinite(cruiseAltM) || !(cruiseAltM >= 0)) {
+            throw new IllegalArgumentException("巡航高度不能为负且须为有限数，实际 " + cruiseAltM);
+        }
+        if (waypointsPerLeg < 2) {
+            throw new IllegalArgumentException("waypointsPerLeg 至少为 2，实际 " + waypointsPerLeg);
+        }
+        if (!Double.isFinite(outboundSpeedMs) || !Double.isFinite(terminalSpeedMs)
+                || !Double.isFinite(returnSpeedMs)
+                || !(outboundSpeedMs > 0) || !(terminalSpeedMs > 0) || !(returnSpeedMs > 0)) {
+            throw new IllegalArgumentException(
+                    "各段速度必须为正的有限数，实际 outboundSpeedMs=" + outboundSpeedMs
+                            + ", terminalSpeedMs=" + terminalSpeedMs + ", returnSpeedMs=" + returnSpeedMs);
+        }
+        if (takeoffMs <= 0) {
+            throw new IllegalArgumentException("起飞时刻必须为正，实际 " + takeoffMs);
+        }
+    }
 }

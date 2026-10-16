@@ -6,7 +6,7 @@ package com.waterlogistics.rendezvous.handover;
  * （来源 {@code sys_param}），本层不硬编码。
  *
  * @param approachRadiusM     接近段收敛阈值（相对距离低于此值进入匹配），米
- * @param posErrorM           相对位置误差阈值，米
+ * @param posErrorM           相对位置误差阈值，米（须小于 {@code approachRadiusM}）
  * @param speedErrorMs        相对速度阈值，m/s
  * @param stableSec           稳定持续时间（位置与速度须持续达标），秒
  * @param windLimitMs         交接风阈值，m/s
@@ -25,4 +25,25 @@ public record HandoverParams(
         double windLimitMs,
 
         double energyRatePerSecPct) {
+
+    public HandoverParams {
+        if (!Double.isFinite(approachRadiusM) || !Double.isFinite(posErrorM) || !Double.isFinite(speedErrorMs)
+                || !(approachRadiusM > 0) || !(posErrorM > 0) || !(speedErrorMs > 0)) {
+            throw new IllegalArgumentException(
+                    "收敛与误差阈值必须为正的有限数，实际 approachRadiusM=" + approachRadiusM
+                            + ", posErrorM=" + posErrorM + ", speedErrorMs=" + speedErrorMs);
+        }
+        if (!(posErrorM < approachRadiusM)) {
+            throw new IllegalArgumentException(
+                    "相对位置误差阈值必须小于接近段收敛阈值，实际 posErrorM=" + posErrorM
+                            + ", approachRadiusM=" + approachRadiusM);
+        }
+        if (!Double.isFinite(stableSec) || !Double.isFinite(windLimitMs)
+                || !Double.isFinite(energyRatePerSecPct)
+                || !(stableSec >= 0) || !(windLimitMs >= 0) || !(energyRatePerSecPct >= 0)) {
+            throw new IllegalArgumentException(
+                    "持续时间、风阈与能耗率不能为负且须为有限数，实际 stableSec=" + stableSec
+                            + ", windLimitMs=" + windLimitMs + ", energyRatePerSecPct=" + energyRatePerSecPct);
+        }
+    }
 }

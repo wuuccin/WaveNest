@@ -47,6 +47,11 @@ public class RendezvousRecalcService {
      * @throws SnapshotVersionMismatchException 期望版本与快照实际版本不一致——拒绝求解
      */
     public RendezvousRecalcResult recompute(RendezvousRecalcRequest request, RecalcOptions options) {
+        Objects.requireNonNull(request, "request 不能为空");
+        Objects.requireNonNull(options, "options 不能为空");
+        if (request.droneId().isBlank()) {
+            throw new IllegalArgumentException("droneId 不能为空白");
+        }
         DroneContext context = droneContextPort.resolve(request.droneId());
         if (context == null) {
             throw new DroneContextUnavailableException(request.droneId());
@@ -56,7 +61,8 @@ public class RendezvousRecalcService {
         if (snapshot == null) {
             throw new SnapshotUnavailableException(request.shipMmsi());
         }
-        if (!Objects.equals(request.snapshotVersion(), snapshot.version())) {
+        if (request.snapshotVersion() == null || snapshot.version() == null
+                || !Objects.equals(request.snapshotVersion(), snapshot.version())) {
             throw new SnapshotVersionMismatchException(
                     request.shipMmsi(), request.snapshotVersion(), snapshot.version());
         }
