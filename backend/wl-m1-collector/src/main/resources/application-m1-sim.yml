@@ -1,0 +1,35 @@
+# =====================================================
+# 模块一 · 数据采集（仿真器）本地覆盖配置（杨添爻）
+# 说明：本文件仅覆盖 M1 相关项；仓库全局 application.yml 由收口方维护，勿在全局文件里改仿真参数
+# =====================================================
+wavenest:
+  sim:
+    enabled: true          # 联调期可改 false 停发数据
+    tick-millis: 1000      # 采集节拍（AIS 推进步长与它同键，改一处即同步）
+    ais:
+      start-lon: 114.300000
+      start-lat: 30.600000
+      start-cog: 90.0      # 初始航向（正东）
+      sog-knots: 8.0
+      ship-name: SIM-SHIP-01
+      mmsi: "123456789"
+      noise: 0.00005
+    uav:
+      count: 2
+      center-lon: 114.305000
+      center-lat: 30.605000
+      radius-deg: 0.0030
+      phase-step: 0.35
+      speed-ms: 12.0
+      noise: 0.00002
+    weather:
+      lon0: 114.290000
+      lat0: 30.590000
+      step: 0.010000
+      grid: 2              # 2x2 网格＝每节拍发 4 条（多条发布，U-05 口径）
+      wind-base: 5.0
+      gust-add: 3.0
+      dir-base: 135.0
+      wind-jitter: 1.5
+  mq:
+    exchange: wavenest.data
