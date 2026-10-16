@@ -15,7 +15,7 @@ public interface DroneContextPort {
     /**
      * 按执行机实例反查上下文。
      *
-     * @param droneId 执行机实例
+     * @param droneId 执行机实例（调用方保证非空、非空白；{@code RendezvousRecalcService} 已在入口校验）
      * @return 反查结果；查无该机时为 {@code null}，由调用方按「拒绝求解」处理
      */
     DroneContext resolve(String droneId);

@@ -1,6 +1,7 @@
 package com.waterlogistics.rendezvous.trajectory;
 
 import java.util.List;
+import java.util.Objects;
 
 /**
  * 航迹生成入参——「一项能力、两次调用」的调用侧形态（《33-M3-路径规划》§4.1）：
@@ -53,4 +54,31 @@ public record GenerateRouteCommand(
         double energyRatePerSecPct,
 
         double pathRisk) {
+
+    public GenerateRouteCommand {
+        Objects.requireNonNull(comboId, "comboId 不能为空");
+        Objects.requireNonNull(routeId, "routeId 不能为空");
+        landingPointsAlong = List.copyOf(Objects.requireNonNull(landingPointsAlong,
+                "landingPointsAlong 不能为空"));
+        avoidZones = List.copyOf(Objects.requireNonNull(avoidZones, "avoidZones 不能为空"));
+        if (!Double.isFinite(startLon) || !Double.isFinite(startLat)
+                || !Double.isFinite(endLon) || !Double.isFinite(endLat)) {
+            throw new IllegalArgumentException("起终点坐标必须为有限数");
+        }
+        if (waypointCount < 2) {
+            throw new IllegalArgumentException("航点数至少为 2，实际 " + waypointCount);
+        }
+        if (!Double.isFinite(speedMs) || !(speedMs > 0)) {
+            throw new IllegalArgumentException("速度必须为正的有限数，实际 " + speedMs);
+        }
+        if (!Double.isFinite(cruiseAltM) || !(cruiseAltM >= 0)) {
+            throw new IllegalArgumentException("巡航高度不能为负且须为有限数，实际 " + cruiseAltM);
+        }
+        if (!Double.isFinite(energyRatePerSecPct) || !(energyRatePerSecPct >= 0)) {
+            throw new IllegalArgumentException("能耗率不能为负且须为有限数，实际 " + energyRatePerSecPct);
+        }
+        if (!(pathRisk >= 0 && pathRisk <= 1)) {
+            throw new IllegalArgumentException("路径风险须在 [0,1]，实际 " + pathRisk);
+        }
+    }
 }

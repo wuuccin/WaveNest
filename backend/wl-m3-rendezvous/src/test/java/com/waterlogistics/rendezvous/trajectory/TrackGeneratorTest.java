@@ -79,6 +79,22 @@ class TrackGeneratorTest {
                 "速度非正应拒绝");
     }
 
+    /** 短腿钳制：距离小于 speed/2 时 Math.round 会塌缩 0——时长须钳到 ≥1 s（时间仍严格递增）。 */
+    @Test
+    void generate_shouldClampTinyLegToOneSecond() {
+        B_FlyableRoute route = TrackGenerator.generate(new GenerateRouteCommand(
+                "combo-1", "RT-tiny", lonAt(0), LAT0, lonAt(0.5), LAT0,
+                60.0, 15.0, T0, 5, List.of(), List.of(), 0.05, 0.0));
+
+        assertEquals(1, route.tauFine(), "0.033 s 四舍五入到 0 → 钳到 1 s");
+        assertEquals(T0, route.waypoints().get(0).t(), "首点＝起点时刻");
+        assertEquals(T0 + 1_000L, route.waypoints().get(4).t(), "末点＝起点＋1 s");
+        for (int i = 1; i < route.waypoints().size(); i++) {
+            assertTrue(route.waypoints().get(i).t() > route.waypoints().get(i - 1).t(), "时间仍严格递增");
+        }
+        assertEquals(0.05, route.energyExact(), 1e-9, "能耗＝1×0.05%");
+    }
+
     // ===== 三段任务航迹 =====
 
     /**

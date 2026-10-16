@@ -10,6 +10,10 @@ import com.waterlogistics.algo.meeting.model.ShipTrackSnapshot;
  * 共用同一版本；上层服务按调用方给出的期望版本比对 {@link ShipTrackSnapshot#version()}，
  * 不一致即<b>拒绝求解</b>并抛 {@link SnapshotVersionMismatchException}。
  *
+ * <p>约定：查无时<b>返回 {@code null}</b>——实现<b>不得</b>抛 {@link SnapshotUnavailableException}，
+ * 该异常由调用方在拿到 null 后转换抛出；返回的快照须<b>只读可共享</b>（本轮多候选共用同一
+ * 实例），实现与调用方均不得修改其内容。
+ *
  * <p>本接口<b>纯读</b>：不落库、不改占位、无状态副作用（《81》§2.4 硬约束 1）。
  */
 public interface TrajectorySnapshotPort {
@@ -17,7 +21,7 @@ public interface TrajectorySnapshotPort {
     /**
      * 取指定船的最新预测快照。
      *
-     * @param shipMmsi 目标船标识
+     * @param shipMmsi 目标船标识（调用方保证非空、非空白）
      * @return 该船当前快照；查无此船（或尚无预测）时为 {@code null}，由调用方按「拒绝求解」处理
      */
     ShipTrackSnapshot latest(String shipMmsi);

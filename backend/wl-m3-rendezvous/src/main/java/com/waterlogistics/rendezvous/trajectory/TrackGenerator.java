@@ -5,6 +5,7 @@ import com.waterlogistics.algo.meeting.model.B_FlyableRoute;
 import com.waterlogistics.algo.meeting.model.Waypoint;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * 航迹生成——「给定起点与终点，生成一条满足水域约束的可飞航迹」的<b>首版简化实现</b>
@@ -17,6 +18,9 @@ import java.util.List;
  * <p>「一项能力，两次调用」（《33》§4.1）：去程与返程走同一实现，只换起点、终点与
  * 风况取值；{@link #generateMissionTrack} 把三段（去程／末段交接／返程）拼成一份带
  * 分段标签的演示航迹，供大屏分段着色。
+ *
+ * <p>已知局限（首版注明）：时长按大圆距离计算、航点按经纬度<b>线性内插</b>——短航段
+ * 两者差异可忽略；跨 180° 经线的航段会绕行（演示不覆盖，精算版随寻路内核一并处理）。
  */
 public final class TrackGenerator {
 
@@ -26,22 +30,16 @@ public final class TrackGenerator {
     /**
      * 生成一段可飞航迹（起点 → 终点）。
      *
-     * @param cmd 生成入参（阈值与参数由调用方注入，不硬编码）
+     * @param cmd 生成入参（航点数与速度等前置由 {@link GenerateRouteCommand} 构造期校验）
      * @return 可飞航迹；{@code routeVersion} 由 routeId 与起点时刻确定性生成，
      *         重算（6a 会面点重算、D 功能 7 定案后重出）换起点时刻即换新版本
-     * @throws IllegalArgumentException 航点数不足 2 或速度非正
      */
     public static B_FlyableRoute generate(GenerateRouteCommand cmd) {
-        if (cmd.waypointCount() < 2) {
-            throw new IllegalArgumentException("航点数至少为 2，实际 " + cmd.waypointCount());
-        }
-        if (cmd.speedMs() <= 0) {
-            throw new IllegalArgumentException("沿航迹速度必须为正，实际 " + cmd.speedMs());
-        }
+        Objects.requireNonNull(cmd, "cmd 不能为空");
 
         double distanceM = GeoApprox.distanceM(
                 cmd.startLon(), cmd.startLat(), cmd.endLon(), cmd.endLat());
-        int tauFine = (int) Math.round(distanceM / cmd.speedMs());
+        int tauFine = Math.max(1, (int) Math.round(distanceM / cmd.speedMs()));
 
         List<Waypoint> waypoints = new ArrayList<>(cmd.waypointCount());
         for (int i = 0; i < cmd.waypointCount(); i++) {
@@ -70,10 +68,14 @@ public final class TrackGenerator {
      * 生成三段任务航迹（去程／末段交接／返程）并打分段标签——供大屏分段着色
      * （《43》§6.3）。三段分别走 {@link #generate} 同一项能力，时间自起飞时刻顺延。
      *
+     * <p>返回的分段航迹<b>只含航点与分段标签</b>：能耗／风险／迫降点／避让区等元数据
+     * 不随本结构输出（分段着色的需要仅为点序、时刻与标签）。
+     *
      * @param cmd 三段几何与参数
      * @return 分段任务航迹（去程 → 末段交接 → 返程 顺序）
      */
     public static SegmentedTrack generateMissionTrack(MissionTrackCommand cmd) {
+        Objects.requireNonNull(cmd, "cmd 不能为空");
         B_FlyableRoute outbound = generate(new GenerateRouteCommand(
                 cmd.comboId(), cmd.routeId() + "-out",
                 cmd.nestLon(), cmd.nestLat(), cmd.meetLon(), cmd.meetLat(),
