@@ -108,6 +108,31 @@ public final class ConstantVelocityPredictor {
         return normalized < 0.0 ? normalized + 360.0 : normalized;
     }
 
+    /**
+     * 两点间的大地方位角（初始方位），度——正北为 0、顺时针增大，与 {@code cog} 同口径。
+     *
+     * <p>用途有两个，都不改语义：
+     * <ol>
+     *   <li>算<b>预测航迹在某点的切向</b>：E 组 6b 判据要吃
+     *       {@code HeadingSample.predictedTangentDeg}（见 {@code algo.inflight}）；</li>
+     *   <li>投影给 M3 时填 {@code ShipPoint.cog}（每段航迹方位）。</li>
+     * </ol>
+     *
+     * <p>简化版模型下预测点共线、切向恒等于 COG；但精算版航迹会弯曲，
+     * 故此处一律按相邻两点求方位，<b>换模型时本方法不用改</b>。
+     */
+    public static double bearingDeg(double lon1, double lat1, double lon2, double lat2) {
+        double phi1 = Math.toRadians(lat1);
+        double phi2 = Math.toRadians(lat2);
+        double deltaLon = Math.toRadians(lon2 - lon1);
+
+        double y = Math.sin(deltaLon) * Math.cos(phi2);
+        double x = Math.cos(phi1) * Math.sin(phi2)
+                - Math.sin(phi1) * Math.cos(phi2) * Math.cos(deltaLon);
+
+        return normalizeDeg(Math.toDegrees(Math.atan2(y, x)));
+    }
+
     private static void validate(String mmsi, double lon, double lat, double sogMs, double cogDeg) {
         if (mmsi == null || mmsi.isBlank()) {
             throw new IllegalArgumentException("mmsi 不得为空");

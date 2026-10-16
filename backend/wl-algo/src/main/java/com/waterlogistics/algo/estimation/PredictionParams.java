@@ -5,7 +5,8 @@ package com.waterlogistics.algo.estimation;
  *
  * <p><b>本类只承载参数，不承载阈值</b>：取值一律由调用方注入（模块层从 {@code sys_param}
  * 读出后传入），算法内部不得硬编码（《包结构设计》§二 铁律 4）。
- * {@link #defaults()} 仅供本地冒烟与单测，正式取值由 {@code wavenest.prediction.*} 覆盖。
+ * {@link #defaults()} 仅供本地冒烟与单测；正式取值由<b>模块层从 {@code sys_param}</b>
+ * （《37》§5.14.1）读出后注入，算法层不读配置、不认键名。
  *
  * <p>单位一律 SI：长度 m、时间 s。
  *

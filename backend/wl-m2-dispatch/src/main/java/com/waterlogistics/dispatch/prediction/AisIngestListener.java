@@ -1,37 +1,45 @@
 package com.waterlogistics.dispatch.prediction;
 
 import com.waterlogistics.contract.mq.AisMessage;
+import com.waterlogistics.contract.mq.TopicName;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.amqp.core.ExchangeTypes;
+import org.springframework.amqp.rabbit.annotation.Exchange;
+import org.springframework.amqp.rabbit.annotation.Queue;
+import org.springframework.amqp.rabbit.annotation.QueueBinding;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 /**
- * 增量接入 {@code data.ais} 并驱动预测刷新（M2 · 卢肄文）。
+ * 增量接入 {@code data.ais} 并驱动预测刷新（M2 · 卢肄文）——预测刷新驱动链的<b>入端</b>。
  *
- * <p>主题名取自 {@link com.waterlogistics.contract.mq.TopicName#DATA_AIS}（{@code data.ais}，
- * 《22》§1.2 唯一权威）。<b>不得自造主题名</b>，注意不是 {@code data.ship_ais}。
- *
- * <p><b>★ 为什么默认关闭</b>：{@code 22} §1.2 只规定了<b>主题名</b>，没有规定
- * RabbitMQ 的交换器／队列命名与绑定关系（那是模块层的部署约定）。为避免「自造拓扑」，
- * 本监听只在显式配置了队列名时才启用：
+ * <p><b>拓扑口径（为什么由本类声明队列）</b>：{@code 22} §1.2 只规定<b>主题名</b>
+ * （＝路由键），未规定交换器与队列。交换器名由 M1 在
+ * {@code application-m1-sim.yml} 中定为 {@code wavenest.mq.exchange = wavenest.data}（topic 型）；
+ * 队列与绑定属<b>消费侧</b>责任，不声明则监听无处可挂，故本类用 {@link QueueBinding} 一并声明：
  *
  * <pre>
- * wavenest:
- *   mq:
- *     data-ais-queue: &lt;M1 发布方声明的队列名&gt;
+ *   exchange: wavenest.data (topic)  --routing key: data.ais-->  queue: wavenest.m2.data-ais
  * </pre>
  *
- * 未配置本属性时本 Bean 不注册，应用<b>不依赖 RabbitMQ 即可启动</b>（今天 RabbitMQ
- * 是否已起都不影响本模块编译与冒烟）。队列名确定后填上即可打通「仿真器 → 预测」。
+ * <b>主题名取自 {@link TopicName#DATA_AIS} 常量</b>（编译期常量，可用于注解），
+ * 队列名与交换器名均可由属性覆盖：
+ * <pre>
+ *   wavenest:
+ *     mq:
+ *       exchange: wavenest.data                    # 与 M1 保持一致
+ *       m2-data-ais-queue: wavenest.m2.data-ais    # 消费侧队列名
+ * </pre>
  *
- * <p><b>载荷转换</b>：监听方法按 {@link AisMessage} 接收，要求容器配置 JSON 消息转换器
- * （由 MQ 拓扑与序列化口径统一定义）。若上游只发裸 JSON 字符串而转换器未配，
- * 该处会反序列化失败——此时应在统一配置里补 {@code MessageConverter}，而非在本类里解析字符串。
+ * <p><b>前置</b>：需要 RabbitMQ 在线（由 {@code docker compose up -d} 起四件套）。
+ * 队列与绑定在首次连接时自动声明，无需手工建队列。
+ *
+ * <p><b>载荷转换</b>：按 {@link AisMessage} 接收，要求容器配置 JSON 消息转换器
+ * （MQ 拓扑与序列化口径统一约定，M1 发布侧同为 JSON）。若上游发裸字符串而转换器未配，
+ * 应在统一配置里补 {@code MessageConverter}，<b>不在本类里解析字符串</b>。
  */
 @Component
-@ConditionalOnProperty(prefix = "wavenest.mq", name = "data-ais-queue")
 public class AisIngestListener {
 
     private static final Logger log = LoggerFactory.getLogger(AisIngestListener.class);
@@ -43,12 +51,21 @@ public class AisIngestListener {
     }
 
     /**
-     * 消费一条 AIS 船位并刷新预测快照。
+     * 消费一条 AIS 船位并刷新预测快照
+     * （并触发重算请求判定，见 {@link PredictionService#refresh(AisMessage)}）。
      *
-     * <p>单条异常不得中断后续消息：越界观测只记警告并丢弃（版本号不递增），
+     * <p>单条异常不得中断后续消息：越界观测只记警告并丢弃（不建快照、版本号不递增），
      * 避免一条脏数据把整条链带停。
      */
-    @RabbitListener(queues = "${wavenest.mq.data-ais-queue}")
+    @RabbitListener(bindings = @QueueBinding(
+            value = @Queue(
+                    name = "${wavenest.mq.m2-data-ais-queue:wavenest.m2.data-ais}",
+                    durable = "true"),
+            exchange = @Exchange(
+                    name = "${wavenest.mq.exchange:wavenest.data}",
+                    type = ExchangeTypes.TOPIC,
+                    durable = "true"),
+            key = TopicName.DATA_AIS))
     public void onAisMessage(AisMessage message) {
         try {
             predictionService.refresh(message);

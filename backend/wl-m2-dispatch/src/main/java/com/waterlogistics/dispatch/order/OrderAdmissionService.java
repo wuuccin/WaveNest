@@ -22,11 +22,14 @@ import org.springframework.stereotype.Service;
  * <b>本类不越界推进状态机</b>，只把建单事件交给 {@link TaskLogRecorder}。
  *
  * <p><b>完整受理判定（含四类唤醒原因）排期顺延</b>：{@code 23} §3 的
- * 「已受理待唤醒」需要等船／等货／闸门熔断／数据不足四类判据，
- * 依赖闸门与船货状态（今天均未落地），故今天不做——这正是「基本校验」与
- * 「受理判定」的分界，避免与 {@code queue} 的状态机职责重叠。
+ * 「已受理待唤醒」需要等船／等货／闸门熔断／数据不足四类判据。闸门状态已由
+ * {@code dispatch.gate} 的 {@code DispatchGateService}（张睿哲）提供，
+ * 但「等船／等货」还需船货状态与任务上下文，故完整受理判定仍顺延
+ * ——这正是「基本校验」与「受理判定」的分界，避免与 {@code queue} 的状态机职责重叠。
  *
- * <p>订单暂存进程内（每单一份 {@link OrderView}）；落库由 M6 承接（今天不落库）。
+ * <p>订单暂存进程内（每单一份 {@link OrderView}）：{@code order_task} 落库由
+ * {@code dispatch.queue}（张睿哲）推进状态机时经 M6 完成，本类只维护内存视图，
+ * 并把建单事件交给 {@link TaskLogRecorder} 落到 {@code task_log}。
  */
 @Service
 public class OrderAdmissionService {
