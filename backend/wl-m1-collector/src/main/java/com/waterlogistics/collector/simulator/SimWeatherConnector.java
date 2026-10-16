@@ -64,6 +64,27 @@ public class SimWeatherConnector implements DataSourceConnector {
     @Override
     public void start() {
         this.phase = 0;
+        publishInitialSnapshot();
+    }
+
+    /**
+     * 启动初值帧（10-16）：不等第一个节拍，先按配置基准值发一轮
+     * {@code data.weather} 初值（照 37 五键口径：lon / lat / wind / dir / gust），
+     * 让 C 组「最不利风况」取值在 t=0 就有数据可依（U-05：按位置多条，非全局单值）。
+     * 首版实测代偿：obsTs = targetTs = 0 时刻（结构预留不变）。
+     */
+    private void publishInitialSnapshot() {
+        long t0 = System.currentTimeMillis();
+        for (int ix = 0; ix < grid; ix++) {
+            for (int iy = 0; iy < grid; iy++) {
+                double lon = lon0 + step * ix;
+                double lat = lat0 + step * iy;
+                publisher.publishWeather(new WeatherData(
+                        round6(lon), round6(lat),
+                        round2(windBase), round1(dirBase), round2(windBase + gustAdd),
+                        t0, t0, t0));
+            }
+        }
     }
 
     @Override
