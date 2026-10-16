@@ -9,6 +9,7 @@ import com.waterlogistics.algo.inflight.NestCandidate;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
 
 /**
  * 返航复核与归巢资源判定——模块层编排，落款《包结构设计》行 84
@@ -24,8 +25,14 @@ import org.slf4j.LoggerFactory;
  *
  * <p><b>《10-16 当日任务清单》§3.1 对本项的要求是「简化三级，留接口」</b>——
  * 故下游三处均以 TODO 标注签名，不在本轮接实（依赖 B 组返航精算与 D 组占位回执）。
- * 本类<b>不落子</b>（《84》§4.3「不做占位落子——归 D 组」）、<b>不改投</b>（原巢唯一化）。
+ * <p>本类<b>不落子</b>（《84》§4.3「不做占位落子——归 D 组」）、<b>不改投</b>（原巢唯一化）。
+ *
+ * <p><b>2026-10-17 补 {@code @Service}</b>：本类原先是裸 POJO，但 {@code RescheduleService}
+ * 已把它作为构造依赖注入，而 wl-app 只靠 {@code @SpringBootApplication} 扫描取 Bean，
+ * 裸 POJO 扫不到，导致组装层启动失败（No qualifying bean of type 'HomecomingService'）。
+ * 本类无任何注入依赖，加注解不影响单测里直接 new 的用法。
  */
+@Service
 public class HomecomingService {
 
     private static final Logger log = LoggerFactory.getLogger(HomecomingService.class);
