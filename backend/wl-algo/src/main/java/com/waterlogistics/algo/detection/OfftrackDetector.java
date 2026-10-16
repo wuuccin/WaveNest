@@ -86,7 +86,7 @@ public class OfftrackDetector {
                     currentLevel = instantLevel;
                     triggeredAtMs = nowMs;
                     consecutiveOverThreshold = 0;
-                    return buildResult(nowMs, true);
+                    return buildResult(nowMs, DetectionResult.Phase.RAISED);
                 }
                 return DetectionResult.none(AlertType.DEVIATION);
             } else {
@@ -103,19 +103,21 @@ public class OfftrackDetector {
                 consecutiveOverThreshold = 0;
                 consecutiveUnderThreshold = 0;
                 consecutiveInWarningZone = 0;
-                return buildResult(nowMs, false);
+                return buildResult(nowMs, DetectionResult.Phase.LEVEL_CHANGED);
             }
 
             // 降级：严重→预警需去抖
             if (currentLevel == AlertLevel.CRITICAL && instantLevel == AlertLevel.WARN) {
                 consecutiveInWarningZone++;
                 int downgrade = params.getOfftrackDowngradeCount();
+                DetectionResult.Phase phase = DetectionResult.Phase.DURATION;
                 if (consecutiveInWarningZone >= downgrade) {
                     currentLevel = AlertLevel.WARN;
                     consecutiveInWarningZone = 0;
+                    phase = DetectionResult.Phase.LEVEL_CHANGED;
                 }
                 consecutiveUnderThreshold = 0;
-                return buildResult(nowMs, false);
+                return buildResult(nowMs, phase);
             }
 
             // 清除：连续 N 点回到阈值内
@@ -125,20 +127,20 @@ public class OfftrackDetector {
                 consecutiveInWarningZone = 0;
                 int clearN = params.getOfftrackClearCount();
                 if (consecutiveUnderThreshold >= clearN) {
-                    // 清除
+                    // 清除：返回 CLEARED 相位，编排层据此调 AlertRecorder.resolve
                     currentLevel = null;
                     consecutiveUnderThreshold = 0;
                     triggeredAtMs = 0;
-                    return DetectionResult.none(AlertType.DEVIATION);
+                    return DetectionResult.cleared(AlertType.DEVIATION);
                 }
-                return buildResult(nowMs, false);
+                return buildResult(nowMs, DetectionResult.Phase.DURATION);
             }
 
             // instantLevel 与 currentLevel 同级 → 继续
             consecutiveUnderThreshold = 0;
             consecutiveOverThreshold = 0;
             consecutiveInWarningZone = 0;
-            return buildResult(nowMs, false);
+            return buildResult(nowMs, DetectionResult.Phase.DURATION);
         }
     }
 
@@ -151,7 +153,7 @@ public class OfftrackDetector {
         triggeredAtMs = 0;
     }
 
-    private DetectionResult buildResult(long nowMs, boolean newlyTriggered) {
+    private DetectionResult buildResult(long nowMs, DetectionResult.Phase phase) {
         long durationSec = (triggeredAtMs > 0) ? (nowMs - triggeredAtMs) / 1000 : 0;
         double currentThreshold = (currentLevel == AlertLevel.CRITICAL)
                 ? params.getOfftrackCriticalThreshold()
@@ -162,8 +164,9 @@ public class OfftrackDetector {
                 currentDeviationMeters,
                 currentThreshold,
                 durationSec,
-                newlyTriggered,
-                triggeredAtMs
+                phase == DetectionResult.Phase.RAISED,
+                triggeredAtMs,
+                phase
         );
     }
 }

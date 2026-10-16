@@ -11,45 +11,45 @@ package com.waterlogistics.algo.detection;
 public interface SysParamProvider {
 
     // ===== 偏航 5 键 =====
-    /** 偏航预警阈值（米） */
+    /** 偏航预警阈值（米），键名 offtrackWarningThreshold */
     double getOfftrackWarningThreshold();
-    /** 偏航严重阈值（米） */
+    /** 偏航严重阈值（米），键名 offtrackCriticalThreshold */
     double getOfftrackCriticalThreshold();
-    /** 偏航触发去抖点数 */
+    /** 偏航触发去抖点数，键名 offtrackDebounceCount */
     int getOfftrackDebounceCount();
-    /** 偏航解除去抖点数 */
+    /** 偏航解除去抖点数，键名 offtrackClearCount */
     int getOfftrackClearCount();
-    /** 偏航严重→预警降级去抖点数 */
+    /** 偏航严重→预警降级去抖点数，键名 offtrackDowngradeCount */
     int getOfftrackDowngradeCount();
 
     // ===== 低电量 4 键 =====
-    /** 低电量触发阈值（%） */
+    /** 低电量触发阈值（%），键名 lowBatteryTrigger */
     double getLowBatteryTrigger();
-    /** 低电量清除阈值（%，> trigger） */
+    /** 低电量清除阈值（%，> trigger），键名 lowBatteryClear */
     double getLowBatteryClear();
-    /** 低电量严重阈值（%，≤ trigger） */
+    /** 低电量严重阈值（%，≤ trigger），键名 lowBatterySevere */
     double getLowBatterySevere();
-    /** 低电量严重→警告降级去抖点数 */
+    /** 低电量严重→警告降级去抖点数，键名 lowBatteryDowngradeDebounce */
     int getLowBatteryDowngradeDebounce();
 
     // ===== 失联 3 键 =====
-    /** 失联判定窗口（秒） */
+    /** 失联判定窗口（秒），键名 heartbeatLostWindowSec */
     long getHeartbeatLostWindowSec();
-    /** 灭失判定窗口（秒，> 失联窗） */
+    /** 灭失判定窗口（秒，> 失联窗），键名 heartbeatLossWindowSec */
     long getHeartbeatLossWindowSec();
-    /** 检测轮询间隔（秒） */
+    /** 检测轮询间隔（秒），键名 heartbeatCheckIntervalSec */
     long getHeartbeatCheckIntervalSec();
 
     // ===== 气象 5 键 =====
-    /** 风速预警阈值（m/s） */
+    /** 风速预警阈值（m/s），键名 weatherWindWarningThreshold */
     double getWeatherWindWarningThreshold();
-    /** 风速严重阈值（m/s） */
+    /** 风速严重阈值（m/s），键名 weatherWindCriticalThreshold */
     double getWeatherWindCriticalThreshold();
-    /** 风速突变阈值（(m/s)/s） */
+    /** 风速突变阈值（(m/s)/s），键名 weatherWindSurgeThreshold */
     double getWeatherWindSurgeThreshold();
-    /** 突变检测窗口（秒） */
+    /** 突变检测窗口（秒），键名 weatherSurgeWindowSec */
     int getWeatherSurgeWindowSec();
-    /** 清除防抖采样点数 */
+    /** 清除防抖采样点数，键名 weatherClearDebounce */
     int getWeatherClearDebounce();
 
     /**
