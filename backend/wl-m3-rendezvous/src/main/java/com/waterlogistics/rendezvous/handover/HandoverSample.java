@@ -1,0 +1,33 @@
+package com.waterlogistics.rendezvous.handover;
+
+/**
+ * 末段采样——判据推进的输入单元（《81-B组算法方案》§3.6）。
+ *
+ * <p>甲板参考点与姿态首版不入参（本组自定项 B-11）——只用<b>船位</b>定义参考点；
+ * 「投放机构反馈完成」首版简化为 {@code dropDone} 标记（演示由样本序列给出）。
+ * 时间须<b>严格升序</b>，相对速度由相邻样本差分得出。
+ *
+ * @param t          采样时刻，Unix 毫秒
+ * @param droneLon   机位经度
+ * @param droneLat   机位纬度
+ * @param shipLon    船位经度
+ * @param shipLat    船位纬度
+ * @param windSpeedMs 当时风况（风速），m/s——交接时刻须满足交接风阈值
+ * @param dropDone   投放机构反馈完成标记（首版简化）
+ */
+public record HandoverSample(
+
+        long t,
+
+        double droneLon,
+
+        double droneLat,
+
+        double shipLon,
+
+        double shipLat,
+
+        double windSpeedMs,
+
+        boolean dropDone) {
+}

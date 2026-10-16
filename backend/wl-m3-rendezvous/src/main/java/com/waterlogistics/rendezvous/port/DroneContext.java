@@ -1,0 +1,30 @@
+package com.waterlogistics.rendezvous.port;
+
+/**
+ * 执行机台账反查结果——6a 重算按 {@code droneId} 反查所需的最小上下文
+ * （《81-B组算法方案》§2.5：定位机型、归属机巢；返回可带 comboId，由该机当前任务回溯）。
+ *
+ * <p>归属口径：<b>飞行中归属不变</b>——迫停只改 {@code currentNestId}，{@code homeNestId}
+ * 不动（《23-状态机定义》§7 约定 3）。
+ *
+ * @param droneId       执行机实例
+ * @param homeNestId    归属机巢标识
+ * @param nestLon       归属机巢经度（6a 求解起点仍是机巢）
+ * @param nestLat       归属机巢纬度
+ * @param cruiseSpeedMs 机型巡航速度，m/s
+ * @param comboId       当前任务回溯的组合标识；取不到为 {@code null}（透传进返回结果）
+ */
+public record DroneContext(
+
+        String droneId,
+
+        String homeNestId,
+
+        double nestLon,
+
+        double nestLat,
+
+        double cruiseSpeedMs,
+
+        String comboId) {
+}
