@@ -94,7 +94,11 @@ class TaskStateMachineTest {
     void requireTransit_shouldRejectIllegalTransition() {
         assertEquals(TaskStatus.OUTBOUND,
                 TaskStateMachine.requireTransit(TaskStatus.DISPATCHED, TaskStatus.OUTBOUND));
-        assertThrows(IllegalStateException.class,
+        IllegalStateException thrown = assertThrows(IllegalStateException.class,
                 () -> TaskStateMachine.requireTransit(TaskStatus.FINISHED, TaskStatus.OUTBOUND));
+        assertTrue(thrown.getMessage().contains("已完成"),
+                "异常信息须点名当前状态，便于定位脏状态：" + thrown.getMessage());
+        assertTrue(thrown.getMessage().contains("去程中"),
+                "异常信息须点名目标状态，便于定位脏状态：" + thrown.getMessage());
     }
 }
