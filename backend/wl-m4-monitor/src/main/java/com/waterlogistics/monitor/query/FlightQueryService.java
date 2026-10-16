@@ -8,7 +8,7 @@ import java.util.Map;
 public final class FlightQueryService {
     private final FlightRecordStore store;
     public FlightQueryService(FlightRecordStore store) { this.store = store; }
-    public List<String> tasks() { return store.flightIds(); }
+    public List<FlightRecordStore.TaskSummary> tasks() { return store.tasks(); }
     public List<TelemetryState> replay(String taskId) { return store.replay(taskId); }
     public Map<String, Object> statistics() { return store.statistics(); }
 }

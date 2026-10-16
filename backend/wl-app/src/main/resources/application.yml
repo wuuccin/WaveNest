@@ -46,6 +46,21 @@ mybatis-plus:
 
 # MQTT broker：演示期 m1 可不起 Mosquitto，由仿真器直发业务 MQ
 wavenest:
+  mq:
+    exchange: wavenest.data
+    data-ais-queue: wavenest.m2.data.ais
+    data-uav-queue: wavenest.m4.data.uav.telemetry
+    task-plan-queue: wavenest.m4.task.plan
+  telemetry:
+    # Values are pending approval; supply all seven before enabling live ingest.
+    enabled: ${TELEMETRY_ENABLED:false}
+    max-speed-ms: ${UAV_MAX_SPEED_MS:}
+    max-altitude-m: ${UAV_MAX_ALTITUDE_M:}
+    max-vertical-rate-ms: ${UAV_MAX_VERTICAL_RATE_MS:}
+    max-acceleration-ms2: ${UAV_MAX_ACCELERATION_MS2:}
+    max-turn-rate-deg-sec: ${UAV_MAX_TURN_RATE_DEG_SEC:}
+    sampling-ms: ${UAV_SAMPLING_MS:}
+    speed-mad-threshold: ${UAV_SPEED_MAD_THRESHOLD:}
   mqtt:
     enabled: ${MQTT_ENABLED:false}
     host: ${MQTT_HOST:127.0.0.1}

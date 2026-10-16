@@ -20,13 +20,17 @@ public final class WsPushEndpoint extends TextWebSocketHandler {
             .collect(java.util.stream.Collectors.toUnmodifiableSet());
     private final Set<WebSocketSession> sessions = ConcurrentHashMap.newKeySet();
     private final ObjectMapper json;
-    public WsPushEndpoint(ObjectMapper json) { this.json = json; }
+    private final FrameArchive archive;
+    public WsPushEndpoint(ObjectMapper json, FrameArchive archive) { this.json = json; this.archive = archive; }
     @Override public void afterConnectionEstablished(WebSocketSession session) { sessions.add(session); }
     @Override public void afterConnectionClosed(WebSocketSession session, org.springframework.web.socket.CloseStatus status) { sessions.remove(session); }
-    public void publish(String type, Object data) {
+    public void publish(String type, Object data) { publishForTask(null, type, data); }
+    public void publishForTask(String taskId, String type, Object data) {
         if (!TYPES.contains(type)) throw new IllegalArgumentException("Unknown WS type: " + type);
         try {
-            String frame = json.writeValueAsString(new WsEnvelope<>(type, data));
+            var envelope = new WsEnvelope<>(type, data);
+            String frame = json.writeValueAsString(envelope);
+            archive.append(taskId, envelope);
             for (var session : sessions) {
                 if (!session.isOpen()) { sessions.remove(session); continue; }
                 try { synchronized (session) { session.sendMessage(new TextMessage(frame)); } }

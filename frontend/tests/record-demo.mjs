@@ -16,6 +16,7 @@ const context = await browser.newContext({
 })
 const page = await context.newPage()
 await page.goto('http://127.0.0.1:5173', { waitUntil: 'networkidle' })
+await page.getByRole('button', { name: '离线演示' }).click()
 await page.waitForTimeout(1200)
 for (let i = 0; i < 6; i++) {
   await page.getByRole('button', { name: '下一段' }).click()

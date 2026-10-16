@@ -17,9 +17,14 @@ dependencies {
 
     // 后端唯一实时出口：WebSocket 服务端
     implementation(libs.spring.boot.starter.websocket)
+    implementation(libs.spring.boot.starter.amqp)
 
     // JDBC 驱动只在组装层需要，业务模块只经 wl-storage 访问数据库
     runtimeOnly(libs.mysql.connector.j)
 
     annotationProcessor(libs.spring.boot.configuration.processor)
+
+    // 冒烟/集成测试（版本由 Spring Boot BOM 提供，模块内不写版本号）
+    testImplementation("org.springframework.boot:spring-boot-starter-test")
+    testRuntimeOnly(libs.mysql.connector.j)
 }
