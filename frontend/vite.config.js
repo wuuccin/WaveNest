@@ -1,9 +1,10 @@
-import { defineConfig } from 'vite'
+import { defineConfig, loadEnv } from 'vite'
 import vue from '@vitejs/plugin-vue'
-// 开发代理指向后端 wl-app 默认端口（application.yml: server.port=8080）。
-// 若本机改过后端端口，请在 application-local.yml 覆盖，并同步改这里的 target。
-const backendPort = 8080
-export default defineConfig({
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), '')
+  const backend = env.WAVENEST_BACKEND_URL || 'http://127.0.0.1:8080'
+  return {
   plugins: [vue()],
-  server: { proxy: { '/api': `http://127.0.0.1:${backendPort}`, '/ws': { target: `ws://127.0.0.1:${backendPort}`, ws: true } } }
+  server: { proxy: { '/api': backend, '/sim': backend, '/ws': { target: backend, ws: true } } }
+  }
 })

@@ -6,10 +6,7 @@ import { dirname, join } from 'node:path'
 const root = dirname(dirname(fileURLToPath(import.meta.url)))
 const shots = join(root, 'screenshots')
 await mkdir(shots, { recursive: true })
-// 浏览器路径可用环境变量 BROWSER_PATH 覆盖；未指定时不传 executablePath，交给 playwright 自动解析
-const launchOptions = { headless: true }
-if (process.env.BROWSER_PATH) launchOptions.executablePath = process.env.BROWSER_PATH
-const browser = await chromium.launch(launchOptions)
+const browser = await chromium.launch({ headless: true, executablePath: 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe' })
 for (const viewport of [{ width: 1440, height: 900, name: 'desktop' }, { width: 768, height: 1024, name: 'tablet' }, { width: 390, height: 844, name: 'mobile' }]) {
   const page = await browser.newPage({ viewport })
   const errors = []

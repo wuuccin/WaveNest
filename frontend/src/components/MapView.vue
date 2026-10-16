@@ -13,7 +13,9 @@ const update = () => {
   drawShip(map, shipGroup, ship.current)
   drawMeeting(map, meetingGroup, order.rendezvous)
   drawDrone(map, droneGroup, drone.current)
-  drawAlerts(map, alertGroup, alert.items, order.orders)
+  drawAlerts(map, alertGroup, alert.items, order.orders, drone.current, ship.current)
+  const focus = drone.current || ship.current
+  if (focus && Number.isFinite(focus.lat) && Number.isFinite(focus.lon) && !map.getBounds().contains([focus.lat,focus.lon])) map.panTo([focus.lat,focus.lon])
 }
 onMounted(() => {
   map = L.map('operations-map', {zoomControl:false,attributionControl:false,minZoom:8,maxZoom:15}).setView([29.72,115.92],11)
