@@ -59,6 +59,29 @@ public class TaskQueueService {
         transition(order, OrderStatus.DISPATCHING, OrderStatus.DISPATCHED, "派发");
     }
 
+    /**
+     * 重入队（10-16 闭环第 4 环）：放弃会面后订单回到待调度，清空派单字段
+     * （droneId/meetTime/meetLon/meetLat），原机不再关联。
+     * 仅允许非终止态回退；终止态（已拒绝/失败/异常终止）不允许重入队。
+     */
+    @Transactional
+    public void requeue(String orderId) {
+        OrderTaskEntity order = orderTaskMapper.selectById(orderId);
+        if (order == null) {
+            throw new IllegalStateException("订单不存在：" + orderId);
+        }
+        OrderStatus current = OrderStatus.fromValue(order.getStatus());
+        if (current.isTerminal()) {
+            throw new IllegalStateException(
+                "订单 " + orderId + " 已终止（" + current.getValue() + "），不允许重入队");
+        }
+        order.setDroneId(null);
+        order.setMeetTime(null);
+        order.setMeetLon(null);
+        order.setMeetLat(null);
+        transition(order, current, OrderStatus.WAIT_DISPATCH, "重入队");
+    }
+
     /** 状态流转：更新订单状态 + 写 task_log（同事务）；落库用中文状态词 */
     private void transition(OrderTaskEntity order, OrderStatus from, OrderStatus to, String opType) {
         order.setStatus(to.getValue());

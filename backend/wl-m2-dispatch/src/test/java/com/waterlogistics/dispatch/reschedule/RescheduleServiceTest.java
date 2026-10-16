@@ -11,9 +11,8 @@ import com.waterlogistics.algo.inflight.HomecomingParams;
 import com.waterlogistics.algo.inflight.HomecomingTier;
 import com.waterlogistics.algo.inflight.HeadingSample;
 import com.waterlogistics.contract.rest.GeoPoint;
-import com.waterlogistics.contract.state.GoodsStatus;
-import com.waterlogistics.contract.state.OrderStatus;
 import com.waterlogistics.dispatch.homecoming.HomecomingService;
+import com.waterlogistics.dispatch.queue.TaskQueueService;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -22,16 +21,22 @@ import org.junit.jupiter.api.Test;
  * 6b 桥段闭合点（《10-16 当日任务清单》§3.1 之「6b 接线成链」）：
  * <ul>
  *   <li>「放弃本次会面」已接 {@code dispatch.homecoming}，不再抛骨架未接线异常；</li>
- *   <li>「订单重入队」已接 {@link OrderRequeuePort}，且按《21》§8 把
- *       「落巢 → 回收确认」这两个物理前置做成硬校验——放过一条不该重派的单子，
- *       后果是同一票货被派给第二架机，而货物还在第一架机上。</li>
+ *   <li>「订单重入队」已接张睿哲的 {@link TaskQueueService#requeue}（序 4），
+ *       并按《21》§8 把「落巢 → 回收确认」这两个<b>物理前置</b>做成硬校验——
+ *       放过一条不该重派的单子，后果是同一票货被派给第二架机，而货物还在第一架机上。</li>
  * </ul>
+ *
+ * <p><b>构造器参数说明</b>：本类由吴可欣（6b）与张睿哲（重派）合并而来，
+ * 构造器需四个依赖。只测<b>前置校验</b>的用例传 {@code null} 即可——
+ * 校验在调用 {@code taskQueueService} 之前就会抛异常，不会走到空指针；
+ * 只有「合法路径」用例才需要真正装配 {@link RecordingTaskQueue}。
  */
 class RescheduleServiceTest {
 
     private static final GeoPoint POSITION = new GeoPoint(120.15, 30.28);
 
-    private final RescheduleService service = new RescheduleService();
+    /** 只用于前置校验类用例：校验先于落地动作执行，故依赖可为 null */
+    private final RescheduleService service = new RescheduleService(null, null, null, new HomecomingService());
 
     private static HomecomingInput input(double batteryPercent) {
         return new HomecomingInput("EV-1", "ABORT", "TASK-1", "ORDER-1", "DRONE-1", "NEST-HOME",
@@ -65,22 +70,18 @@ class RescheduleServiceTest {
                 "滑窗累计 30° 大于阈值 20°，应判变更");
     }
 
-    /** 16 号已接链：落巢＋回收确认后，重入队经端口落地，订单回「待调度」 */
+    /** 落巢＋回收确认后，重入队委托张睿哲的 TaskQueueService#requeue */
     @Test
-    void requeueOrder_shouldDelegateToPortWhenLandedAndRecycled() {
-        RecordingPort port = new RecordingPort();
-        RescheduleService wired = new RescheduleService(new HomecomingService(), port);
+    void requeueOrder_shouldDelegateToTaskQueueWhenLandedAndRecycled() {
+        RecordingTaskQueue queue = new RecordingTaskQueue();
+        RescheduleService wired = new RescheduleService(queue, null, null, new HomecomingService());
         OrderRequeueCommand cmd = new OrderRequeueCommand(
                 "ORDER-1", "GOODS-1", "DRONE-1", true, "NEST-A", true, false);
 
-        OrderRequeuePort.RequeueResult result = wired.requeueOrder(cmd);
+        wired.requeueOrder(cmd);
 
-        assertEquals("ORDER-1", result.orderId());
-        assertEquals(GoodsStatus.RECYCLED.getValue(), result.goodsStatus(),
-                "落巢后货物「已回收」，这是重派的唯一入口（《21》§8）");
-        assertTrue(result.timelineAppended(), "状态改变须向订单状态时间线追加节点");
-        assertEquals(OrderStatus.RETURNING.getValue(), port.fromStatus, "变更前为「返航中」");
-        assertEquals(OrderStatus.WAIT_DISPATCH.getValue(), port.toStatus, "变更后回「待调度」等待重派新机");
+        assertEquals("ORDER-1", queue.requeuedOrderId,
+                "物理前置齐备后应把落地动作交给 TaskQueueService#requeue（清原机＋回待调度＋task_log）");
     }
 
     /** 未落巢不得重入队：货物装机后绑死在原机上，空中不可转移（《21》§8） */
@@ -122,30 +123,18 @@ class RescheduleServiceTest {
                 "须点明灭失走终止而非重派：" + thrown.getMessage());
     }
 
-    /** 前置条件齐备但端口未装配时必须显式报错，不得静默丢弃重入队动作 */
-    @Test
-    void requeueOrder_shouldReportPortNotWired() {
-        OrderRequeueCommand cmd = new OrderRequeueCommand(
-                "ORDER-1", "GOODS-1", "DRONE-1", true, "NEST-A", true, false);
+    /** 记录被调用订单的 TaskQueueService 桩（继承以覆盖 requeue，避免引入 mock 框架） */
+    private static final class RecordingTaskQueue extends TaskQueueService {
 
-        IllegalStateException thrown = assertThrows(IllegalStateException.class,
-                () -> service.requeueOrder(cmd));
+        private String requeuedOrderId;
 
-        assertTrue(thrown.getMessage().contains("未装配"),
-                "须点明是落地出口未装配：" + thrown.getMessage());
-    }
-
-    /** 记录调用参数的端口桩 */
-    private static final class RecordingPort implements OrderRequeuePort {
-
-        private String fromStatus;
-        private String toStatus;
+        private RecordingTaskQueue() {
+            super(null, null);
+        }
 
         @Override
-        public RequeueResult requeue(OrderRequeueCommand cmd, String from, String to) {
-            this.fromStatus = from;
-            this.toStatus = to;
-            return new RequeueResult(cmd.orderId(), GoodsStatus.RECYCLED.getValue(), true);
+        public void requeue(String orderId) {
+            this.requeuedOrderId = orderId;
         }
     }
 }

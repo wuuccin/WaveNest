@@ -98,6 +98,7 @@ INSERT INTO `sys_param` (`param_key`, `param_value`, `category`, `description`) 
 ('nestCapacity',        '4',      '容量', '机巢容量 C（首版不分机型档；nest 表 capacity 初始化源，nest 表为权威）'),
 ('forcedStopSlotSec',   '900',    '容量', '迫停标称时长 d（秒；占位时隙标称长度）');
 
+<<<<<<< HEAD
 
 -- ---------------- E 组（重规划与返航兜底，84 §5.14.1，26 项；4 项与 A 组同名不重复灌） ----------------
 -- 说明：与 A 组同名的 rhoTh / vStopMs / mOfN / rotWindowFrames 已在上面 A 组段内灌入，此处不重复。
@@ -132,6 +133,27 @@ INSERT INTO `sys_param` (`param_key`, `param_value`, `category`, `description`) 
 --   e10RobustWindOffsetMs / e10AlphaFailProb
 --                       ：分别对应 84 §2.3 ② 鲁棒裕度档与 ① 机会约束档，须上游给风况
 --                        分布／范围表达才可判档；首版只实现 ③ 固定系数档（e10MarginK）
+
+-- ---------------- 10-16 序4 灌库（档D + 候选生成参数；张睿哲） ----------------
+-- 档 D：低电量告警触发阈值（百分比；正式取值待标定）
+-- 候选生成过滤参数（CandidateGenerator 注入；取值为演示默认，待标定）
+INSERT INTO `sys_param` (`param_key`, `param_value`, `category`, `description`) VALUES
+('lowBatteryTrigger',   '20',     '阈值', '低电量告警触发阈值（百分比；占位值，正式标定后改）'),
+('minBatteryPercent',   '30',     '阈值', '候选无人机最低电量门槛（%）'),
+('maxNestDistanceKm',   '5',      '阈值', '机巢到取货点最大半径（km）');
+
+-- TODO: 档 A 9 键——吴可欣已于 2026-10-16 补齐 `37` §5.14.1 的 E 组键名（见本文件 E 组段），
+--       但**尚未按「档 A」形态灌入**，待 37 登记后灌
+-- TODO: 档 B 9 键——待 37 登记后灌入
+-- TODO: 档 C（L1/熔断）——暂不灌
+
+-- ⚠ 低电量阈值单一来源待确认（合并时登记，勿各自为政）：
+--   本段 `lowBatteryTrigger`(20, 序4 告警触发) 与上方 E 组段 `e10LowBatteryAbs`(15, 功能10 A5 兜底)
+--   是**两个不同用途**的量，但《84》明文「低电量阈值 G-11 为全项目单一来源」（由 M2 能耗模型倒推、
+--   首版静态、不按机型）。二者须与 G 组（宋冰鑫）确认是否合并为单一键，不合并则须在
+--   `sys_param` 描述中写明用途差异，避免下游取错。
+--   另：本键原名 `low_battery_trigger` 为 snake_case，与项目 camelCase 风格不符
+--   （宋冰鑫 2026-10-16 已将 G 组 17 键统一为 camelCase），合入时改名对齐。
 -- =====================================================================
 --   D 组功能 5/6/7/8 参数（83 §7）：w_time/w_energy/T_hold/batch_window 等——16 号接入时按需灌入
 --   C/F/G 组参数（82/85/86）：只列名目未给取值
