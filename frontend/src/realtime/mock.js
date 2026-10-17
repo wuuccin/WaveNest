@@ -13,8 +13,8 @@ export const SCENES = [
   { title:'初始态势', frames:[['ship_traj',ship()],['order_state',order('待受理',1)]] },
   { title:'下单 · 预测与会面', frames:[['ship_traj',ship()],['rendezvous',meeting(115.94,29.73)],['order_state',order('已派发',2)]] },
   { title:'无人机起飞', frames:[['drone_state',drone(115.87,29.69,84,'去程')],['order_state',order('去程中',3)]] },
-  { title:'船舶变向 · 6b', frames:[['ship_traj',ship(0.025,27)],['rendezvous',meeting(115.98,29.76,true)],['alarm',{level:'警告',alarmType:'船舶变向',targetId:'DEMO-01',message:'意图变化 6b 演示触发，原机会面取消',eventTs:now()}]] },
-  { title:'原机返航', frames:[['drone_state',drone(115.88,29.69,72,'返航')],['order_state',order('返航中',4)]] },
+  { title:'船舶变向 · 重新评估会面点', frames:[['ship_traj',ship(0.025,27)],['rendezvous',meeting(115.98,29.76)],['alarm',{level:'警告',alarmType:'船舶变向',targetId:'DEMO-01',message:'演示场景：船舶改变航向，原会面点取消并更新',eventTs:now()}]] },
+  { title:'本例预设原机返航', frames:[['drone_state',drone(115.88,29.69,72,'返航')],['order_state',order('返航中',4)]] },
   { title:'货物回收 · 重入队', frames:[['drone_state',drone(115.86,29.68,65,'已回收')],['order_state',order('待调度',5)]] },
-  { title:'新机交接完成', frames:[['drone_state',drone(115.94,29.73,91,'末段交接','UAV-02')],['order_state',order('末段交接中',6,'交接')],['drone_state',drone(115.86,29.68,78,'返航完成','UAV-02')],['order_state',order('已完成',7)]] }
+  { title:'新机与船舶交接完成', frames:[['drone_state',drone(115.94,29.73,91,'末段交接','UAV-02')],['order_state',order('末段交接中',6,'交接')],['drone_state',drone(115.86,29.68,78,'返航完成','UAV-02')],['order_state',order('已完成',7)]] }
 ]

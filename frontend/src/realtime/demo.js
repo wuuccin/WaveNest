@@ -1,6 +1,6 @@
 import { reactive } from 'vue'
 
-export const DEMO_STAGES = ['下单与会面预测', '无人机起飞', '船舶变向', '原机返航', '货物回收与重入队', '重新派机并完成交接']
+export const DEMO_STAGES = ['下单与预计会面', '首架无人机去程', '船舶变向，重评会面方案', '本例预设原机返航', '演示落巢回收并重入队', '演示重派并与船舶交接']
 
 // Only real backend frames confirm progress; missing transitions stop the runner.
 export function createDemoRunner({ api, subscribe, connected, timeoutMs = 30000 }) {

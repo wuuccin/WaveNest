@@ -3,7 +3,8 @@ import { computed } from 'vue'
 import { useOrderStore } from '../stores'
 import { waitText,wakeText } from '../api/adapter'
 const store=useOrderStore()
-const current=computed(()=>store.orders[0])
+const props=defineProps({ orderId: { type: String, default: '' } })
+const current=computed(()=>store.byId[props.orderId] || store.orders[0])
 const entries=computed(()=>current.value ? store.timeline[current.value.orderId]||[] : [])
 const time=ts=>new Date(ts).toLocaleTimeString('zh-CN',{timeZone:'Asia/Shanghai',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false})
 </script>
