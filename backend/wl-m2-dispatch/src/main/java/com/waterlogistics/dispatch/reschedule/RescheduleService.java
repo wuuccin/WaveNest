@@ -12,10 +12,14 @@ import com.waterlogistics.algo.inflight.NestCandidate;
 import com.waterlogistics.dispatch.candidate.CandidateSelector;
 import com.waterlogistics.dispatch.homecoming.HomecomingService;
 import com.waterlogistics.dispatch.queue.TaskQueueService;
+import com.waterlogistics.dispatch.rendezvous.RendezvousCoordinator;
 import com.waterlogistics.storage.entity.OrderTaskEntity;
 import com.waterlogistics.storage.repository.OrderTaskMapper;
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -45,11 +49,13 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class RescheduleService {
 
-    /** 起飞时刻缓冲分钟数（演示简化；正式由 6a 精算回填） */
-    private static final int TAKEOFF_BUFFER_MINUTES = 5;
+    private static final Logger log = LoggerFactory.getLogger(RescheduleService.class);
 
     /** 返航复核与三级落点判定（模块层编排，落《包结构设计》行 84） */
     private final HomecomingService homecoming;
+
+    /** 动态会面求解协调（M2 侧唯一调 M3 门面的入口，2026-10-17 接） */
+    private final RendezvousCoordinator rendezvous;
 
     /** 重入队与派发（张睿哲归口，序 4） */
     private final TaskQueueService taskQueueService;
@@ -61,11 +67,13 @@ public class RescheduleService {
     public RescheduleService(TaskQueueService taskQueueService,
             CandidateSelector candidateSelector,
             OrderTaskMapper orderTaskMapper,
-            HomecomingService homecoming) {
+            HomecomingService homecoming,
+            RendezvousCoordinator rendezvous) {
         this.taskQueueService = taskQueueService;
         this.candidateSelector = candidateSelector;
         this.orderTaskMapper = orderTaskMapper;
         this.homecoming = homecoming;
+        this.rendezvous = rendezvous;
     }
 
     /**
@@ -183,10 +191,18 @@ public class RescheduleService {
      * <ol>
      *   <li>{@link TaskQueueService#requeue} 重入队（清原机，状态回待调度）；</li>
      *   <li>{@link CandidateSelector#selectBest} 重新选机；</li>
-     *   <li>{@link TaskQueueService#startDispatch} + {@link TaskQueueService#dispatch} 派发新机；</li>
-     *   <li>起飞时刻简化用「当前时间 + 缓冲」，与罗才辉回填口径一致（正式由 6a 回填）。</li>
+     *   <li><b>会面点求解</b>（2026-10-17 新增）：调 {@link RendezvousCoordinator#solveFor}
+     *       真实走 M3 的 {@code RendezvousFacade#solve}，产出会面点与起飞时刻；</li>
+     *   <li>{@link TaskQueueService#startDispatch} + {@link TaskQueueService#dispatch} 派发新机；
+     *       会面点坐标一并回填 {@code order_task.meet_lon/meet_lat}。</li>
      * </ol>
-     * 无可用候选时抛异常，由调用方决定回退或转人工。
+     * 无可用候选时抛异常，由调用方决定回退或转人工；
+     * <b>会面无解时同样抛异常</b>——「追不上」就不能派发，不得退回固定缓冲的假时刻。
+     *
+     * <p><b>与 10-16 首版的差别（勿改回）</b>：此前起飞时刻取
+     * 「当前时间 + 5 分钟」固定缓冲（{@code TAKEOFF_BUFFER_MINUTES}），
+     * 那是<b>没有会面求解时的演示占位</b>；动态会面既已接入，
+     * 起飞时刻与会面点必须来自算法层结果，占位常量一并移除。
      *
      * <p><b>注意</b>：本方法走的是「已确认落巢回收」之后的路径，
      * 若尚未回收应改调 {@link #requeueOrder}（含《21》§8 的物理前置校验），
@@ -207,10 +223,22 @@ public class RescheduleService {
             throw new IllegalStateException("订单 " + orderId + " 重派失败：无可用候选组合");
         }
 
-        // 第 3 步：调度中 → 派发新机
+        // 第 3 步：会面点求解（M3 动态会面，M2 第 3 步 · 判「追得上」）
+        // 必须先于状态流转求解：无解时不得把订单推进到「调度中」再回退。
+        RendezvousCoordinator.MeetPlan plan = rendezvous.solveFor(order, best.comboId(), best.droneId());
+
+        // 第 4 步：调度中 → 派发新机
         taskQueueService.startDispatch(orderId);
-        LocalDateTime takeoffTime = LocalDateTime.now().plusMinutes(TAKEOFF_BUFFER_MINUTES);
-        taskQueueService.dispatch(orderId, best.droneId(), takeoffTime);
+        taskQueueService.dispatch(orderId, best.droneId(), plan.takeoffTime());
+
+        // 第 5 步：会面点坐标回填（《22-界面契约》§5 会面点为组合级产物，须可回查）
+        order.setMeetLon(BigDecimal.valueOf(plan.meetLon()));
+        order.setMeetLat(BigDecimal.valueOf(plan.meetLat()));
+        orderTaskMapper.updateById(order);
+
+        log.info("重派完成：orderId={} droneId={} comboId={} 会面点={},{} 起飞={} 解={} 快照版本={}",
+                orderId, best.droneId(), best.comboId(), plan.meetLon(), plan.meetLat(),
+                plan.takeoffTime(), plan.solutionId(), plan.snapshotVersion());
 
         return best.droneId();
     }

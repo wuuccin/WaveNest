@@ -27,7 +27,8 @@ import org.junit.jupiter.api.Test;
  * </ul>
  *
  * <p><b>构造器参数说明</b>：本类由吴可欣（6b）与张睿哲（重派）合并而来，
- * 构造器需四个依赖。只测<b>前置校验</b>的用例传 {@code null} 即可——
+ * 构造器需五个依赖（末位 {@code rendezvous} 为 2026-10-17 接入的动态会面协调器）。
+ * 只测<b>前置校验</b>的用例传 {@code null} 即可——
  * 校验在调用 {@code taskQueueService} 之前就会抛异常，不会走到空指针；
  * 只有「合法路径」用例才需要真正装配 {@link RecordingTaskQueue}。
  */
@@ -36,7 +37,8 @@ class RescheduleServiceTest {
     private static final GeoPoint POSITION = new GeoPoint(120.15, 30.28);
 
     /** 只用于前置校验类用例：校验先于落地动作执行，故依赖可为 null */
-    private final RescheduleService service = new RescheduleService(null, null, null, new HomecomingService());
+    private final RescheduleService service = new RescheduleService(
+            null, null, null, new HomecomingService(), null);
 
     private static HomecomingInput input(double batteryPercent) {
         return new HomecomingInput("EV-1", "ABORT", "TASK-1", "ORDER-1", "DRONE-1", "NEST-HOME",
@@ -74,7 +76,8 @@ class RescheduleServiceTest {
     @Test
     void requeueOrder_shouldDelegateToTaskQueueWhenLandedAndRecycled() {
         RecordingTaskQueue queue = new RecordingTaskQueue();
-        RescheduleService wired = new RescheduleService(queue, null, null, new HomecomingService());
+        RescheduleService wired = new RescheduleService(
+                queue, null, null, new HomecomingService(), null);
         OrderRequeueCommand cmd = new OrderRequeueCommand(
                 "ORDER-1", "GOODS-1", "DRONE-1", true, "NEST-A", true, false);
 
