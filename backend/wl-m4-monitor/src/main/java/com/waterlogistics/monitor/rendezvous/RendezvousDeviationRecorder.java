@@ -41,7 +41,7 @@ public class RendezvousDeviationRecorder {
      * @param confirmation 交接完成确认（含计划/实际会面点与时刻）
      * @param orderId      订单实体标识（任务方案 orderId；confirmation.taskId() 不可顶替）
      * @param model        机型
-     * @param nestId       机巢标识
+     * @param homeNestId   机巢标识（归属机巢口径）
      * @param windCondition 风况段（可选）
      * @param shipSpeedRange 船速段（可选）
      * @return 组装好的偏差样本；无实际会面点（未完成接近）时返回 null
@@ -50,7 +50,7 @@ public class RendezvousDeviationRecorder {
             B_HandoverConfirmation confirmation,
             String orderId,
             String model,
-            String nestId,
+            String homeNestId,
             String windCondition,
             String shipSpeedRange) {
 
@@ -61,17 +61,17 @@ public class RendezvousDeviationRecorder {
         }
 
         RendezvousDeviation deviation = RendezvousDeviation.from(
-                confirmation, orderId, model, nestId, windCondition, shipSpeedRange);
+                confirmation, orderId, model, homeNestId, windCondition, shipSpeedRange);
 
         deviationLog.add(deviation);
         publisher.publish(deviation);
 
         log.info("rendezvous deviation recorded: sampleId={}, droneId={}, orderId={}, "
-                        + "planned=({}, {}), actual=({}, {}), dSpace={}m, dTime={}s",
+                        + "planned=({}, {}), actual=({}, {}), dSpaceM={}m, dTimeS={}s",
                 deviation.sampleId(), deviation.droneId(), deviation.orderId(),
                 deviation.plannedRendezvous().lon(), deviation.plannedRendezvous().lat(),
                 deviation.actualRendezvous().lon(), deviation.actualRendezvous().lat(),
-                deviation.dSpace(), deviation.dTime());
+                deviation.dSpaceM(), deviation.dTimeS());
 
         return deviation;
     }
