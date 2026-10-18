@@ -65,6 +65,39 @@ JDK 版本全组自选（17 起），根脚本统一 `release 17` 保证编译�
 
 ## 五、本地起服务
 
+### 5.1 建库口径（改过 SQL 的先看这里）
+
+建库**只在 MySQL 首次启动时发生一次**。`deploy/docker-compose.yml` 把 `./sql` 挂到
+`/docker-entrypoint-initdb.d`，MySQL 只在**数据目录为空**时执行里面的 `001_init.sql`（建 14 表）
+与 `002_sys_param.sql`（灌参数）；库一旦建成，重起容器不会再跑一遍。
+
+所以：**改了 `deploy/sql/` 下任何 SQL（尤其是 `002_sys_param.sql` 加键），必须重建库，否则改动不生效。**
+
+```bash
+# 重建（会清空全部数据卷：mysql/redis/rabbitmq/mosquitto，不只是库）
+cd deploy && docker compose down -v && docker compose up -d
+
+# 等就绪：mysql / redis / rabbitmq 有 healthcheck，看 healthy；
+#         mosquitto 没有 healthcheck，状态是 Up 即可
+docker compose ps
+
+# 核对灌入结果（行数应等于 002_sys_param.sql 的 INSERT 条数）
+docker exec wavenest-mysql mysql -uroot -pwavenest -N -e "select count(*) from wavenest.sys_param;"
+```
+
+三个易错点：
+
+| 易错做法         | 后果                                     |
+| ---------------- | ---------------------------------------- |
+| 只 `up -d`        | 库已存在，新键**不生效**，且没有任何报错提示       |
+| 只 `down` 不带 `-v` | 具名卷 `mysql-data` 还在，重起仍不执行建库脚本         |
+| 手工增量执行 SQL      | 与建库脚本口径不一致，别人重建后对不上（本组统一 `down -v`） |
+
+> `down -v` 会连 redis／rabbitmq／mosquitto 的数据卷一起删；只清库数据不要动这几个时，
+> 单独删 `mysql-data` 卷即可，但**加键场景请一律走 `down -v`**，口径统一才好排查。
+
+### 5.2 起服务
+
 ```bash
 # 1. 中间件（仓库根目录下）
 cd deploy && docker compose up -d
