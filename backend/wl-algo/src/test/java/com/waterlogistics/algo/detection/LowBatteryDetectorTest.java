@@ -19,6 +19,16 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class LowBatteryDetectorTest {
 
+    @Test
+    void unifiedTriggerUsesTwentyPercentBoundary() {
+        assertEquals(20.0, SysParamProvider.defaults().getLowBatteryTrigger());
+        assertEquals(NONE, newDetector().feed(20.0, 1_000).phase());
+        DetectionResult belowTrigger = newDetector().feed(19.99, 1_000);
+        assertEquals(RAISED, belowTrigger.phase());
+        assertEquals(AlertLevel.WARN, belowTrigger.level());
+        assertEquals(20.0, belowTrigger.thresholdValue());
+    }
+
     private LowBatteryDetector newDetector() {
         return new LowBatteryDetector(SysParamProvider.defaults());
     }
