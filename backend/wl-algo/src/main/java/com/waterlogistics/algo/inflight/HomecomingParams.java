@@ -12,9 +12,9 @@ package com.waterlogistics.algo.inflight;
  *   <tr><th>本字段</th><th>《84》§4.3 参数键</th><th>换算</th></tr>
  *   <tr><td>{@code batterySafetyMarginPct}</td><td>{@code e10_reserve_ratio}（0.20 无量纲比率）</td>
  *       <td><b>× 100</b> 成百分点：本项目实时电量按百分比（满电＝100），故 0.20 → 20.0</td></tr>
- *   <tr><td>{@code batteryAbsoluteFloorPct}</td><td>{@code e10_low_battery_abs}</td>
- *       <td>百分点。<b>不自行给默认值</b>——文档标「不自定，引 G 组 G-11 统一阈值」，
- *           无注入时本类退化为「不启用兜底」，不得臆造数值</td></tr>
+ *   <tr><td>{@code batteryAbsoluteFloorPct}</td><td>{@code lowBatteryTrigger}</td>
+ *       <td>百分点，2026-10-18 已统一为 20，与 G 组告警共用同一 sys_param 键。
+ *           由模块层读出后注入；无注入时本类退化为「不启用兜底」</td></tr>
  *   <tr><td>{@code batteryReleaseMarginPct}</td><td>{@code e10_hyst_exit_ratio}（1.2 无量纲比率）</td>
  *       <td><b>换算口径待确认</b>：文档给的是 ratio、与本字段的百分点不同量纲，
  *           且 1.2 &gt; 1 无法直接读成「退出裕度＝进入裕度×1.2」（退出应比进入宽松）。

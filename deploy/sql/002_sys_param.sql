@@ -122,7 +122,6 @@ INSERT INTO `sys_param` (`param_key`, `param_value`, `category`, `description`) 
 ('timeMarginRatio',      '0.20',   '阈值', 'E 时间裕度（占预计返程耗时比例；84 §3.8）'),
 ('maxRelaxCount',        '2',      '容量', 'E 松弛上限条数（84 §3.8；最大放开约束数）'),
 ('e10ReserveRatio',      '0.20',   '阈值', 'E 功能10 储备裕度 E_reserve（84 §4.3；比值，注入前 ×100 换算百分点）'),
-('e10LowBatteryAbs',     '15',     '阈值', 'E 功能10 A5 低电量绝对阈值兜底（百分点；84 §2.2；引 G-11 单一来源）'),
 ('e10MarginK',           '1.2',    '阈值', 'E 功能10 固定裕度系数 k（84 §2.3 ③；仅无风况快照时启用）'),
 ('e10SlopeMaxDeg',       '15',     '阈值', 'E 功能10 坡度否决阈值（度；84 §4.3；L4 未接，暂无消费方）');
 
@@ -135,10 +134,10 @@ INSERT INTO `sys_param` (`param_key`, `param_value`, `category`, `description`) 
 --                        分布／范围表达才可判档；首版只实现 ③ 固定系数档（e10MarginK）
 
 -- ---------------- 10-16 序4 灌库（档D + 候选生成参数；张睿哲） ----------------
--- 档 D：低电量告警触发阈值（百分比；正式取值待标定）
+-- 档 D：全项目低电量阈值（2026-10-18 口径修正：统一 lowBatteryTrigger=20）
 -- 候选生成过滤参数（CandidateGenerator 注入；取值为演示默认，待标定）
 INSERT INTO `sys_param` (`param_key`, `param_value`, `category`, `description`) VALUES
-('lowBatteryTrigger',   '20',     '阈值', '低电量告警触发阈值（百分比；占位值，正式标定后改）'),
+('lowBatteryTrigger',   '20',     '阈值', '统一低电量阈值（%；G 组告警及 E 功能10 A5 共用；2026-10-18 确认）'),
 ('minBatteryPercent',   '30',     '阈值', '候选无人机最低电量门槛（%）'),
 ('maxNestDistanceKm',   '5',      '阈值', '机巢到取货点最大半径（km）');
 
@@ -147,13 +146,8 @@ INSERT INTO `sys_param` (`param_key`, `param_value`, `category`, `description`) 
 -- TODO: 档 B 9 键——待 37 登记后灌入
 -- TODO: 档 C（L1/熔断）——暂不灌
 
--- ⚠ 低电量阈值单一来源待确认（合并时登记，勿各自为政）：
---   本段 `lowBatteryTrigger`(20, 序4 告警触发) 与上方 E 组段 `e10LowBatteryAbs`(15, 功能10 A5 兜底)
---   是**两个不同用途**的量，但《84》明文「低电量阈值 G-11 为全项目单一来源」（由 M2 能耗模型倒推、
---   首版静态、不按机型）。二者须与 G 组（宋冰鑫）确认是否合并为单一键，不合并则须在
---   `sys_param` 描述中写明用途差异，避免下游取错。
---   另：本键原名 `low_battery_trigger` 为 snake_case，与项目 camelCase 风格不符
---   （宋冰鑫 2026-10-16 已将 G 组 17 键统一为 camelCase），合入时改名对齐。
+-- 2026-10-18 已决：低电量阈值只用 lowBatteryTrigger=20；不再初始化旧键。
+-- 已有数据库用 deploy/migrations/2026-10-18-low-battery-trigger.sql 增量修正，勿重建业务表。
 -- =====================================================================
 --   D 组功能 5/6/7/8 参数（83 §7）：w_time/w_energy/T_hold/batch_window 等——16 号接入时按需灌入
 --   C/F/G 组参数（82/85/86）：只列名目未给取值

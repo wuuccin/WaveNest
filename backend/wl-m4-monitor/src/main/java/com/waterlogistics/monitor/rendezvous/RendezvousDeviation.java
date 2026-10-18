@@ -1,24 +1,29 @@
 package com.waterlogistics.monitor.rendezvous;
 
+import com.waterlogistics.contract.rest.GeoPoint;
+
 /**
- * 会面偏差样本（G 组功能 19，86 §1.5 13 字段）。
+ * 会面偏差样本（G 组功能 19）。
  *
  * <p>16 号简化版：只发 MQ ＋ 内存/日志留痕，不落库。
  * 数据源：M2 的 {@code B_HandoverConfirmation}（计划/实际会面点与时刻）。
+ * 字段名与顺序和契约 {@code RendezvousDeviationMessage}（wl-contract）逐一对齐，13 字段
+ * （照 86 附 G-01 全表 13 项，一个不多一个不少；计划/实际会面点用契约
+ * {@code com.waterlogistics.contract.rest.GeoPoint}，JSON 键 lon/lat）。
  *
- * @param sampleId        偏差样本唯一标识（UUID）
- * @param droneId         无人机实体标识
- * @param orderId         订单实体标识
- * @param plannedRendezvous 计划会面点（lon, lat），来自 M2 任务方案
- * @param actualRendezvous  实际会面点（lon, lat），来自 M3 末段交接确认
- * @param plannedTime     计划会面时刻（Unix 毫秒）
- * @param actualTime      实际交接时刻（Unix 毫秒）
- * @param dSpace          空间偏差（米），Haversine(实际, 计划)
- * @param dTime           时间偏差（秒），actualTime − plannedTime
- * @param model           机型
- * @param nestId          机巢标识
- * @param windCondition   风况段（可选）
- * @param shipSpeedRange  船速段（可选）
+ * @param sampleId          偏差样本唯一标识（UUID）
+ * @param droneId           无人机实体标识
+ * @param orderId           订单实体标识
+ * @param plannedRendezvous 计划会面点（来自任务方案；缺失时应为 null，不用最后已知机位冒充）
+ * @param actualRendezvous  实际会面点（来自交接完成确认；缺失时应为 null）
+ * @param plannedTime       计划会面时刻（Unix 毫秒，取任务方案会面窗中点）
+ * @param actualTime        实际交接时刻（Unix 毫秒）
+ * @param dSpaceM           空间偏差（米），Haversine(实际, 计划)
+ * @param dTimeS            时间偏差（秒），actualTime − plannedTime
+ * @param model             机型
+ * @param homeNestId        归属机巢标识（契约口径：飞行中归属不变，与 TaskPlanMessage.homeNestId 同字段）
+ * @param windCondition     风况段（可选）
+ * @param shipSpeedRange    船速段（可选）
  */
 public record RendezvousDeviation(
         String sampleId,
@@ -28,16 +33,13 @@ public record RendezvousDeviation(
         GeoPoint actualRendezvous,
         long plannedTime,
         long actualTime,
-        double dSpace,
-        double dTime,
+        double dSpaceM,
+        double dTimeS,
         String model,
-        String nestId,
+        String homeNestId,
         String windCondition,
         String shipSpeedRange
 ) {
-
-    /** 经纬度坐标点 */
-    public record GeoPoint(double lon, double lat) {}
 
     /**
      * 从 B_HandoverConfirmation 组装偏差样本。
@@ -46,7 +48,7 @@ public record RendezvousDeviation(
      * @param orderId      订单实体标识（86 §附 G-01：order_id 来自任务方案 orderId，由调用方传入，
      *                     不得用 confirmation.taskId() 顶替）
      * @param model        机型
-     * @param nestId       机巢标识
+     * @param homeNestId   归属机巢标识
      * @param windCondition 风况段（可选）
      * @param shipSpeedRange 船速段（可选）
      * @return 组装好的偏差样本
@@ -55,19 +57,21 @@ public record RendezvousDeviation(
             com.waterlogistics.algo.meeting.model.B_HandoverConfirmation confirmation,
             String orderId,
             String model,
-            String nestId,
+            String homeNestId,
             String windCondition,
             String shipSpeedRange) {
 
+        // 计划会面点来自任务方案，必有值（plannedMeetLon/Lat 为原始 double）；实际点可能缺失
         GeoPoint planned = new GeoPoint(confirmation.plannedMeetLon(), confirmation.plannedMeetLat());
         GeoPoint actual = confirmation.actualMeetLon() != null && confirmation.actualMeetLat() != null
                 ? new GeoPoint(confirmation.actualMeetLon(), confirmation.actualMeetLat())
                 : null;
 
-        double dSpace = actual != null
-                ? haversineMeters(planned.lat(), planned.lon(), actual.lat(), actual.lon())
+        double dSpaceM = actual != null
+                ? haversineMeters(confirmation.plannedMeetLat(), confirmation.plannedMeetLon(),
+                        confirmation.actualMeetLat(), confirmation.actualMeetLon())
                 : 0.0;
-        double dTime = confirmation.handoverDoneT() != null
+        double dTimeS = confirmation.handoverDoneT() != null
                 ? (confirmation.handoverDoneT() - confirmation.plannedMeetT()) / 1000.0
                 : 0.0;
 
@@ -79,10 +83,10 @@ public record RendezvousDeviation(
                 actual,
                 confirmation.plannedMeetT(),
                 confirmation.handoverDoneT() != null ? confirmation.handoverDoneT() : 0L,
-                dSpace,
-                dTime,
+                dSpaceM,
+                dTimeS,
                 model,
-                nestId,
+                homeNestId,
                 windCondition,
                 shipSpeedRange
         );

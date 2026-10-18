@@ -15,7 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * 会面偏差回流验证（G 组功能 19，16 号简化版）。
  *
- * <p>验证：B_HandoverConfirmation → 13 字段组装 → MQ 发送 → 内存留痕。
+ * <p>验证：B_HandoverConfirmation → 13 字段组装（对齐契约 RendezvousDeviationMessage）→ MQ 发送 → 内存留痕。
  * 未完成接近（无实际会面点）时不产生样本。
  * MQ 发送器用子类替身覆盖 publish 留痕，不引第三方 mock 框架。</p>
  */
@@ -58,14 +58,20 @@ class RendezvousDeviationRecorderTest {
         assertEquals("order-001", deviation.orderId());
         assertEquals("uav-001", deviation.droneId());
         assertEquals("DJI-M350", deviation.model());
-        assertEquals("nest-001", deviation.nestId());
+        assertEquals("nest-001", deviation.homeNestId());
+
+        // 计划/实际会面点（契约 13 字段，GeoPoint lon/lat 原样透传）
+        assertEquals(113.20, deviation.plannedRendezvous().lon(), 1e-9);
+        assertEquals(30.35, deviation.plannedRendezvous().lat(), 1e-9);
+        assertEquals(113.20045, deviation.actualRendezvous().lon(), 1e-9);
+        assertEquals(30.35, deviation.actualRendezvous().lat(), 1e-9);
 
         // 空间偏差 ≈50m（Haversine 计算）
-        assertTrue(deviation.dSpace() > 40.0 && deviation.dSpace() < 60.0,
-                "dSpace 应约 50m，实测 " + deviation.dSpace());
+        assertTrue(deviation.dSpaceM() > 40.0 && deviation.dSpaceM() < 60.0,
+                "dSpaceM 应约 50m，实测 " + deviation.dSpaceM());
 
         // 时间偏差 = 5000ms - 0ms = 5s
-        assertEquals(5.0, deviation.dTime(), 0.001);
+        assertEquals(5.0, deviation.dTimeS(), 0.001);
 
         // 内存留痕 + MQ 发送
         assertEquals(1, recorder.deviationLog().size());
@@ -97,7 +103,7 @@ class RendezvousDeviationRecorderTest {
     }
 
     @Test
-    void 计划基准原样保留() {
+    void 计划时刻原样保留() {
         RecordingPublisher publisher = new RecordingPublisher();
         RendezvousDeviationRecorder recorder = new RendezvousDeviationRecorder(publisher);
 
@@ -115,9 +121,12 @@ class RendezvousDeviationRecorderTest {
                 confirmation, "order-003", "DJI-M350", "nest-001", null, null);
 
         assertNotNull(deviation);
-        // 计划基准必须原样保留（22 §5：plannedMeetLon/Lat 是 d_space 比对基准）
-        assertEquals(113.20, deviation.plannedRendezvous().lon());
-        assertEquals(30.35, deviation.plannedRendezvous().lat());
+        // 契约 13 字段：计划/实际点与时刻原样保留（plannedMeetT 是 dTimeS 比对基准）
+        assertEquals(113.20, deviation.plannedRendezvous().lon(), 1e-9);
+        assertEquals(30.35, deviation.plannedRendezvous().lat(), 1e-9);
+        assertEquals(113.21, deviation.actualRendezvous().lon(), 1e-9);
+        assertEquals(30.36, deviation.actualRendezvous().lat(), 1e-9);
         assertEquals(1700000000000L, deviation.plannedTime());
+        assertEquals(1700000010000L, deviation.actualTime());
     }
 }
