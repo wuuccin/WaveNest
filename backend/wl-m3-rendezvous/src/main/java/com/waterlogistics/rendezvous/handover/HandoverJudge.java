@@ -96,6 +96,8 @@ public final class HandoverJudge {
                 }
             }
 
+            // 有意落穿：MATCH 段在上方补满稳定窗口后同拍进入 TRANSFER，
+            // 允许在该过渡拍即刻接受投放反馈（见 HandoverJudgeTest 同拍投放用例）。
             if (phase == HandoverPhase.TRANSFER && s.dropDone()) {
                 if (s.windSpeedMs() <= params.windLimitMs()) {
                     success = true;
@@ -111,7 +113,8 @@ public final class HandoverJudge {
         if (success) {
             escortTimeCost = (int) Math.min(Integer.MAX_VALUE, (transferStartT - origin.t()) / 1000);
             handoverTimeCost = (int) Math.min(Integer.MAX_VALUE, (handoverDoneT - transferStartT) / 1000);
-            energyCost = (escortTimeCost + handoverTimeCost) * params.energyRatePerSecPct();
+            long totalSec = (long) escortTimeCost + handoverTimeCost;
+            energyCost = totalSec * params.energyRatePerSecPct();
         }
 
         return new B_HandoverConfirmation(cmd.taskId(), cmd.droneId(),

@@ -5,6 +5,7 @@ import com.waterlogistics.algo.meeting.model.NoSolutionReason;
 import com.waterlogistics.algo.meeting.model.RendezvousSolveRequest;
 import com.waterlogistics.algo.meeting.model.ShipPoint;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * 会面点求解（真算法 1）——相对运动拦截求解：相遇条件方程的一维求根（不动点迭代）
@@ -34,6 +35,9 @@ public final class RendezvousSolver {
      * @return 会面点解；追不上或入参退化时为无解解（原因见 {@link NoSolutionReason}）
      */
     public static B_RendezvousSolution solve(RendezvousSolveRequest request) {
+        Objects.requireNonNull(request, "request 不能为空");
+        Objects.requireNonNull(request.snapshot(), "snapshot 不能为空");
+        Objects.requireNonNull(request.representativeWind(), "representativeWind 不能为空");
         String snapshotVersion = request.snapshot().version();
         String solutionId = "RS-" + request.comboId() + "-" + snapshotVersion + "-" + request.nowMs();
 
@@ -64,11 +68,15 @@ public final class RendezvousSolver {
                     NoSolutionReason.CANNOT_CATCH, snapshotVersion);
         }
 
-        // 不动点迭代：t(k+1) = now + |P(t(k)) − N| / v
+        // 不动点迭代给一个根；二分另给 [tLo, tHi] 内的根，两处都取到时取较早者——
+        // 非单调船迹可能让迭代收敛到较晚的根，违反「取最早满足者」（类注释）。
         double t = solveByFixedPoint(request, tLo, v);
-        if (t > tHi) {
-            // 未收敛或收敛值超出 T_max：改用二分在 [tLo, tHi] 上求最小正根
-            t = solveByBisection(request, tLo, tHi, v);
+        if (!(t <= tHi)) {
+            t = Double.NaN;
+        }
+        double tBisection = solveByBisection(request, tLo, tHi, v);
+        if (!Double.isNaN(tBisection)) {
+            t = Double.isNaN(t) ? tBisection : Math.min(t, tBisection);
         }
         if (Double.isNaN(t)) {
             return B_RendezvousSolution.unsolvable(solutionId, request.comboId(),

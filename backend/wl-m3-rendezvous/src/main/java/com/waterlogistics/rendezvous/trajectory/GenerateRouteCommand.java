@@ -18,8 +18,8 @@ import java.util.Objects;
  * @param endLat           终点纬度
  * @param cruiseAltM       巡航高度，米
  * @param speedMs          巡航速度（沿航迹地速），m/s；用于精算时长与航点内插
- * @param startMs          起点时刻（去程＝起飞时刻、返程＝返航起点时刻），Unix 毫秒
- * @param waypointCount    航点数（含首末端点，≥2；直线简化版按此均匀铺点）
+ * @param startMs          起点时刻（去程＝起飞时刻、返程＝返航起点时刻；须为正），Unix 毫秒
+ * @param waypointCount    航点数（含首末端点，2–512；直线简化版按此均匀铺点）
  * @param landingPointsAlong 沿途可用迫降点标注（首版由调用方按台账预筛；检索半径过滤属精算版留桩）
  * @param avoidZones       实际避让的禁飞区／桥梁净空标识（首版由调用方给，直线简化不实测避让）
  * @param energyRatePerSecPct 能耗率（%／s），供首版线性能耗模型 energy＝τ×率
@@ -55,18 +55,31 @@ public record GenerateRouteCommand(
 
         double pathRisk) {
 
+    private static final int MAX_WAYPOINT_COUNT = 512;
+
     public GenerateRouteCommand {
         Objects.requireNonNull(comboId, "comboId 不能为空");
         Objects.requireNonNull(routeId, "routeId 不能为空");
-        landingPointsAlong = List.copyOf(Objects.requireNonNull(landingPointsAlong,
-                "landingPointsAlong 不能为空"));
-        avoidZones = List.copyOf(Objects.requireNonNull(avoidZones, "avoidZones 不能为空"));
+        if (comboId.isBlank() || routeId.isBlank()) {
+            throw new IllegalArgumentException("comboId/routeId 不能为空白字符串");
+        }
+        Objects.requireNonNull(landingPointsAlong, "landingPointsAlong 不能为空");
+        Objects.requireNonNull(avoidZones, "avoidZones 不能为空");
+        if (landingPointsAlong.stream().anyMatch(Objects::isNull) || avoidZones.stream().anyMatch(Objects::isNull)) {
+            throw new IllegalArgumentException("landingPointsAlong/avoidZones 不能包含 null");
+        }
+        landingPointsAlong = List.copyOf(landingPointsAlong);
+        avoidZones = List.copyOf(avoidZones);
         if (!Double.isFinite(startLon) || !Double.isFinite(startLat)
                 || !Double.isFinite(endLon) || !Double.isFinite(endLat)) {
             throw new IllegalArgumentException("起终点坐标必须为有限数");
         }
-        if (waypointCount < 2) {
-            throw new IllegalArgumentException("航点数至少为 2，实际 " + waypointCount);
+        if (waypointCount < 2 || waypointCount > MAX_WAYPOINT_COUNT) {
+            throw new IllegalArgumentException(
+                    "航点数须在 [2, " + MAX_WAYPOINT_COUNT + "]，实际 " + waypointCount);
+        }
+        if (startMs <= 0) {
+            throw new IllegalArgumentException("起点时刻必须为正，实际 " + startMs);
         }
         if (!Double.isFinite(speedMs) || !(speedMs > 0)) {
             throw new IllegalArgumentException("速度必须为正的有限数，实际 " + speedMs);

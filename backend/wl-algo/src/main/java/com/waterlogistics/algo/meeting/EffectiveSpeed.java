@@ -1,6 +1,7 @@
 package com.waterlogistics.algo.meeting;
 
 import com.waterlogistics.algo.meeting.model.Wind;
+import java.util.Objects;
 
 /**
  * 有效速度修正——代表风况下沿「巢 → 会面点」方向的地速（《81-B组算法方案》§3.1 步骤 2）。
@@ -26,6 +27,13 @@ public final class EffectiveSpeed {
      * @return 有效速度，m/s（可为负）
      */
     public static double alongBearing(double cruiseSpeedMs, Wind wind, double bearingDeg) {
+        Objects.requireNonNull(wind, "wind 不能为空");
+        if (!Double.isFinite(cruiseSpeedMs) || !Double.isFinite(wind.speedMs())
+                || !Double.isFinite(wind.dirDeg()) || !Double.isFinite(bearingDeg)) {
+            throw new IllegalArgumentException("有效速度入参必须为有限值，实际 cruise=" + cruiseSpeedMs
+                    + ", windSpeed=" + wind.speedMs() + ", windDir=" + wind.dirDeg()
+                    + ", bearing=" + bearingDeg);
+        }
         double relRad = Math.toRadians(wind.dirDeg() - bearingDeg);
         return cruiseSpeedMs - wind.speedMs() * Math.cos(relRad);
     }

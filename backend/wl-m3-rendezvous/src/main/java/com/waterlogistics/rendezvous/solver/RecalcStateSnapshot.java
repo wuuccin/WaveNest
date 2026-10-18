@@ -38,10 +38,34 @@ public record RecalcStateSnapshot(
 
     public RecalcStateSnapshot {
         if (!Double.isFinite(shipLon) || !Double.isFinite(shipLat) || !Double.isFinite(shipCogDeg)
-                || !Double.isFinite(sogMs) || !(sogMs >= 0)) {
+                || !Double.isFinite(sogMs) || !(sogMs >= 0)
+                || shipLon < -180.0 || shipLon > 180.0 || shipLat < -90.0 || shipLat > 90.0
+                || !(shipCogDeg >= 0) || !(shipCogDeg < 360.0)) {
             throw new IllegalArgumentException(
                     "船侧求解字段非法：shipLon=" + shipLon + ", shipLat=" + shipLat
                             + ", shipCogDeg=" + shipCogDeg + ", sogMs=" + sogMs);
+        }
+        if (shipStateT <= 0) {
+            throw new IllegalArgumentException("船状态时刻必须为正，实际 " + shipStateT);
+        }
+        boolean droneAllNull = droneLon == null && droneLat == null
+                && droneBattery == null && droneStateT == null;
+        boolean droneAllSet = droneLon != null && droneLat != null
+                && droneBattery != null && droneStateT != null;
+        if (!droneAllNull && !droneAllSet) {
+            throw new IllegalArgumentException("机侧四个字段须同时缺省或同时提供");
+        }
+        if (droneAllSet) {
+            if (!Double.isFinite(droneLon) || !Double.isFinite(droneLat)
+                    || !Double.isFinite(droneBattery)
+                    || droneLon < -180.0 || droneLon > 180.0 || droneLat < -90.0 || droneLat > 90.0
+                    || droneBattery < 0.0 || droneBattery > 100.0) {
+                throw new IllegalArgumentException("机侧状态非法：droneLon=" + droneLon
+                        + ", droneLat=" + droneLat + ", droneBattery=" + droneBattery);
+            }
+            if (droneStateT <= 0) {
+                throw new IllegalArgumentException("机状态时刻必须为正，实际 " + droneStateT);
+            }
         }
     }
 }

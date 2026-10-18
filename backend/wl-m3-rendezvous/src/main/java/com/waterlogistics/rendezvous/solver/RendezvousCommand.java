@@ -55,8 +55,12 @@ public record RendezvousCommand(
         Objects.requireNonNull(comboId, "comboId 不能为空");
         Objects.requireNonNull(shipMmsi, "shipMmsi 不能为空");
         Objects.requireNonNull(representativeWind, "representativeWind 不能为空");
-        if (!Double.isFinite(nestLon) || !Double.isFinite(nestLat)) {
-            throw new IllegalArgumentException("机巢坐标必须为有限数");
+        if (comboId.isBlank() || shipMmsi.isBlank()) {
+            throw new IllegalArgumentException("comboId/shipMmsi 不能为空白字符串");
+        }
+        if (!Double.isFinite(nestLon) || !Double.isFinite(nestLat)
+                || nestLon < -180.0 || nestLon > 180.0 || nestLat < -90.0 || nestLat > 90.0) {
+            throw new IllegalArgumentException("机巢坐标必须为有限数且经纬度在合法范围内");
         }
         if (!Double.isFinite(cruiseSpeedMs) || !(cruiseSpeedMs > 0)) {
             throw new IllegalArgumentException("巡航速度必须为正的有限数，实际 " + cruiseSpeedMs);

@@ -33,8 +33,12 @@ public record DroneContext(
     public DroneContext {
         Objects.requireNonNull(droneId, "droneId 不能为空");
         Objects.requireNonNull(homeNestId, "homeNestId 不能为空");
-        if (!Double.isFinite(nestLon) || !Double.isFinite(nestLat)) {
-            throw new IllegalArgumentException("机巢坐标必须为有限数");
+        if (droneId.isBlank() || homeNestId.isBlank()) {
+            throw new IllegalArgumentException("droneId/homeNestId 不能为空白字符串");
+        }
+        if (!Double.isFinite(nestLon) || !Double.isFinite(nestLat)
+                || nestLon < -180.0 || nestLon > 180.0 || nestLat < -90.0 || nestLat > 90.0) {
+            throw new IllegalArgumentException("机巢坐标必须为有限数且经纬度在合法范围内");
         }
         if (!Double.isFinite(cruiseSpeedMs) || !(cruiseSpeedMs > 0)) {
             throw new IllegalArgumentException("机型巡航速度必须为正的有限数，实际 " + cruiseSpeedMs);

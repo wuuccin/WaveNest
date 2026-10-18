@@ -45,7 +45,11 @@ public record RendezvousRecalcRequest(
     public RendezvousRecalcRequest {
         Objects.requireNonNull(requestId, "requestId 不能为空");
         Objects.requireNonNull(droneId, "droneId 不能为空");
+        Objects.requireNonNull(snapshotVersion, "snapshotVersion 不能为空");
         Objects.requireNonNull(shipMmsi, "shipMmsi 不能为空");
         Objects.requireNonNull(stateSnapshot, "stateSnapshot 不能为空");
+        if (requestId.isBlank() || droneId.isBlank() || snapshotVersion.isBlank() || shipMmsi.isBlank()) {
+            throw new IllegalArgumentException("requestId/droneId/snapshotVersion/shipMmsi 不能为空白字符串");
+        }
     }
 }

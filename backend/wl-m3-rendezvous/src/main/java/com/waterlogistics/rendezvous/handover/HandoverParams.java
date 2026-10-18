@@ -8,7 +8,7 @@ package com.waterlogistics.rendezvous.handover;
  * @param approachRadiusM     接近段收敛阈值（相对距离低于此值进入匹配），米
  * @param posErrorM           相对位置误差阈值，米（须小于 {@code approachRadiusM}）
  * @param speedErrorMs        相对速度阈值，m/s
- * @param stableSec           稳定持续时间（位置与速度须持续达标），秒
+ * @param stableSec           稳定持续时间（位置与速度须持续达标；须为正），秒
  * @param windLimitMs         交接风阈值，m/s
  * @param energyRatePerSecPct 能耗率，%／s（首版线性能耗模型：能耗＝时长×率）
  */
@@ -40,9 +40,9 @@ public record HandoverParams(
         }
         if (!Double.isFinite(stableSec) || !Double.isFinite(windLimitMs)
                 || !Double.isFinite(energyRatePerSecPct)
-                || !(stableSec >= 0) || !(windLimitMs >= 0) || !(energyRatePerSecPct >= 0)) {
+                || !(stableSec > 0) || !(windLimitMs >= 0) || !(energyRatePerSecPct >= 0)) {
             throw new IllegalArgumentException(
-                    "持续时间、风阈与能耗率不能为负且须为有限数，实际 stableSec=" + stableSec
+                    "稳定持续时间须为正、风阈与能耗率不能为负且均须为有限数，实际 stableSec=" + stableSec
                             + ", windLimitMs=" + windLimitMs + ", energyRatePerSecPct=" + energyRatePerSecPct);
         }
     }

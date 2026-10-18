@@ -2,6 +2,7 @@ package com.waterlogistics.rendezvous.correction;
 
 import com.waterlogistics.algo.inflight.CrossTrackError;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * 去程段追踪与纠偏循环体（功能 17）——<b>判据只出「前提是否成立」，不出修正指令</b>。
@@ -48,7 +49,17 @@ public final class DeviationTracker {
      */
     public static PremiseVerdict track(double shipLon, double shipLat,
             List<Double> forecastLons, List<Double> forecastLats, double xtlM) {
+        Objects.requireNonNull(forecastLons, "forecastLons 不能为空");
+        Objects.requireNonNull(forecastLats, "forecastLats 不能为空");
+        if (!Double.isFinite(shipLon) || !Double.isFinite(shipLat) || !Double.isFinite(xtlM)) {
+            throw new IllegalArgumentException(
+                    "船位与走廊半宽必须为有限数，实际 shipLon=" + shipLon + ", shipLat=" + shipLat
+                            + ", xtlM=" + xtlM);
+        }
         double signedXte = CrossTrackError.signedM(shipLon, shipLat, forecastLons, forecastLats);
+        if (!Double.isFinite(signedXte)) {
+            throw new IllegalArgumentException("横向偏差计算结果非有限，预测航迹入参非法");
+        }
         double absXte = Math.abs(signedXte);
         boolean outside = CrossTrackError.outsideCorridor(absXte, xtlM);
 
@@ -75,6 +86,10 @@ public final class DeviationTracker {
             String reason) {
 
         public PremiseVerdict {
+            if (!Double.isFinite(absXteM) || !Double.isFinite(signedXteM) || !Double.isFinite(xtlM)) {
+                throw new IllegalArgumentException("偏差与走廊半宽必须为有限数，实为 absXteM="
+                        + absXteM + ", signedXteM=" + signedXteM + ", xtlM=" + xtlM);
+            }
             if (xtlM <= 0) {
                 throw new IllegalArgumentException("走廊半宽须为正（米），实为 " + xtlM);
             }

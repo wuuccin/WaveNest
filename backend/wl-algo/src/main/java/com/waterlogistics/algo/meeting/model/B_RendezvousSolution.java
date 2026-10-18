@@ -46,6 +46,24 @@ public record B_RendezvousSolution(
 
         String snapshotVersion) {
 
+    public B_RendezvousSolution {
+        if (hasSolution) {
+            if (noSolutionReason != null) {
+                throw new IllegalArgumentException("有解时 noSolutionReason 必须为空");
+            }
+            if (meetLon == null || meetLat == null || meetTMin == null || meetTMax == null) {
+                throw new IllegalArgumentException("有解时会面字段不能为空");
+            }
+        } else {
+            if (noSolutionReason == null) {
+                throw new IllegalArgumentException("无解时 noSolutionReason 不能为空");
+            }
+            if (meetLon != null || meetLat != null || meetTMin != null || meetTMax != null) {
+                throw new IllegalArgumentException("无解时会面字段必须为 null");
+            }
+        }
+    }
+
     /**
      * 有解构造：窗口＝[t*, t*＋余量]（调用方算好上下界），双方到达时刻＝最早相遇时刻。
      */

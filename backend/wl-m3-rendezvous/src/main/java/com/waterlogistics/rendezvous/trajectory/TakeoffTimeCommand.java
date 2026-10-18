@@ -1,5 +1,7 @@
 package com.waterlogistics.rendezvous.trajectory;
 
+import java.util.Objects;
+
 /**
  * 起飞时刻回填入参——「一个反推算式」（《81-B组算法方案》§3.3）：起飞时刻是输出不是输入；
  * 会面时刻来自 12、精算飞行时长来自 13，本项只用后者（两笔时长账不混）。
@@ -26,8 +28,12 @@ public record TakeoffTimeCommand(
         long timeGridMs) {
 
     public TakeoffTimeCommand {
-        if (tauFineSec < 0) {
-            throw new IllegalArgumentException("精算飞行时长不能为负，实际 " + tauFineSec);
+        Objects.requireNonNull(comboId, "comboId 不能为空");
+        if (comboId.isBlank()) {
+            throw new IllegalArgumentException("comboId 不能为空白字符串");
+        }
+        if (tauFineSec <= 0) {
+            throw new IllegalArgumentException("精算飞行时长必须为正，实际 " + tauFineSec);
         }
         if (timeGridMs <= 0) {
             throw new IllegalArgumentException("时刻精度粒度必须为正，实际 " + timeGridMs);

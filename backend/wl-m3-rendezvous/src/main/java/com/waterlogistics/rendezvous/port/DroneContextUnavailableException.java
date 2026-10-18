@@ -19,7 +19,7 @@ public class DroneContextUnavailableException extends RuntimeException {
         this.droneId = droneId;
     }
 
-    /** 返回触发本异常的执行机实例（原样保留，可能为 null） */
+    /** 返回触发本异常的执行机实例（原样保留，可能为 null/空白；日志请用 {@link #getMessage()}） */
     public String getDroneId() {
         return droneId;
     }

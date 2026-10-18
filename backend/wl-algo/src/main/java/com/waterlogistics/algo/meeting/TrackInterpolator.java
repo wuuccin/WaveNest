@@ -3,6 +3,7 @@ package com.waterlogistics.algo.meeting;
 import com.waterlogistics.algo.meeting.model.ShipPoint;
 import com.waterlogistics.algo.meeting.model.ShipTrackSnapshot;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * 预测点列时间插值——点间线性插值求位置（《81-B组算法方案》§3.1 步骤 3）。
@@ -23,7 +24,11 @@ public final class TrackInterpolator {
      * @return {@code {经度, 纬度}}
      */
     public static double[] positionAt(ShipTrackSnapshot snapshot, long t) {
+        Objects.requireNonNull(snapshot, "snapshot 不能为空");
         List<ShipPoint> points = snapshot.points();
+        if (points == null || points.isEmpty()) {
+            throw new IllegalArgumentException("快照点列不能为空");
+        }
         ShipPoint first = points.get(0);
         ShipPoint last = points.get(points.size() - 1);
         if (t <= first.t()) {
@@ -42,6 +47,6 @@ public final class TrackInterpolator {
                         a.lat() + k * (b.lat() - a.lat())};
             }
         }
-        return new double[] {last.lon(), last.lat()};
+        throw new IllegalStateException("快照点列时间未严格升序，插值不可达末段");
     }
 }

@@ -46,7 +46,7 @@ public class RendezvousSolveService {
         }
         return RendezvousSolver.solve(new RendezvousSolveRequest(
                 cmd.comboId(), cmd.nestLon(), cmd.nestLat(), cmd.cruiseSpeedMs(),
-                cmd.representativeWind(), snapshot, null,
+                cmd.representativeWind(), snapshot, null /* shipState：常规求解回落快照插值 */,
                 cmd.nowMs(), cmd.deadlineMs(), cmd.meetWindowMarginSec(),
                 cmd.convergeEpsilonSec(), cmd.maxIterations()));
     }

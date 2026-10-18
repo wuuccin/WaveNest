@@ -19,16 +19,28 @@ public final class GeoApprox {
 
     /**
      * 局部平面近似距离（等距圆球），米；两点间距远小于地球半径时误差可忽略。
+     *
+     * <p>经差先归一化到 (−180, 180]，跨 ±180° 经线的点对不会被算成整球距离。本类距离用
+     * 等距近似、方位用球面初始方位，两种模型只在十公里级作业区一致，勿超尺度复用。
      */
     public static double distanceM(double lon1, double lat1, double lon2, double lat2) {
         double midLatRad = Math.toRadians((lat1 + lat2) / 2);
-        double dx = (lon2 - lon1) * METERS_PER_DEG * Math.cos(midLatRad);
+        double dLon = lon2 - lon1;
+        if (dLon > 180.0) {
+            dLon -= 360.0;
+        } else if (dLon < -180.0) {
+            dLon += 360.0;
+        }
+        double dx = dLon * METERS_PER_DEG * Math.cos(midLatRad);
         double dy = (lat2 - lat1) * METERS_PER_DEG;
         return Math.hypot(dx, dy);
     }
 
     /**
      * 起点指向终点的初始方位角，度（0° 正北、顺时针）。
+     *
+     * <p>两点重合时方位无定义（{@code atan2(0,0)=0}），此处返回正北；调用方不得把零长航段
+     * 用于风向修正。
      */
     public static double bearingDeg(double lon1, double lat1, double lon2, double lat2) {
         double phi1 = Math.toRadians(lat1);
