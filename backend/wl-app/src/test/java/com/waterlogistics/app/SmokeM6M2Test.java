@@ -42,11 +42,21 @@ class SmokeM6M2Test {
     @Autowired
     private DispatchGateService dispatchGateService;
 
-    /** 判据：sys_param 有行、关键键可读（含 M6 新增两键） */
+    /** 判据：sys_param 有行、关键键可读（含 M6 新增两键）；2026-10-18 改按键断言，不锁总数 */
     @Test
     void sysParamLoaded() {
         Map<String, String> all = sysParamLoader.all();
-        assertThat(all).hasSize(73);
+        // 不锁总数：键数会随 10-18 灌库与后续标定变化；改为逐项断言 23 个必备键存在
+        assertThat(all).containsKeys(
+            // G 组检测阈值（16 键）
+            "offtrackWarningThreshold", "offtrackCriticalThreshold", "offtrackDebounceCount",
+            "offtrackClearCount", "offtrackDowngradeCount", "lowBatteryClear", "lowBatterySevere",
+            "lowBatteryDowngradeDebounce", "heartbeatLostWindowSec", "heartbeatLossWindowSec",
+            "heartbeatCheckIntervalSec", "weatherWindWarningThreshold", "weatherWindCriticalThreshold",
+            "weatherWindSurgeThreshold", "weatherSurgeWindowSec", "weatherClearDebounce",
+            // PR #6 会面与风况（7 键）
+            "droneCruiseSpeedMs", "rendezvousHorizonSec", "rendezvousWindowMarginSec",
+            "rendezvousEpsilonSec", "rendezvousMaxIter", "windSpeedMs", "windDirDeg");
         assertThat(all).containsEntry("nestCapacity", "4");
         assertThat(all).containsEntry("forcedStopSlotSec", "900");
         assertThat(all).containsEntry("sepHorizM", "50");

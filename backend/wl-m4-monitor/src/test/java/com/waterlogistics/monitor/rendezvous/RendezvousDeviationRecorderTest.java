@@ -58,14 +58,14 @@ class RendezvousDeviationRecorderTest {
         assertEquals("order-001", deviation.orderId());
         assertEquals("uav-001", deviation.droneId());
         assertEquals("DJI-M350", deviation.model());
-        assertEquals("nest-001", deviation.nestId());
+        assertEquals("nest-001", deviation.homeNestId());
 
         // 空间偏差 ≈50m（Haversine 计算）
-        assertTrue(deviation.dSpace() > 40.0 && deviation.dSpace() < 60.0,
-                "dSpace 应约 50m，实测 " + deviation.dSpace());
+        assertTrue(deviation.dSpaceM() > 40.0 && deviation.dSpaceM() < 60.0,
+                "dSpaceM 应约 50m，实测 " + deviation.dSpaceM());
 
         // 时间偏差 = 5000ms - 0ms = 5s
-        assertEquals(5.0, deviation.dTime(), 0.001);
+        assertEquals(5.0, deviation.dTimeS(), 0.001);
 
         // 内存留痕 + MQ 发送
         assertEquals(1, recorder.deviationLog().size());

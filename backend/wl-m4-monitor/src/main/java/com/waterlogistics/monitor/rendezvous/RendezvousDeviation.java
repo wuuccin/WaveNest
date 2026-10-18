@@ -13,10 +13,10 @@ package com.waterlogistics.monitor.rendezvous;
  * @param actualRendezvous  实际会面点（lon, lat），来自 M3 末段交接确认
  * @param plannedTime     计划会面时刻（Unix 毫秒）
  * @param actualTime      实际交接时刻（Unix 毫秒）
- * @param dSpace          空间偏差（米），Haversine(实际, 计划)
- * @param dTime           时间偏差（秒），actualTime − plannedTime
+ * @param dSpaceM         空间偏差（米），Haversine(实际, 计划)
+ * @param dTimeS          时间偏差（秒），actualTime − plannedTime
  * @param model           机型
- * @param nestId          机巢标识
+ * @param homeNestId      机巢标识（归属机巢口径，与 task.plan 同字段）
  * @param windCondition   风况段（可选）
  * @param shipSpeedRange  船速段（可选）
  */
@@ -28,10 +28,10 @@ public record RendezvousDeviation(
         GeoPoint actualRendezvous,
         long plannedTime,
         long actualTime,
-        double dSpace,
-        double dTime,
+        double dSpaceM,
+        double dTimeS,
         String model,
-        String nestId,
+        String homeNestId,
         String windCondition,
         String shipSpeedRange
 ) {
@@ -46,7 +46,7 @@ public record RendezvousDeviation(
      * @param orderId      订单实体标识（86 §附 G-01：order_id 来自任务方案 orderId，由调用方传入，
      *                     不得用 confirmation.taskId() 顶替）
      * @param model        机型
-     * @param nestId       机巢标识
+     * @param homeNestId   机巢标识（归属机巢口径）
      * @param windCondition 风况段（可选）
      * @param shipSpeedRange 船速段（可选）
      * @return 组装好的偏差样本
@@ -55,7 +55,7 @@ public record RendezvousDeviation(
             com.waterlogistics.algo.meeting.model.B_HandoverConfirmation confirmation,
             String orderId,
             String model,
-            String nestId,
+            String homeNestId,
             String windCondition,
             String shipSpeedRange) {
 
@@ -64,10 +64,10 @@ public record RendezvousDeviation(
                 ? new GeoPoint(confirmation.actualMeetLon(), confirmation.actualMeetLat())
                 : null;
 
-        double dSpace = actual != null
+        double dSpaceM = actual != null
                 ? haversineMeters(planned.lat(), planned.lon(), actual.lat(), actual.lon())
                 : 0.0;
-        double dTime = confirmation.handoverDoneT() != null
+        double dTimeS = confirmation.handoverDoneT() != null
                 ? (confirmation.handoverDoneT() - confirmation.plannedMeetT()) / 1000.0
                 : 0.0;
 
@@ -79,10 +79,10 @@ public record RendezvousDeviation(
                 actual,
                 confirmation.plannedMeetT(),
                 confirmation.handoverDoneT() != null ? confirmation.handoverDoneT() : 0L,
-                dSpace,
-                dTime,
+                dSpaceM,
+                dTimeS,
                 model,
-                nestId,
+                homeNestId,
                 windCondition,
                 shipSpeedRange
         );
