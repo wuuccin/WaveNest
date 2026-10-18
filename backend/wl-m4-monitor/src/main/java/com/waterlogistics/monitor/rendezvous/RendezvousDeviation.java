@@ -1,5 +1,7 @@
 package com.waterlogistics.monitor.rendezvous;
 
+import com.waterlogistics.contract.rest.GeoPoint;
+
 /**
  * 会面偏差样本（G 组功能 19，86 §1.5 13 字段）。
  *
@@ -35,9 +37,6 @@ public record RendezvousDeviation(
         String windCondition,
         String shipSpeedRange
 ) {
-
-    /** 经纬度坐标点 */
-    public record GeoPoint(double lon, double lat) {}
 
     /**
      * 从 B_HandoverConfirmation 组装偏差样本。
