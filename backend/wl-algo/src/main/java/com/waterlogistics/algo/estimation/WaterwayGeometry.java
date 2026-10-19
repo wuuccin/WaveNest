@@ -110,6 +110,19 @@ public final class WaterwayGeometry {
     }
 
     /**
+     * 各段起点的累计弧长（升序，首项 0、末项为全线总长），m。
+     *
+     * <p>返回<b>副本</b>，调用方改它不影响几何对象。用途：步骤 E 的沿程推进需要知道
+     * 「下一个航段边界还有多远」，以便在新航段限速处重新起算（{@code 80} §3.2.7 第 3 步
+     * 的「分段处理」），不能靠试探 {@link #courseDegAt} 的跳变来猜边界。
+     *
+     * @return 长度等于顶点数的累计弧长数组副本
+     */
+    public double[] segmentBoundariesM() {
+        return cumulativeLengthM.clone();
+    }
+
+    /**
      * 投影：经纬度 →（弧长 {@code s}，横向 {@code e}）。
      *
      * <p>对每一段求垂足（限制在段内，端点外则取端点），取横向距离最小的那一段。

@@ -223,6 +223,16 @@ public final class AlongTrackKalmanFilter {
     }
 
     /**
+     * 当前 {@code s}–{@code v} 协方差 {@code P_sv}。
+     *
+     * <p>步骤 E 的协方差传播 {@code P⁻_ss(τ) = P_ss + 2τP_sv + τ²P_vv + qτ³/3} 需要它；
+     * 只读访问器，不改变滤波行为。
+     */
+    public double covarianceSV() {
+        return pSV;
+    }
+
+    /**
      * 观测噪声方差 {@code r_s = (σ_pos / cos θ_clamped)²}。
      *
      * @param thetaRad 航迹与航道夹角，弧度

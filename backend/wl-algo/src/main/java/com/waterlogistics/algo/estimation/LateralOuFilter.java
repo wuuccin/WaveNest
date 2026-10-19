@@ -226,6 +226,16 @@ public final class LateralOuFilter {
         return laneChange;
     }
 
+    /**
+     * 当前横向方差 {@code pE}，{@code m²}。
+     *
+     * <p>步骤 E 的 {@code Var_e(τ) = φ²·pE + (1 − φ²)·σ_e²} 需要它作为初值；
+     * 只读访问器，不改变滤波行为。
+     */
+    public double varianceE() {
+        return pE;
+    }
+
     // ───────────── 内部工具 ─────────────
 
     private void updateLaneChangeCounter(double stepM) {
