@@ -15,4 +15,11 @@ public record ConflictSpaceTime(
         long tBegin,
 
         long tEnd) {
+
+    public ConflictSpaceTime {
+        if (tBegin > tEnd) {
+            throw new IllegalArgumentException(
+                    "冲突区间起不得晚于止，实际 tBegin=" + tBegin + ", tEnd=" + tEnd);
+        }
+    }
 }

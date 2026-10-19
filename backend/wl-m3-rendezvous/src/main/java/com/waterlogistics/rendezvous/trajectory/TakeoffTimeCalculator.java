@@ -2,7 +2,10 @@ package com.waterlogistics.rendezvous.trajectory;
 
 import com.waterlogistics.algo.meeting.model.B_TakeoffTimeResult;
 import com.waterlogistics.algo.meeting.model.TakeoffInfeasibleReason;
+
 import java.util.Objects;
+
+
 
 /**
  * 起飞时刻回填（算式部分）——一个反推算式 ＋ 不可行回退判定（《81-B组算法方案》§3.3、
@@ -23,6 +26,10 @@ public final class TakeoffTimeCalculator {
     private TakeoffTimeCalculator() {
     }
 
+
+
+
+
     /**
      * 反推一个候选组合的起飞时刻。
      *
@@ -38,6 +45,6 @@ public final class TakeoffTimeCalculator {
         boolean feasible = takeoffT >= cmd.nowMs();
 
         return new B_TakeoffTimeResult(cmd.comboId(), takeoffT, feasible,
-                feasible ? null : TakeoffInfeasibleReason.BEFORE_NOW, cmd.tauFineSec());
+                                       feasible ? null : TakeoffInfeasibleReason.BEFORE_NOW, cmd.tauFineSec());
     }
 }

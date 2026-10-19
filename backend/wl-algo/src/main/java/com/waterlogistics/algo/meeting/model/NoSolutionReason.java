@@ -3,7 +3,9 @@ package com.waterlogistics.algo.meeting.model;
 /**
  * 无解原因——照《81-B组算法方案》§2.3 第（1）项，取值不得自造。
  *
- * <p>透传口径：落库与传输一律使用 {@link #getValue()}（中文本词）。
+ * <p>透传口径：落库与传输一律使用 {@link #getValue()}（中文本词）。本类处在纯计算层
+ * （不引 Jackson），序列化转换由装配层/消息层负责；{@link #toString()} 同取对外口径词，
+ * 避免日志里落到英文枚举名。
  */
 public enum NoSolutionReason {
 
@@ -27,10 +29,24 @@ public enum NoSolutionReason {
         return value;
     }
 
-    /** 按对外口径词解析枚举 */
+    /** 对外口径词即 {@code toString()}，避免日志误用英文枚举名 */
+    @Override
+    public String toString() {
+        return value;
+    }
+
+    /**
+     * 按对外口径词解析枚举。
+     *
+     * @throws IllegalArgumentException 入参为空/空白或无匹配口径词
+     */
     public static NoSolutionReason fromValue(String value) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException("无解原因不能为空");
+        }
+        String normalized = value.trim();
         for (NoSolutionReason reason : values()) {
-            if (reason.value.equals(value)) {
+            if (reason.value.equals(normalized)) {
                 return reason;
             }
         }

@@ -3,6 +3,8 @@ package com.waterlogistics.rendezvous.handover;
 import java.util.List;
 import java.util.Objects;
 
+
+
 /**
  * 末段判定入参——计划会面基准（来自会面点解，供 G 组 {@code d_space} 比对，原样保留）
  * ＋末段采样序列＋阈值。
@@ -35,8 +37,16 @@ public record HandoverCommand(
         Objects.requireNonNull(taskId, "taskId 不能为空");
         Objects.requireNonNull(droneId, "droneId 不能为空");
         Objects.requireNonNull(params, "params 不能为空");
-        if (!Double.isFinite(plannedMeetLon) || !Double.isFinite(plannedMeetLat)) {
-            throw new IllegalArgumentException("计划会面点坐标必须为有限数");
+        if (taskId.isBlank() || droneId.isBlank()) {
+            throw new IllegalArgumentException("taskId/droneId 不能为空白字符串");
+        }
+        if (plannedMeetT <= 0) {
+            throw new IllegalArgumentException("计划会面时刻必须为正的 Unix 毫秒值，实际 " + plannedMeetT);
+        }
+        if (!Double.isFinite(plannedMeetLon) || !Double.isFinite(plannedMeetLat)
+                || plannedMeetLon < -180.0 || plannedMeetLon > 180.0
+                || plannedMeetLat < -90.0 || plannedMeetLat > 90.0) {
+            throw new IllegalArgumentException("计划会面点坐标必须为有限数且经纬度在合法范围内");
         }
         samples = List.copyOf(Objects.requireNonNull(samples, "samples 不能为空"));
         if (samples.isEmpty()) {

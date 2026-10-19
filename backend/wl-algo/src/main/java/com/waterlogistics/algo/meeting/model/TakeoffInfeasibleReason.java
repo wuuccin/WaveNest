@@ -23,10 +23,18 @@ public enum TakeoffInfeasibleReason {
         return value;
     }
 
-    /** 按对外口径词解析枚举 */
+    /**
+     * 按对外口径词解析枚举。
+     *
+     * @throws IllegalArgumentException 入参为空/空白或无匹配口径词
+     */
     public static TakeoffInfeasibleReason fromValue(String value) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException("起飞不可行原因不能为空");
+        }
+        String normalized = value.trim();
         for (TakeoffInfeasibleReason reason : values()) {
-            if (reason.value.equals(value)) {
+            if (reason.value.equals(normalized)) {
                 return reason;
             }
         }

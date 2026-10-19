@@ -2,6 +2,8 @@ package com.waterlogistics.rendezvous.solver;
 
 import java.util.Objects;
 
+
+
 /**
  * 6a 会面点重算请求（接收侧形态）——照《81-B组算法方案》§2.5 的字段分档；E 组
  * {@code RendezvousRecalcRequest} 按此校准（同源《29-各组算法层接口定义》§3.5.1(1a)、C-06）。
@@ -14,6 +16,9 @@ import java.util.Objects;
  * 返回可带 {@code comboId}（由该机当前任务回溯，取不到为 null）。
  *
  * <p>本接口<b>纯计算</b>：不落库、不改占位、不生成航迹（《81》§2.4、§2.5 返回结构 3）。
+ *
+ * <p>校验口径：{@code null} 引用抛 {@link NullPointerException}（构造期 {@code requireNonNull} 惯例）；
+ * 空白字符串与非法数值抛 {@link IllegalArgumentException}。
  *
  * @param requestId       请求标识（求解必需；随结果原样返回）
  * @param droneId         执行机实例（求解必需；反查机型速度、归属机巢、当前组合）
@@ -45,7 +50,14 @@ public record RendezvousRecalcRequest(
     public RendezvousRecalcRequest {
         Objects.requireNonNull(requestId, "requestId 不能为空");
         Objects.requireNonNull(droneId, "droneId 不能为空");
+        Objects.requireNonNull(snapshotVersion, "snapshotVersion 不能为空");
         Objects.requireNonNull(shipMmsi, "shipMmsi 不能为空");
         Objects.requireNonNull(stateSnapshot, "stateSnapshot 不能为空");
+        if (requestId.isBlank() || droneId.isBlank() || snapshotVersion.isBlank() || shipMmsi.isBlank()) {
+            throw new IllegalArgumentException("requestId/droneId/snapshotVersion/shipMmsi 不能为空白字符串");
+        }
+        if (timestamp <= 0) {
+            throw new IllegalArgumentException("请求时刻必须为正的 Unix 毫秒值，实际 " + timestamp);
+        }
     }
 }

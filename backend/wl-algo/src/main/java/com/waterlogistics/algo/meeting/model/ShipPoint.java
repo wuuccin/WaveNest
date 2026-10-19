@@ -27,4 +27,21 @@ public record ShipPoint(
         double sigmaAlong,
 
         double sigmaCross) {
+
+    public ShipPoint {
+        if (!Double.isFinite(lon) || lon < -180.0 || lon > 180.0
+                || !Double.isFinite(lat) || lat < -90.0 || lat > 90.0) {
+            throw new IllegalArgumentException(
+                    "预测点经纬度必须为有限数且在合法范围内，实际 lon=" + lon + ", lat=" + lat);
+        }
+        if (!Double.isFinite(cog)) {
+            throw new IllegalArgumentException("航迹方位必须为有限数，实际 " + cog);
+        }
+        if (!Double.isFinite(sigmaAlong) || sigmaAlong < 0.0
+                || !Double.isFinite(sigmaCross) || sigmaCross < 0.0) {
+            throw new IllegalArgumentException(
+                    "沿航迹／法向标准差必须为有限非负值，实际 sigmaAlong=" + sigmaAlong
+                            + ", sigmaCross=" + sigmaCross);
+        }
+    }
 }
