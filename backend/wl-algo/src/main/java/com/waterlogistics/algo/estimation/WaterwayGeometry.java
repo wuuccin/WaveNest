@@ -196,6 +196,36 @@ public final class WaterwayGeometry {
         return toS - fromS;
     }
 
+    /**
+     * 中心线在弧长 {@code s} 处的<b>走向</b>（度，正北 0、顺时针），即该段的方位角。
+     *
+     * <p>用途：沿航道一维卡尔曼的初始化按 {@code v_s = sog · cos(ΔCOG)} 算纵向速度，
+     * 其中 {@code ΔCOG = cog − 航道走向}（{@code 80} §3.2.5 初始化口径）。
+     *
+     * <p><b>内河双向航道注意</b>：本方法给的是中心线<b>固定正向</b>的走向；上行船的实际
+     * 航向与之相差约 180°，故 {@code v_s} 会稳定为负——这是<b>正常工况</b>，不是掉头/逆向
+     * （§3.2.5 双向航道口径）。
+     *
+     * @param s 沿航道弧长，m；越界夹到 {@code [0, totalLengthM()]}
+     * @return 该处的航道走向，度
+     */
+    public double courseDegAt(double s) {
+        double clamped = Math.max(0.0, Math.min(totalLengthM(), s));
+
+        for (int i = 0; i < vertexLon.length - 1; i++) {
+            double segmentEnd = cumulativeLengthM[i + 1];
+            boolean lastSegment = i == vertexLon.length - 2;
+            if (clamped > segmentEnd && !lastSegment) {
+                continue;
+            }
+            return ConstantVelocityPredictor.bearingDeg(
+                    vertexLon[i], vertexLat[i], vertexLon[i + 1], vertexLat[i + 1]);
+        }
+        int last = vertexLon.length - 1;
+        return ConstantVelocityPredictor.bearingDeg(
+                vertexLon[last - 1], vertexLat[last - 1], vertexLon[last], vertexLat[last]);
+    }
+
     // ───────────── 内部工具 ─────────────
 
     private double segmentLengthM(int fromIndex, int toIndex) {
