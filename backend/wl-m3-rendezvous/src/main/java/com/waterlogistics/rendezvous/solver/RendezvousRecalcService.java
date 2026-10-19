@@ -11,7 +11,10 @@ import com.waterlogistics.rendezvous.port.DroneContextUnavailableException;
 import com.waterlogistics.rendezvous.port.SnapshotUnavailableException;
 import com.waterlogistics.rendezvous.port.SnapshotVersionMismatchException;
 import com.waterlogistics.rendezvous.port.TrajectorySnapshotPort;
+
 import java.util.Objects;
+
+
 
 /**
  * 6a 会面点重算的模块层编排——「同一机、同一巢」重算（《32-M3-动态会面》§3.3、
@@ -31,10 +34,24 @@ public class RendezvousRecalcService {
 
     private final DroneContextPort droneContextPort;
 
+
+
+
+
+    /**
+     * 装配重算服务——两个端口均由 M2 实现、{@code wl-app} 注入。
+     *
+     * @param snapshotPort     轨迹快照端口（重算时自取快照并校验版本）
+     * @param droneContextPort 执行机台账端口（按 droneId 反查机型、归属机巢与当前组合）
+     */
     public RendezvousRecalcService(TrajectorySnapshotPort snapshotPort, DroneContextPort droneContextPort) {
         this.snapshotPort = Objects.requireNonNull(snapshotPort, "snapshotPort 不能为空");
         this.droneContextPort = Objects.requireNonNull(droneContextPort, "droneContextPort 不能为空");
     }
+
+
+
+
 
     /**
      * 重算一个在执行中组合的会面点。
@@ -49,19 +66,16 @@ public class RendezvousRecalcService {
     public RendezvousRecalcResult recompute(RendezvousRecalcRequest request, RecalcOptions options) {
         Objects.requireNonNull(request, "request 不能为空");
         Objects.requireNonNull(options, "options 不能为空");
-        if (request.droneId().isBlank()) {
-            throw new IllegalArgumentException("droneId 不能为空白");
-        }
-        DroneContext context = droneContextPort.resolve(request.droneId());
+        DroneContext context = this.droneContextPort.resolve(request.droneId());
         if (context == null) {
             throw new DroneContextUnavailableException(request.droneId());
         }
 
-        ShipTrackSnapshot snapshot = snapshotPort.latest(request.shipMmsi());
+        ShipTrackSnapshot snapshot = this.snapshotPort.latest(request.shipMmsi());
         if (snapshot == null) {
             throw new SnapshotUnavailableException(request.shipMmsi());
         }
-        if (request.snapshotVersion() == null || snapshot.version() == null
+        if (snapshot.version() == null
                 || !Objects.equals(request.snapshotVersion(), snapshot.version())) {
             throw new SnapshotVersionMismatchException(
                     request.shipMmsi(), request.snapshotVersion(), snapshot.version());

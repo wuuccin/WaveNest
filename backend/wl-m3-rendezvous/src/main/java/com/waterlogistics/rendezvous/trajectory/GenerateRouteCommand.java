@@ -3,6 +3,8 @@ package com.waterlogistics.rendezvous.trajectory;
 import java.util.List;
 import java.util.Objects;
 
+
+
 /**
  * 航迹生成入参——「一项能力、两次调用」的调用侧形态（《33-M3-路径规划》§4.1）：
  * 去程「机巢 → 会面点」、返程「当前位置 → 归巢落点」都用这一份入参。
@@ -57,6 +59,10 @@ public record GenerateRouteCommand(
 
     private static final int MAX_WAYPOINT_COUNT = 512;
 
+
+
+
+
     public GenerateRouteCommand {
         Objects.requireNonNull(comboId, "comboId 不能为空");
         Objects.requireNonNull(routeId, "routeId 不能为空");
@@ -74,9 +80,16 @@ public record GenerateRouteCommand(
                 || !Double.isFinite(endLon) || !Double.isFinite(endLat)) {
             throw new IllegalArgumentException("起终点坐标必须为有限数");
         }
-        if (waypointCount < 2 || waypointCount > MAX_WAYPOINT_COUNT) {
+        if (startLon < -180.0 || startLon > 180.0 || startLat < -90.0 || startLat > 90.0
+                || endLon < -180.0 || endLon > 180.0 || endLat < -90.0 || endLat > 90.0) {
+            throw new IllegalArgumentException("起终点经纬度超出地理范围");
+        }
+        if (startLon == endLon && startLat == endLat) {
+            throw new IllegalArgumentException("起终点不能重合（零长度航迹）");
+        }
+        if (waypointCount < 2 || waypointCount > GenerateRouteCommand.MAX_WAYPOINT_COUNT) {
             throw new IllegalArgumentException(
-                    "航点数须在 [2, " + MAX_WAYPOINT_COUNT + "]，实际 " + waypointCount);
+                    "航点数须在 [2, " + GenerateRouteCommand.MAX_WAYPOINT_COUNT + "]，实际 " + waypointCount);
         }
         if (startMs <= 0) {
             throw new IllegalArgumentException("起点时刻必须为正，实际 " + startMs);

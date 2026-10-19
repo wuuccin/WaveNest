@@ -9,8 +9,8 @@ package com.waterlogistics.rendezvous.handover;
  * @param posErrorM           相对位置误差阈值，米（须小于 {@code approachRadiusM}）
  * @param speedErrorMs        相对速度阈值，m/s
  * @param stableSec           稳定持续时间（位置与速度须持续达标；须为正），秒
- * @param windLimitMs         交接风阈值，m/s
- * @param energyRatePerSecPct 能耗率，%／s（首版线性能耗模型：能耗＝时长×率）
+ * @param windLimitMs         交接风阈值，m/s（不能为负，可为 0）
+ * @param energyRatePerSecPct 能耗率，%／s（首版线性能耗模型：能耗＝时长×率；不能为负，可为 0）
  */
 public record HandoverParams(
 

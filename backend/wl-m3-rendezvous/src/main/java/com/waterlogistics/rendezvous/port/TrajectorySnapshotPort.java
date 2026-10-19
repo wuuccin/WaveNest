@@ -2,6 +2,8 @@ package com.waterlogistics.rendezvous.port;
 
 import com.waterlogistics.algo.meeting.model.ShipTrackSnapshot;
 
+
+
 /**
  * 预测快照端口——<b>端口反转</b>：接口由 M3 声明、M2 提供实现、{@code wl-app} 装配接线
  * （《42-包结构设计》§3.3、《22-接口契约》§5 第 2／3 步）。M3 全程不知道 M2 存在。
@@ -11,8 +13,9 @@ import com.waterlogistics.algo.meeting.model.ShipTrackSnapshot;
  * 不一致即<b>拒绝求解</b>并抛 {@link SnapshotVersionMismatchException}。
  *
  * <p>约定：查无时<b>返回 {@code null}</b>——实现<b>不得</b>抛 {@link SnapshotUnavailableException}，
- * 该异常由调用方在拿到 null 后转换抛出；返回的快照须<b>只读可共享</b>（本轮多候选共用同一
- * 实例），实现与调用方均不得修改其内容。
+ * 该异常由调用方在拿到 null 后转换抛出。返回的快照须<b>只读可共享</b>（本轮多候选共用同一
+ * 实例）：实现负责保证返回内容的不可变性——点列不得再被任何持有者修改（实现侧先防御拷贝
+ * 再交出），消费方一律按只读使用。
  *
  * <p>本接口<b>纯读</b>：不落库、不改占位、无状态副作用（《81》§2.4 硬约束 1）。
  */

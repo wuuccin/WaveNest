@@ -1,8 +1,11 @@
 package com.waterlogistics.rendezvous.correction;
 
 import com.waterlogistics.algo.inflight.CrossTrackError;
+
 import java.util.List;
 import java.util.Objects;
+
+
 
 /**
  * 去程段追踪与纠偏循环体（功能 17）——<b>判据只出「前提是否成立」，不出修正指令</b>。
@@ -35,6 +38,10 @@ public final class DeviationTracker {
     private DeviationTracker() {
     }
 
+
+
+
+
     /**
      * 单周期判定：船是否仍沿预测航迹行驶。
      *
@@ -46,15 +53,31 @@ public final class DeviationTracker {
      * @param forecastLats 预测航迹纬度列（与经度列等长）
      * @param xtlM         当前航段走廊半宽（米），<b>由调用方按航段类型从 {@code sys_param} 选定</b>
      * @return 前提成立性判定结果
+     * @throws IllegalArgumentException 航迹列长度不一致、点数不足或含非法数值；走廊半宽非正
      */
     public static PremiseVerdict track(double shipLon, double shipLat,
-            List<Double> forecastLons, List<Double> forecastLats, double xtlM) {
+                                       List<Double> forecastLons, List<Double> forecastLats, double xtlM) {
         Objects.requireNonNull(forecastLons, "forecastLons 不能为空");
         Objects.requireNonNull(forecastLats, "forecastLats 不能为空");
-        if (!Double.isFinite(shipLon) || !Double.isFinite(shipLat) || !Double.isFinite(xtlM)) {
+        if (!Double.isFinite(shipLon) || !Double.isFinite(shipLat)
+                || !Double.isFinite(xtlM) || xtlM <= 0) {
             throw new IllegalArgumentException(
-                    "船位与走廊半宽必须为有限数，实际 shipLon=" + shipLon + ", shipLat=" + shipLat
-                            + ", xtlM=" + xtlM);
+                    "船位与走廊半宽非法（半宽须为正的有限数），实际 shipLon=" + shipLon
+                            + ", shipLat=" + shipLat + ", xtlM=" + xtlM);
+        }
+        if (forecastLons.size() != forecastLats.size()) {
+            throw new IllegalArgumentException("预测航迹经纬度列长度不一致："
+                                                       + forecastLons.size() + " vs " + forecastLats.size());
+        }
+        if (forecastLons.size() < 2) {
+            throw new IllegalArgumentException("预测航迹至少需 2 点，实为 " + forecastLons.size());
+        }
+        for (int i = 0; i < forecastLons.size(); i++) {
+            Double lonI = forecastLons.get(i);
+            Double latI = forecastLats.get(i);
+            if (lonI == null || latI == null || !Double.isFinite(lonI.doubleValue()) || !Double.isFinite(latI.doubleValue())) {
+                throw new IllegalArgumentException("预测航迹第 " + i + " 点经纬度必须为有限数");
+            }
         }
         double signedXte = CrossTrackError.signedM(shipLon, shipLat, forecastLons, forecastLats);
         if (!Double.isFinite(signedXte)) {
@@ -64,10 +87,14 @@ public final class DeviationTracker {
         boolean outside = CrossTrackError.outsideCorridor(absXte, xtlM);
 
         return new PremiseVerdict(!outside, absXte, signedXte, xtlM, outside
-                ? "偏出走廊：|XTE|=" + round1(absXte) + "m > XTL=" + round1(xtlM)
-                        + "m，船不再沿预测航迹行驶，会面前提失效"
-                : "走廊内：|XTE|=" + round1(absXte) + "m ≤ XTL=" + round1(xtlM) + "m，前提仍成立");
+                ? "偏出走廊：|XTE|=" + DeviationTracker.round1(absXte) + "m > XTL=" + DeviationTracker.round1(xtlM)
+                + "m，船不再沿预测航迹行驶，会面前提失效"
+                : "走廊内：|XTE|=" + DeviationTracker.round1(absXte) + "m ≤ XTL=" + DeviationTracker.round1(xtlM) + "m，前提仍成立");
     }
+
+
+
+
 
     /**
      * 前提成立性判定结果。
@@ -88,7 +115,7 @@ public final class DeviationTracker {
         public PremiseVerdict {
             if (!Double.isFinite(absXteM) || !Double.isFinite(signedXteM) || !Double.isFinite(xtlM)) {
                 throw new IllegalArgumentException("偏差与走廊半宽必须为有限数，实为 absXteM="
-                        + absXteM + ", signedXteM=" + signedXteM + ", xtlM=" + xtlM);
+                                                           + absXteM + ", signedXteM=" + signedXteM + ", xtlM=" + xtlM);
             }
             if (xtlM <= 0) {
                 throw new IllegalArgumentException("走廊半宽须为正（米），实为 " + xtlM);
@@ -96,16 +123,36 @@ public final class DeviationTracker {
             if (absXteM < 0) {
                 throw new IllegalArgumentException("横向偏差绝对值不得为负，实为 " + absXteM);
             }
+            if (absXteM != Math.abs(signedXteM)) {
+                throw new IllegalArgumentException("横向偏差绝对值与带符号值不一致：absXteM="
+                                                           + absXteM + ", signedXteM=" + signedXteM);
+            }
+            if (premiseHolds == (absXteM > xtlM)) {
+                throw new IllegalArgumentException("前提成立性与偏差／走廊半宽矛盾：absXteM="
+                                                           + absXteM + ", xtlM=" + xtlM + ", premiseHolds=" + premiseHolds);
+            }
             if (reason == null || reason.isBlank()) {
                 throw new IllegalArgumentException("判定结果须给出结论说明");
             }
         }
 
-        /** 船是否偏在预测航迹左侧（供配合 ΔCOG 判改向意图，《84》§2.1 缺点③要求交叉判） */
+
+
+
+
+        /**
+         * 船是否偏在预测航迹左侧（供配合 ΔCOG 判改向意图，《84》§2.1 缺点③要求交叉判）。
+         *
+         * @return {@code true}＝带符号横向偏差为正，即船在预测航迹左侧
+         */
         public boolean leftOfTrack() {
-            return signedXteM > 0;
+            return this.signedXteM > 0;
         }
     }
+
+
+
+
 
     private static double round1(double v) {
         return Math.round(v * 10.0) / 10.0;

@@ -11,6 +11,16 @@ public class SnapshotVersionMismatchException extends RuntimeException {
 
     private static final long serialVersionUID = 1L;
 
+    private final String shipMmsi;
+
+    private final String expected;
+
+    private final String actual;
+
+
+
+
+
     /**
      * @param shipMmsi 目标船标识
      * @param expected 调用方期望的快照版本
@@ -18,8 +28,50 @@ public class SnapshotVersionMismatchException extends RuntimeException {
      */
     public SnapshotVersionMismatchException(String shipMmsi, String expected, String actual) {
         super("快照版本不一致，拒绝求解：船 "
-                + (shipMmsi == null || shipMmsi.isBlank() ? "<unknown>" : shipMmsi)
-                + "，期望版本 " + (expected == null || expected.isBlank() ? "<none>" : expected)
-                + "，实际版本 " + (actual == null || actual.isBlank() ? "<none>" : actual));
+                      + (shipMmsi == null || shipMmsi.isBlank() ? "<unknown>" : shipMmsi)
+                      + "，期望版本 " + (expected == null || expected.isBlank() ? "<none>" : expected)
+                      + "，实际版本 " + (actual == null || actual.isBlank() ? "<none>" : actual));
+        this.shipMmsi = shipMmsi;
+        this.expected = expected;
+        this.actual = actual;
+    }
+
+
+
+
+
+    /**
+     * 返回目标船标识。
+     *
+     * @return 目标船标识（原样保留，可能为空/空白）
+     */
+    public String getShipMmsi() {
+        return this.shipMmsi;
+    }
+
+
+
+
+
+    /**
+     * 返回调用方期望的快照版本。
+     *
+     * @return 调用方期望的快照版本（原样保留，可能为空/空白）
+     */
+    public String getExpected() {
+        return this.expected;
+    }
+
+
+
+
+
+    /**
+     * 返回端口实际取回的版本。
+     *
+     * @return 端口实际取回的版本（原样保留，可能为空/空白）
+     */
+    public String getActual() {
+        return this.actual;
     }
 }

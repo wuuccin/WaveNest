@@ -24,25 +24,43 @@ public enum HandoverPhase {
 
     private final String value;
 
+
+
+
+
     HandoverPhase(String value) {
         this.value = value;
     }
 
-    /** 返回对外口径的阶段词 */
+
+
+
+
+    /**
+     * 返回对外口径的阶段词。
+     *
+     * @return 对外口径的阶段词（中文）
+     */
     public String getValue() {
-        return value;
+        return this.value;
     }
+
+
+
+
 
     /**
      * 按对外口径词解析枚举。
      *
+     * @param value 对外口径词（中文阶段词；空白或未知即拒绝）
+     * @return 对应的末段子阶段
      * @throws IllegalArgumentException 入参为空/空白或无匹配口径词
      */
     public static HandoverPhase fromValue(String value) {
         if (value == null || value.isBlank()) {
             throw new IllegalArgumentException("末段子阶段不能为空");
         }
-        for (HandoverPhase phase : values()) {
+        for (HandoverPhase phase : HandoverPhase.values()) {
             if (phase.value.equals(value)) {
                 return phase;
             }

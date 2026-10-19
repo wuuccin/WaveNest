@@ -2,6 +2,8 @@ package com.waterlogistics.rendezvous.trajectory;
 
 import java.util.Objects;
 
+
+
 /**
  * 起飞时刻回填入参——「一个反推算式」（《81-B组算法方案》§3.3）：起飞时刻是输出不是输入；
  * 会面时刻来自 12、精算飞行时长来自 13，本项只用后者（两笔时长账不混）。
@@ -37,6 +39,12 @@ public record TakeoffTimeCommand(
         }
         if (timeGridMs <= 0) {
             throw new IllegalArgumentException("时刻精度粒度必须为正，实际 " + timeGridMs);
+        }
+        if (meetTMs < 0) {
+            throw new IllegalArgumentException("会面时刻不能为负，实际 " + meetTMs);
+        }
+        if (nowMs < 0) {
+            throw new IllegalArgumentException("当前时刻不能为负，实际 " + nowMs);
         }
     }
 }

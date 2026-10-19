@@ -56,14 +56,14 @@ public record RecalcStateSnapshot(
             throw new IllegalArgumentException("机侧四个字段须同时缺省或同时提供");
         }
         if (droneAllSet) {
-            if (!Double.isFinite(droneLon) || !Double.isFinite(droneLat)
-                    || !Double.isFinite(droneBattery)
-                    || droneLon < -180.0 || droneLon > 180.0 || droneLat < -90.0 || droneLat > 90.0
-                    || droneBattery < 0.0 || droneBattery > 100.0) {
+            if (!Double.isFinite(droneLon.doubleValue()) || !Double.isFinite(droneLat.doubleValue())
+                    || !Double.isFinite(droneBattery.doubleValue())
+                    || droneLon.doubleValue() < -180.0 || droneLon.doubleValue() > 180.0 || droneLat.doubleValue() < -90.0 || droneLat.doubleValue() > 90.0
+                    || droneBattery.doubleValue() < 0.0 || droneBattery.doubleValue() > 100.0) {
                 throw new IllegalArgumentException("机侧状态非法：droneLon=" + droneLon
-                        + ", droneLat=" + droneLat + ", droneBattery=" + droneBattery);
+                                                           + ", droneLat=" + droneLat + ", droneBattery=" + droneBattery);
             }
-            if (droneStateT <= 0) {
+            if (droneStateT.longValue() <= 0) {
                 throw new IllegalArgumentException("机状态时刻必须为正，实际 " + droneStateT);
             }
         }

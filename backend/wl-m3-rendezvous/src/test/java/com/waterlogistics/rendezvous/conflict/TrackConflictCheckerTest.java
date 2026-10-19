@@ -92,14 +92,19 @@ class TrackConflictCheckerTest {
         assertNull(res.conflictSpaceTime(), "粗筛短路不产时空区间");
     }
 
-    /** 入参校验：空航迹与非法采样步长一律拒绝。 */
+    /** 入参校验：空航迹（构造期）、航点不足（检测期）与非法采样步长一律拒绝。 */
     @Test
     void invalidInputs_shouldBeRejected() {
-        B_FlyableRoute empty = new B_FlyableRoute("RT-X", "RV-X", "combo-1",
-                List.of(), 0, 0.0, 0.0, List.of(), List.of());
+        assertThrows(IllegalArgumentException.class,
+                () -> new B_FlyableRoute("RT-X", "RV-X", "combo-1",
+                        List.of(), 0, 0.0, 0.0, List.of(), List.of()),
+                "空航迹构造期即拒绝");
+
+        B_FlyableRoute tooShort = new B_FlyableRoute("RT-X", "RV-X", "combo-1",
+                List.of(new Waypoint(121.0, 30.0, 60.0, 15.0, T0)), 0, 0.0, 0.0, List.of(), List.of());
 
         assertThrows(IllegalArgumentException.class,
-                () -> TrackConflictChecker.check(empty, eastTrack(), PARAMS), "空航迹应拒绝");
+                () -> TrackConflictChecker.check(tooShort, eastTrack(), PARAMS), "航点不足 2 应拒绝");
         assertThrows(IllegalArgumentException.class,
                 () -> TrackConflictChecker.check(eastTrack(), northTrack(T0, 60.0),
                         new ConflictParams(100, 25, 0)), "采样步长非正应拒绝");

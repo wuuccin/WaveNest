@@ -1,7 +1,10 @@
 package com.waterlogistics.rendezvous.solver;
 
 import com.waterlogistics.algo.meeting.model.Wind;
+
 import java.util.Objects;
+
+
 
 /**
  * 会面点求解命令——M2 发起的组合级调用入参（《22-接口契约》§5 第 3 步 · 判「追得上」）。
@@ -54,9 +57,10 @@ public record RendezvousCommand(
     public RendezvousCommand {
         Objects.requireNonNull(comboId, "comboId 不能为空");
         Objects.requireNonNull(shipMmsi, "shipMmsi 不能为空");
+        Objects.requireNonNull(snapshotVersion, "snapshotVersion 不能为空");
         Objects.requireNonNull(representativeWind, "representativeWind 不能为空");
-        if (comboId.isBlank() || shipMmsi.isBlank()) {
-            throw new IllegalArgumentException("comboId/shipMmsi 不能为空白字符串");
+        if (comboId.isBlank() || shipMmsi.isBlank() || snapshotVersion.isBlank()) {
+            throw new IllegalArgumentException("comboId/shipMmsi/snapshotVersion 不能为空白字符串");
         }
         if (!Double.isFinite(nestLon) || !Double.isFinite(nestLat)
                 || nestLon < -180.0 || nestLon > 180.0 || nestLat < -90.0 || nestLat > 90.0) {
@@ -73,6 +77,9 @@ public record RendezvousCommand(
         }
         if (maxIterations <= 0) {
             throw new IllegalArgumentException("最大迭代次数必须为正，实际 " + maxIterations);
+        }
+        if (nowMs <= 0) {
+            throw new IllegalArgumentException("求解起点必须为合法的 Unix 毫秒时刻，实际 " + nowMs);
         }
         if (deadlineMs < nowMs) {
             throw new IllegalArgumentException(

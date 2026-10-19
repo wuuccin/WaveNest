@@ -20,7 +20,7 @@ public interface DroneContextPort {
      * 实现<b>不得</b>抛 {@link DroneContextUnavailableException}——该异常由调用方在拿到
      * {@code null} 后转换抛出。
      *
-     * @param droneId 执行机实例（调用方保证非空、非空白；{@code RendezvousRecalcService} 已在入口校验）
+     * @param droneId 执行机实例（消费侧保证非空、非空白——请求对象构造期已校验）
      * @return 反查结果；查无该机时为 {@code null}，由调用方按「拒绝求解」处理；返回结果只读共享
      */
     DroneContext resolve(String droneId);

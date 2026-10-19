@@ -2,6 +2,8 @@ package com.waterlogistics.rendezvous.port;
 
 import java.util.Objects;
 
+
+
 /**
  * 执行机台账反查结果——6a 重算按 {@code droneId} 反查所需的最小上下文
  * （《81-B组算法方案》§2.5：定位机型、归属机巢；返回可带 comboId，由该机当前任务回溯）。
@@ -35,6 +37,9 @@ public record DroneContext(
         Objects.requireNonNull(homeNestId, "homeNestId 不能为空");
         if (droneId.isBlank() || homeNestId.isBlank()) {
             throw new IllegalArgumentException("droneId/homeNestId 不能为空白字符串");
+        }
+        if (comboId != null && comboId.isBlank()) {
+            throw new IllegalArgumentException("comboId 只能为 null 或非空白字符串");
         }
         if (!Double.isFinite(nestLon) || !Double.isFinite(nestLat)
                 || nestLon < -180.0 || nestLon > 180.0 || nestLat < -90.0 || nestLat > 90.0) {

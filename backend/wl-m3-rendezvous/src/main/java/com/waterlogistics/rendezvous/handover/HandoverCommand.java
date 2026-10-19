@@ -3,6 +3,8 @@ package com.waterlogistics.rendezvous.handover;
 import java.util.List;
 import java.util.Objects;
 
+
+
 /**
  * 末段判定入参——计划会面基准（来自会面点解，供 G 组 {@code d_space} 比对，原样保留）
  * ＋末段采样序列＋阈值。
@@ -37,6 +39,9 @@ public record HandoverCommand(
         Objects.requireNonNull(params, "params 不能为空");
         if (taskId.isBlank() || droneId.isBlank()) {
             throw new IllegalArgumentException("taskId/droneId 不能为空白字符串");
+        }
+        if (plannedMeetT <= 0) {
+            throw new IllegalArgumentException("计划会面时刻必须为正的 Unix 毫秒值，实际 " + plannedMeetT);
         }
         if (!Double.isFinite(plannedMeetLon) || !Double.isFinite(plannedMeetLat)
                 || plannedMeetLon < -180.0 || plannedMeetLon > 180.0

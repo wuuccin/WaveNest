@@ -10,17 +10,29 @@ public class DroneContextUnavailableException extends RuntimeException {
 
     private final String droneId;
 
+
+
+
+
     /**
      * @param droneId 执行机实例
      */
     public DroneContextUnavailableException(String droneId) {
         super("查无执行机台账，拒绝求解：机 "
-                + (droneId == null || droneId.isBlank() ? "<unknown>" : droneId));
+                      + (droneId == null || droneId.isBlank() ? "<unknown>" : droneId));
         this.droneId = droneId;
     }
 
-    /** 返回触发本异常的执行机实例（原样保留，可能为 null/空白；日志请用 {@link #getMessage()}） */
+
+
+
+
+    /**
+     * 返回触发本异常的执行机实例。
+     *
+     * @return 执行机实例（原样保留，可能为 null/空白；日志请用 {@link #getMessage()}）
+     */
     public String getDroneId() {
-        return droneId;
+        return this.droneId;
     }
 }
