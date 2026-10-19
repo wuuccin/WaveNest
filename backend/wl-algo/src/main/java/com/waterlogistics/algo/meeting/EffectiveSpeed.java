@@ -28,10 +28,11 @@ public final class EffectiveSpeed {
      */
     public static double alongBearing(double cruiseSpeedMs, Wind wind, double bearingDeg) {
         Objects.requireNonNull(wind, "wind 不能为空");
-        if (!Double.isFinite(cruiseSpeedMs) || !Double.isFinite(wind.speedMs())
+        if (!Double.isFinite(cruiseSpeedMs) || cruiseSpeedMs <= 0
+                || !Double.isFinite(wind.speedMs()) || wind.speedMs() < 0
                 || !Double.isFinite(wind.dirDeg()) || !Double.isFinite(bearingDeg)) {
-            throw new IllegalArgumentException("有效速度入参必须为有限值，实际 cruise=" + cruiseSpeedMs
-                    + ", windSpeed=" + wind.speedMs() + ", windDir=" + wind.dirDeg()
+            throw new IllegalArgumentException("有效速度入参非法（巡航速度须为正、风速非负，且均为有限值），实际 cruise="
+                    + cruiseSpeedMs + ", windSpeed=" + wind.speedMs() + ", windDir=" + wind.dirDeg()
                     + ", bearing=" + bearingDeg);
         }
         double relRad = Math.toRadians(wind.dirDeg() - bearingDeg);

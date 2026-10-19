@@ -9,7 +9,7 @@ package com.waterlogistics.algo.meeting.model;
  *
  * @param speedMs 风速，m/s
  * @param dirDeg  风向（来向），度
- * @param gustMs  阵风，m/s
+ * @param gustMs  阵风，m/s（仅登记参数名目，当前无消费方）
  */
 public record Wind(
 
@@ -18,4 +18,16 @@ public record Wind(
         double dirDeg,
 
         double gustMs) {
+
+    public Wind {
+        if (!Double.isFinite(speedMs) || speedMs < 0.0) {
+            throw new IllegalArgumentException("风速须为非负有限值，实际 " + speedMs);
+        }
+        if (!Double.isFinite(dirDeg) || dirDeg < 0.0 || dirDeg >= 360.0) {
+            throw new IllegalArgumentException("风向须为 [0,360) 内的有限值，实际 " + dirDeg);
+        }
+        if (!Double.isFinite(gustMs) || gustMs < 0.0) {
+            throw new IllegalArgumentException("阵风须为非负有限值，实际 " + gustMs);
+        }
+    }
 }

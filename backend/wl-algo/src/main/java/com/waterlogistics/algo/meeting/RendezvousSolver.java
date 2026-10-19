@@ -25,6 +25,9 @@ import java.util.Objects;
  */
 public final class RendezvousSolver {
 
+    /** 粗扫步数：把可求解窗口切成该数量级的探测格，用于定位首个变号区间 */
+    private static final int COARSE_SCAN_STEPS = 256;
+
     private RendezvousSolver() {
     }
 
@@ -109,16 +112,33 @@ public final class RendezvousSolver {
         return Double.POSITIVE_INFINITY;
     }
 
-    /** 二分求 g(t) = d(t) − v·(t−tLo)/1000 的最小正根；无根返回 {@code NaN} */
+    /**
+     * 求 g(t) = d(t) − v·(t−tLo) 在 [tLo, tHi] 内的最早变号区间并细化到根；无根返回 {@code NaN}。
+     *
+     * <p>船迹非单调时 g(t) 可多次变号，直接二分会落到较晚的根——先按粗步长扫描定位
+     * 首个 g(t) ≤ 0 的区间，再在该区间内二分。
+     */
     private static double solveByBisection(RendezvousSolveRequest request, long tLo, long tHi, double v) {
         if (gapMeters(request, tLo, tLo, v) <= 0) {
             return tLo;
         }
-        if (gapMeters(request, tHi, tLo, v) > 0) {
-            return Double.NaN;
+        long span = tHi - tLo;
+        long coarseStep = Math.max(1L, span / COARSE_SCAN_STEPS);
+        long lo = tLo;
+        for (long probe = tLo + coarseStep; ; probe += coarseStep) {
+            long hi = Math.min(probe, tHi);
+            if (gapMeters(request, hi, tLo, v) <= 0) {
+                return bisect(request, lo, hi, tLo, v);
+            }
+            if (hi >= tHi) {
+                return Double.NaN;
+            }
+            lo = hi;
         }
-        double lo = tLo;
-        double hi = tHi;
+    }
+
+    /** 在已知 [lo, hi] 存在变号的区间内二分细化（毫秒分辨率） */
+    private static double bisect(RendezvousSolveRequest request, double lo, double hi, long tLo, double v) {
         while (hi - lo > 1.0) {
             double mid = (lo + hi) / 2;
             if (gapMeters(request, Math.round(mid), tLo, v) <= 0) {

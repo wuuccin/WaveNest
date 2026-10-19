@@ -1,5 +1,7 @@
 package com.waterlogistics.algo.meeting.model;
 
+import java.util.Objects;
+
 /**
  * 交接完成确认（{@code B_} 前缀＝算法层 B 组产出）——字段照《81-B组算法方案》§2.3
  * 第（6）项一字不改。
@@ -49,4 +51,16 @@ public record B_HandoverConfirmation(
         Double energyCost,
 
         HandoverResult handoverResult) {
+
+    public B_HandoverConfirmation {
+        Objects.requireNonNull(taskId, "taskId 不能为空");
+        Objects.requireNonNull(droneId, "droneId 不能为空");
+        Objects.requireNonNull(handoverResult, "handoverResult 不能为空");
+        if ((actualMeetLon == null) != (actualMeetLat == null)) {
+            throw new IllegalArgumentException("实际会面点经度与纬度须同时存在或同时为空");
+        }
+        if (handoverResult == HandoverResult.SUCCESS && handoverDoneT == null) {
+            throw new IllegalArgumentException("交接成功却缺交接完成时刻（taskId=" + taskId + "）");
+        }
+    }
 }

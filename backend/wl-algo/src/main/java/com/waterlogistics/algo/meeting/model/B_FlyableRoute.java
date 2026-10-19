@@ -1,6 +1,7 @@
 package com.waterlogistics.algo.meeting.model;
 
 import java.util.List;
+import java.util.Objects;
 
 /**
  * 可飞航迹（{@code B_} 前缀＝算法层 B 组产出）——字段照《81-B组算法方案》§2.3 第（2）项
@@ -44,4 +45,28 @@ public record B_FlyableRoute(
         List<String> landingPointsAlong,
 
         List<String> avoidZones) {
+
+    public B_FlyableRoute {
+        Objects.requireNonNull(routeId, "routeId 不能为空");
+        Objects.requireNonNull(routeVersion, "routeVersion 不能为空");
+        Objects.requireNonNull(comboId, "comboId 不能为空");
+        if (routeId.isBlank() || routeVersion.isBlank() || comboId.isBlank()) {
+            throw new IllegalArgumentException("routeId/routeVersion/comboId 不能为空白字符串");
+        }
+        if (waypoints == null || waypoints.isEmpty()) {
+            throw new IllegalArgumentException("waypoints 不能为空：C 组据其粗估航迹长度");
+        }
+        waypoints = List.copyOf(waypoints);
+        landingPointsAlong = landingPointsAlong == null ? List.of() : List.copyOf(landingPointsAlong);
+        avoidZones = avoidZones == null ? List.of() : List.copyOf(avoidZones);
+        if (tauFine < 0) {
+            throw new IllegalArgumentException("精算飞行时长不能为负，实际 " + tauFine);
+        }
+        if (!Double.isFinite(energyExact) || energyExact < 0) {
+            throw new IllegalArgumentException("精确能耗须为非负有限数，实际 " + energyExact);
+        }
+        if (!Double.isFinite(pathRisk) || pathRisk < 0.0 || pathRisk > 1.0) {
+            throw new IllegalArgumentException("路径风险须在 [0,1]，实际 " + pathRisk);
+        }
+    }
 }

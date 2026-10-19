@@ -19,7 +19,7 @@ public final class TrackInterpolator {
     /**
      * 求快照点列在时刻 {@code t} 的插值位置。
      *
-     * @param snapshot 船舶预测快照（点列时间升序、至少一点；空点列属入参退化，由调用方拦截）
+     * @param snapshot 船舶预测快照（点列时间严格升序、至少一点；空点列属入参退化，由调用方拦截；非升序在此拒绝）
      * @param t        查询时刻，Unix 毫秒
      * @return {@code {经度, 纬度}}
      */
@@ -28,6 +28,11 @@ public final class TrackInterpolator {
         List<ShipPoint> points = snapshot.points();
         if (points == null || points.isEmpty()) {
             throw new IllegalArgumentException("快照点列不能为空");
+        }
+        for (int i = 1; i < points.size(); i++) {
+            if (points.get(i).t() <= points.get(i - 1).t()) {
+                throw new IllegalArgumentException("快照点列时间必须严格升序");
+            }
         }
         ShipPoint first = points.get(0);
         ShipPoint last = points.get(points.size() - 1);
@@ -47,6 +52,6 @@ public final class TrackInterpolator {
                         a.lat() + k * (b.lat() - a.lat())};
             }
         }
-        throw new IllegalStateException("快照点列时间未严格升序，插值不可达末段");
+        throw new IllegalStateException("内部不变量破坏：升序校验后仍未能定位插值区间");
     }
 }
