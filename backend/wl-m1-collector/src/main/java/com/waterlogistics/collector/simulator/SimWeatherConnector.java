@@ -52,6 +52,9 @@ public class SimWeatherConnector implements DataSourceConnector {
 
     private long phase;
 
+    /** 容器是否已就绪（初值帧只在就绪后发一次，避免打在 MQ 拓扑声明之前） */
+    private volatile boolean appReady;
+
     public SimWeatherConnector(MqDataPublisher publisher) {
         this.publisher = publisher;
     }
@@ -64,7 +67,24 @@ public class SimWeatherConnector implements DataSourceConnector {
     @Override
     public void start() {
         this.phase = 0;
-        publishInitialSnapshot();
+        // 初值帧不在 start() 里发：start 由调度器 @PostConstruct 触发，早于 RabbitMQ
+        // 交换机声明（由 M2 监听器完成），会打出 "no exchange 'wavenest.data'"（10-20 核对实录）。
+        // 若容器已就绪（如测试直调 start），仍然补发一次。
+        if (appReady) {
+            publishInitialSnapshot();
+        }
+    }
+
+    /**
+     * 容器就绪后补发初值帧：此时 MQ 拓扑（交换机/队列/绑定）已声明完毕。
+     * start() 先于本事件时由这里发；start() 后于本事件（罕见）时由 start() 发，幂等不重发。
+     */
+    @org.springframework.context.event.EventListener(org.springframework.boot.context.event.ApplicationReadyEvent.class)
+    public void onApplicationReady() {
+        if (!appReady) {
+            appReady = true;
+            publishInitialSnapshot();
+        }
     }
 
     /**

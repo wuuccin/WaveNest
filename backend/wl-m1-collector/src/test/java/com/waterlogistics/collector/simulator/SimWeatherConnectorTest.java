@@ -39,9 +39,12 @@ class SimWeatherConnectorTest {
     @Test
     @DisplayName("启动即发初值帧：4 个网格点各一条，值为配置基准（10-16 气象初值要求）")
     void startPublishesInitialSnapshot() {
-        publisher.clear();   // 丢弃 start 已发的初值，重新触发一次以独立断言
+        // 就绪事件前 start() 不发初值：此时 MQ 交换机未声明，发了必丢（10-20 核对实录）
+        publisher.clear();
         sim.start();
+        assertEquals(0, publisher.weather().size(), "就绪前不应发初值");
 
+        sim.onApplicationReady();
         List<WeatherData> initial = publisher.weather();
         assertEquals(4, initial.size(), "2×2 网格应发 4 条，而非 1 条全局值");
         for (WeatherData w : initial) {
@@ -49,6 +52,15 @@ class SimWeatherConnectorTest {
             assertEquals(135.0, w.windDirDeg(), 1e-9, "初值风向应为基准 135°");
             assertEquals(8.0, w.gustMs(), 1e-9, "初值阵风应为 base+gustAdd");
         }
+    }
+
+    @Test
+    @DisplayName("就绪事件幂等：只发一轮初值，不重发")
+    void readyEventIsIdempotent() {
+        sim.onApplicationReady();
+        sim.onApplicationReady();
+        sim.onApplicationReady();
+        assertEquals(4, publisher.weather().size(), "多次就绪事件只发一轮");
     }
 
     @Test
