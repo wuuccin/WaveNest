@@ -56,7 +56,7 @@ public record HandoverCommand(
         int sampleCount = samples.size();
         for (int i = 1; i < sampleCount; i++) {
             if (samples.get(i).t() <= samples.get(i - 1).t()) {
-                throw new IllegalArgumentException("样本时间必须严格升序，第 " + i + " 个样本时间非增");
+                throw new IllegalArgumentException("样本时间必须严格升序，第 " + (i + 1) + " 个样本时间非增");
             }
         }
     }

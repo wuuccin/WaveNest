@@ -33,13 +33,23 @@ final class SnapshotGate {
      * @param shipMmsi        目标船标识
      * @param expectedVersion 调用方期望的快照版本（一致性锚）
      * @return 版本一致的快照（只读可共享，消费方不得修改）
-     * @throws SnapshotUnavailableException     查无该船快照——拒绝求解
+     * @throws IllegalArgumentException         目标船标识或期望版本为空/空白——调用方错误
+     * @throws SnapshotUnavailableException     查无该船快照或快照归属与目标船不符——拒绝求解
      * @throws SnapshotVersionMismatchException 期望版本与快照实际版本不一致——拒绝求解
      */
     static ShipTrackSnapshot fetchVerified(TrajectorySnapshotPort port, String shipMmsi, String expectedVersion) {
+        if (expectedVersion == null || expectedVersion.isBlank()) {
+            throw new IllegalArgumentException("期望快照版本不能为空");
+        }
+        if (shipMmsi == null || shipMmsi.isBlank()) {
+            throw new IllegalArgumentException("目标船标识不能为空");
+        }
         ShipTrackSnapshot snapshot = port.latest(shipMmsi);
         if (snapshot == null) {
             throw new SnapshotUnavailableException(shipMmsi);
+        }
+        if (!Objects.equals(shipMmsi, snapshot.shipMmsi())) {
+            throw SnapshotUnavailableException.ownershipMismatch(shipMmsi);
         }
         if (snapshot.version() == null || !Objects.equals(expectedVersion, snapshot.version())) {
             throw new SnapshotVersionMismatchException(shipMmsi, expectedVersion, snapshot.version());

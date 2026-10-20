@@ -1,5 +1,6 @@
 package com.waterlogistics.rendezvous.solver;
 
+import com.waterlogistics.algo.meeting.model.RendezvousSolveRequest;
 import com.waterlogistics.algo.meeting.model.Wind;
 
 import java.util.Objects;
@@ -29,6 +30,11 @@ public record RecalcOptions(
 
         int maxIterations) {
 
+
+
+
+
+
     public RecalcOptions {
         Objects.requireNonNull(representativeWind, "representativeWind 不能为空");
         if (deadlineMs <= 0L) {
@@ -40,8 +46,9 @@ public record RecalcOptions(
         if (!Double.isFinite(convergeEpsilonSec) || !(convergeEpsilonSec > (double) 0)) {
             throw new IllegalArgumentException("收敛阈值必须为正的有限数，实际 " + convergeEpsilonSec);
         }
-        if (maxIterations <= 0) {
-            throw new IllegalArgumentException("最大迭代次数必须为正，实际 " + maxIterations);
+        if (maxIterations <= 0 || maxIterations > RendezvousSolveRequest.MAX_ITERATIONS) {
+            throw new IllegalArgumentException(
+                    "最大迭代次数须在 [1, " + RendezvousSolveRequest.MAX_ITERATIONS + "] 内，实际 " + maxIterations);
         }
     }
 }

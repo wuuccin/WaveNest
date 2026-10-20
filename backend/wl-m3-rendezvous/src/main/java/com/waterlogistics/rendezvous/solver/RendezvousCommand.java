@@ -1,5 +1,6 @@
 package com.waterlogistics.rendezvous.solver;
 
+import com.waterlogistics.algo.meeting.model.RendezvousSolveRequest;
 import com.waterlogistics.algo.meeting.model.Wind;
 
 import java.util.Objects;
@@ -55,13 +56,21 @@ public record RendezvousCommand(
 
         int maxIterations) {
 
+
+
+
+
+
     public RendezvousCommand {
         Objects.requireNonNull(comboId, "comboId 不能为空");
         Objects.requireNonNull(shipMmsi, "shipMmsi 不能为空");
         Objects.requireNonNull(snapshotVersion, "snapshotVersion 不能为空");
         Objects.requireNonNull(representativeWind, "representativeWind 不能为空");
-        if (comboId.isBlank() || shipMmsi.isBlank() || snapshotVersion.isBlank()) {
-            throw new IllegalArgumentException("comboId/shipMmsi/snapshotVersion 不能为空白字符串");
+        if (comboId.isBlank() || shipMmsi.isBlank() || snapshotVersion.isBlank()
+                || !comboId.equals(comboId.strip())
+                || !shipMmsi.equals(shipMmsi.strip())
+                || !snapshotVersion.equals(snapshotVersion.strip())) {
+            throw new IllegalArgumentException("comboId/shipMmsi/snapshotVersion 不能为空白且不得含前后空白");
         }
         if (!Double.isFinite(nestLon) ||
                 !Double.isFinite(nestLat) ||
@@ -80,8 +89,9 @@ public record RendezvousCommand(
         if (!Double.isFinite(convergeEpsilonSec) || !(convergeEpsilonSec > (double) 0)) {
             throw new IllegalArgumentException("收敛阈值必须为正的有限数，实际 " + convergeEpsilonSec);
         }
-        if (maxIterations <= 0) {
-            throw new IllegalArgumentException("最大迭代次数必须为正，实际 " + maxIterations);
+        if (maxIterations <= 0 || maxIterations > RendezvousSolveRequest.MAX_ITERATIONS) {
+            throw new IllegalArgumentException(
+                    "最大迭代次数须在 [1, " + RendezvousSolveRequest.MAX_ITERATIONS + "] 内，实际 " + maxIterations);
         }
         if (nowMs <= 0L) {
             throw new IllegalArgumentException("求解起点必须为合法的 Unix 毫秒时刻，实际 " + nowMs);

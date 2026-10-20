@@ -1,5 +1,7 @@
 package com.waterlogistics.rendezvous.trajectory;
 
+
+
 import java.util.List;
 import java.util.Objects;
 
@@ -30,8 +32,8 @@ public record SegmentedTrack(
         long prevT = Long.MIN_VALUE;
         for (SegmentedWaypoint point : points) {
             long t = point.waypoint().t();
-            if (t < prevT) {
-                throw new IllegalArgumentException("航点时刻必须单调不减，实际 " + t + " 早于 " + prevT);
+            if (t <= prevT) {
+                throw new IllegalArgumentException("航点时刻必须严格递增，实际 " + t + " 不晚于 " + prevT);
             }
             prevT = t;
         }

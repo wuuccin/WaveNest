@@ -4,7 +4,8 @@ package com.waterlogistics.rendezvous.solver;
  * 6a 重算请求内嵌的当前状态快照——字段拆到字段级（《81-B组算法方案》§2.5 表）。
  *
  * <p>船侧五字段<b>求解必需</b>（确定方向与求解起点）；机侧字段<b>非必需</b>——6a 求解
- * 起点仍是机巢，机位／电量仅追溯用，不参与求解。
+ * 起点仍是机巢，机位／电量仅追溯用，不参与求解。<b>机侧四字段须同时缺省或同时提供</b>
+ * （任一缺失即拒绝，避免部分追溯数据进入记录）。
  *
  * @param shipLon      船位经度（求解必需）
  * @param shipLat      船位纬度（求解必需）
@@ -43,6 +44,7 @@ public record RecalcStateSnapshot(
                 !Double.isFinite(shipCogDeg) ||
                 !Double.isFinite(sogMs) ||
                 !(sogMs >= (double) 0) ||
+                !(sogMs <= 100.0) ||
                 shipLon < -180.0 ||
                 shipLon > 180.0 ||
                 shipLat < -90.0 ||

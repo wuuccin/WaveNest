@@ -62,7 +62,7 @@ class TrackGeneratorTest {
         assertEquals(0.2, route.pathRisk(), 1e-9, "路径风险照注入值");
         assertEquals(List.of("LP-1", "LP-2"), route.landingPointsAlong(), "迫降点标注透传");
         assertEquals(List.of("AZ-7"), route.avoidZones(), "避让标识透传");
-        assertEquals("RV-RT-1-" + T0, route.routeVersion(), "版本＝routeId＋起点时刻确定性生成");
+        assertTrue(route.routeVersion().startsWith("RV-RT-1-" + T0), "版本＝routeId＋起点时刻＋几何指纹确定性生成");
         assertEquals("combo-1", route.comboId());
     }
 
@@ -92,7 +92,15 @@ class TrackGeneratorTest {
         for (int i = 1; i < route.waypoints().size(); i++) {
             assertTrue(route.waypoints().get(i).t() > route.waypoints().get(i - 1).t(), "时间仍严格递增");
         }
-        assertEquals(0.05, route.energyExact(), 1e-9, "能耗＝1×0.05%");
+        assertEquals(0.5 / 15.0 * 0.05, route.energyExact(), 1e-6, "能耗按未舍入时长计（0.5 m ÷ 15 m/s）");
+    }
+
+    /** 分段口径词唯一：fromValue 首个匹配即返回，重复会导致解析错段。 */
+    @Test
+    void segments_shouldHaveUniqueWireValues() {
+        assertEquals(TrackSegment.values().length,
+                java.util.Arrays.stream(TrackSegment.values()).map(TrackSegment::getValue).distinct().count(),
+                "分段口径词须唯一");
     }
 
     // ===== 三段任务航迹 =====

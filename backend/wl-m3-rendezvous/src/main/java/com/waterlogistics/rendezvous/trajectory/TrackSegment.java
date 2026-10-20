@@ -2,8 +2,6 @@ package com.waterlogistics.rendezvous.trajectory;
 
 import lombok.Getter;
 
-import java.util.Collection;
-import java.util.HashSet;
 
 
 
@@ -48,14 +46,6 @@ public enum TrackSegment {
 
 
 
-    static {
-        Collection<String> seen = new HashSet<>(TrackSegment.values().length);
-        for (TrackSegment segment : TrackSegment.values()) {
-            if (!seen.add(segment.value)) {
-                throw new IllegalStateException("航迹分段口径词重复：" + segment.value);
-            }
-        }
-    }
 
     /**
      * 按对端口径词解析枚举。
@@ -68,12 +58,12 @@ public enum TrackSegment {
         if (value == null || value.isBlank()) {
             throw new IllegalArgumentException("航迹分段不能为空");
         }
-        String normalized = value.trim();
+        String normalized = value.replace('\u00A0', ' ').strip();
         for (TrackSegment segment : TrackSegment.values()) {
             if (segment.value.equals(normalized)) {
                 return segment;
             }
         }
-        throw new IllegalArgumentException("未知航迹分段：" + value);
+        throw new IllegalArgumentException("未知航迹分段：" + normalized);
     }
 }

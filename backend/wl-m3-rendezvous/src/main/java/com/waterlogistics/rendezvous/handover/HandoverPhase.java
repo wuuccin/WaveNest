@@ -63,11 +63,12 @@ public enum HandoverPhase {
         if (value == null || value.isBlank()) {
             throw new IllegalArgumentException("末段子阶段不能为空");
         }
+        String normalized = value.replace('\u00A0', ' ').strip();
         for (HandoverPhase phase : HandoverPhase.values()) {
-            if (phase.value.equals(value)) {
+            if (phase.value.equals(normalized)) {
                 return phase;
             }
         }
-        throw new IllegalArgumentException("未知末段子阶段：" + value);
+        throw new IllegalArgumentException("未知末段子阶段：" + normalized);
     }
 }

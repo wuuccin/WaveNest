@@ -14,7 +14,7 @@ public class DroneContextUnavailableException extends RuntimeException {
     private static final long serialVersionUID = 1L;
 
     /**
-     * 触发本异常的执行机实例（原样保留，可能为 null/空白；日志请用 {@link #getMessage()}）。
+     * 触发本异常的执行机实例（原样保留，可能为 null/空白；结构化日志请用 {@link #getSanitizedDroneId()}）。
      */
     @Getter
     private final String droneId;
@@ -29,5 +29,18 @@ public class DroneContextUnavailableException extends RuntimeException {
     public DroneContextUnavailableException(String droneId) {
         super("查无执行机台账，拒绝求解：机 " + (droneId == null || droneId.isBlank() ? "<unknown>" : droneId));
         this.droneId = droneId;
+    }
+
+
+
+
+
+    /**
+     * 脱敏后的执行机标识——结构化日志请用它，避免直接输出 null/空白。
+     *
+     * @return 标识原值；为空/空白时为 {@code <unknown>}
+     */
+    public String getSanitizedDroneId() {
+        return this.droneId == null || this.droneId.isBlank() ? "<unknown>" : this.droneId;
     }
 }

@@ -7,7 +7,7 @@ package com.waterlogistics.rendezvous.handover;
  * 「投放机构反馈完成」首版简化为 {@code dropDone} 标记（演示由样本序列给出）。
  * 时间须<b>严格升序</b>，相对速度由相邻样本差分得出。
  *
- * @param t           采样时刻，Unix 毫秒
+ * @param t           采样时刻，Unix 毫秒（须为正）
  * @param droneLon    机位经度
  * @param droneLat    机位纬度
  * @param shipLon     船位经度
@@ -33,6 +33,9 @@ public record HandoverSample(
         boolean dropDone) {
 
     public HandoverSample {
+        if (t <= 0L) {
+            throw new IllegalArgumentException("采样时刻必须为正的 Unix 毫秒值，实际 " + t);
+        }
         if (!Double.isFinite(droneLon) || !Double.isFinite(droneLat)
                 || !Double.isFinite(shipLon) || !Double.isFinite(shipLat)
                 || droneLon < -180.0 || droneLon > 180.0 || droneLat < -90.0 || droneLat > 90.0

@@ -12,7 +12,7 @@ import java.util.Objects;
  * 与占位时间窗同粒度（《37-M6-数据库》§5.5）。
  *
  * @param comboId    绑定的候选组合标识
- * @param meetTMs    会面时刻（来自会面点解的 t*），Unix 毫秒
+ * @param meetMs     会面时刻（来自会面点解的 t*），Unix 毫秒
  * @param tauFineSec 精算飞行时长 τ_fine，秒（来自 {@code B_FlyableRoute}）
  * @param nowMs      当前时刻，Unix 毫秒（不可行判定基准）
  * @param timeGridMs 时刻精度粒度，毫秒（取整对齐用；来源 {@code sys_param}）
@@ -22,7 +22,7 @@ public record TakeoffTimeCommand(
 
         String comboId,
 
-        long meetTMs,
+        long meetMs,
 
         int tauFineSec,
 
@@ -41,11 +41,11 @@ public record TakeoffTimeCommand(
         if (timeGridMs <= 0L) {
             throw new IllegalArgumentException("时刻精度粒度必须为正，实际 " + timeGridMs);
         }
-        if (meetTMs < 0L) {
-            throw new IllegalArgumentException("会面时刻不能为负，实际 " + meetTMs);
+        if (meetMs < 1_000_000_000_000L) {
+            throw new IllegalArgumentException("会面时刻须为 Unix 毫秒值（疑似误传秒级时间戳），实际 " + meetMs);
         }
-        if (nowMs < 0L) {
-            throw new IllegalArgumentException("当前时刻不能为负，实际 " + nowMs);
+        if (nowMs < 1_000_000_000_000L) {
+            throw new IllegalArgumentException("当前时刻须为 Unix 毫秒值（疑似误传秒级时间戳），实际 " + nowMs);
         }
     }
 }

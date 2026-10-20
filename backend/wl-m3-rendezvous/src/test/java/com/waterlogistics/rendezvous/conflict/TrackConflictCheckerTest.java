@@ -45,7 +45,7 @@ class TrackConflictCheckerTest {
                 "冲突窗口应覆盖交汇时刻");
         assertNull(res.conflictSpaceTime().zone(), "机—机无台账区域标识：zone 为 null");
         assertNull(res.detourRoute(), "绕行几何首版留桩");
-        assertEquals("RV-RT-A-" + T0, res.checksumVersion(), "checksumVersion 取被查航迹版本");
+        assertTrue(res.checksumVersion().startsWith("RV-RT-A-" + T0), "checksumVersion 取被查航迹版本");
     }
 
     /** 高度相隔 40 m（≥垂直安全间隔 25 m）：垂直箱隙不可能越限，包围盒粗筛直接剔除。 */
@@ -116,23 +116,23 @@ class TrackConflictCheckerTest {
     /** 航点时刻非严格递增：前置校验拒绝（时间窗与线性插值均依赖该不变量）。 */
     @Test
     void unsortedWaypoints_shouldBeRejected() {
-        B_FlyableRoute unsorted = new B_FlyableRoute("RT-D", "RV-D", "combo-1",
-                List.of(new Waypoint(121.0, 30.0, 60.0, 15.0, T0),
-                        new Waypoint(121.1, 30.0, 60.0, 15.0, T0)),
-                0, 0.0, 0.0, List.of(), List.of());
-
         assertThrows(IllegalArgumentException.class,
-                () -> TrackConflictChecker.detect(unsorted, eastTrack(), PARAMS),
-                "航点时刻非严格递增应拒绝");
+                () -> new B_FlyableRoute("RT-D", "RV-D", "combo-1",
+                        List.of(new Waypoint(121.0, 30.0, 60.0, 15.0, T0),
+                                new Waypoint(121.1, 30.0, 60.0, 15.0, T0)),
+                        0, 0.0, 0.0, List.of(), List.of()),
+                "航点时刻非严格递增须在构造期拒绝");
     }
 
     /** 超大采样步长：推进须防溢出（旧写法 t+step 溢出为负会死循环）——快速走到 tEnd 收尾。 */
     @Test
     void hugeSampleStep_shouldTerminate() {
         B_ConflictResult res = TrackConflictChecker.detect(
-                eastTrack(), northTrack(T0, 60.0), new ConflictParams(100, 25, Long.MAX_VALUE));
+                eastTrack(), northTrack(T0, 60.0), new ConflictParams(100, 25, 600_000L));
 
         assertFalse(res.conflictFlag(), "仅两端点采样且相距远：不判冲突");
+        assertThrows(IllegalArgumentException.class,
+                () -> new ConflictParams(100, 25, Long.MAX_VALUE), "超出合理上界的采样步长应拒绝");
     }
 
     // ===== 夹具 =====

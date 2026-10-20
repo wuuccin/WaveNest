@@ -40,7 +40,9 @@ public final class TakeoffTimeCalculator {
     public static B_TakeoffTimeResult compute(TakeoffTimeCommand cmd) {
         Objects.requireNonNull(cmd, "cmd 不能为空");
 
-        long rawT = cmd.meetTMs() - (long) cmd.tauFineSec() * 1000L;
+        // rawT 可能为负（会面时刻早于精算时长）：floorMod 向负无穷取整，takeoffT 仅作追溯留痕，
+        // 下游不得直接当作合法 epoch 时刻使用（该分支必为不可行）
+        long rawT = cmd.meetMs() - (long) cmd.tauFineSec() * 1000L;
         long takeoffT = rawT - Math.floorMod(rawT, cmd.timeGridMs());
         boolean feasible = takeoffT >= cmd.nowMs();
 

@@ -1,5 +1,6 @@
 package com.waterlogistics.rendezvous.conflict;
 
+import com.waterlogistics.algo.meeting.GeoApprox;
 import com.waterlogistics.algo.meeting.model.B_ConflictResult;
 import com.waterlogistics.algo.meeting.model.B_FlyableRoute;
 import com.waterlogistics.algo.meeting.model.ConflictSpaceTime;
@@ -31,13 +32,21 @@ import java.util.Objects;
  * <p>坐标处理：以<b>被查航迹首点</b>为原点做局部米制平移（同 {@code GeoApprox} 近似），
  * 两航迹共用同一原点——包围盒、距离与 CPA 全部在米制下计算。
  *
+ * <p>冲突区间口径：{@code conflictSpaceTime} 是采样点的<b>保守包络</b>（首末冲突采样点，
+ * 两端含），边界带至多一个采样步长的量化误差，可能覆盖两段相邻冲突之间的空档——
+ * 消费方按「保守扩大」使用，不得当作精确边界。
+ *
+ * <p>检出限制：判据只在离散采样时刻求值，<b>最短可检冲突时长＝{@code sampleStepMs}</b>——
+ * 更短且恰好落在两采样点之间的冲突会漏检（区间本身仍只会被保守扩大）。经度方向的米/度
+ * 比例取两航迹首点纬度的均值，适用于十公里级、纬向跨度不大的作业区。
+ *
  * <p>前置约束：两航迹的航点时刻须<b>严格递增</b>（时间窗与线性插值均基于此；不满足即
  * 抛 {@link IllegalArgumentException}）。
  */
 public final class TrackConflictChecker {
 
     /** 每度纬差对应的米数（与 GeoApprox 同一近似） */
-    private static final double METERS_PER_DEG = Math.PI * 6_371_000.0 / 180.0;
+    private static final double METERS_PER_DEG = GeoApprox.METERS_PER_DEG;
 
 
 
@@ -69,8 +78,9 @@ public final class TrackConflictChecker {
         TrackConflictChecker.requireUsable(other, "other");
 
         Waypoint origin = route.waypoints().get(0);
-        List<LocalPoint> routePoints = TrackConflictChecker.toLocal(route.waypoints(), origin);
-        List<LocalPoint> otherPoints = TrackConflictChecker.toLocal(other.waypoints(), origin);
+        double refLat = (origin.lat() + other.waypoints().get(0).lat()) / 2.0;
+        List<LocalPoint> routePoints = TrackConflictChecker.toLocal(route.waypoints(), origin, refLat);
+        List<LocalPoint> otherPoints = TrackConflictChecker.toLocal(other.waypoints(), origin, refLat);
 
         B_ConflictResult shortCircuit = new B_ConflictResult(
                 false, null, null, null, null, null, route.routeVersion()
@@ -126,7 +136,8 @@ public final class TrackConflictChecker {
         }
 
         CpaPoint cpaPoint = new CpaPoint(
-                origin.lon() + bestMidX / TrackConflictChecker.mPerDegLon(origin.lat()),
+                TrackConflictChecker.wrapLon(origin.lon()
+                                                     + bestMidX / TrackConflictChecker.mPerDegLon(origin.lat())),
                 origin.lat() + bestMidY / TrackConflictChecker.METERS_PER_DEG,
                 bestMidAlt);
         ConflictSpaceTime interval = anyConflict
@@ -208,20 +219,25 @@ public final class TrackConflictChecker {
         if (t >= last.t()) {
             return last;
         }
-        int pointCount = points.size();
-        for (int i = 1; i < pointCount; i++) {
-            LocalPoint curr = points.get(i);
-            if (t <= curr.t()) {
-                LocalPoint prev = points.get(i - 1);
-                double frac = (double) (t - prev.t()) / (double) (curr.t() - prev.t());
-                return new LocalPoint(
-                        prev.x() + frac * (curr.x() - prev.x()),
-                        prev.y() + frac * (curr.y() - prev.y()),
-                        prev.altM() + frac * (curr.altM() - prev.altM()),
-                        t);
+        //noinspection DuplicatedCode
+        int lo = 1;
+        int hi = points.size() - 1;
+        while (lo < hi) {
+            int mid = (lo + hi) >>> 1;
+            if (t <= points.get(mid).t()) {
+                hi = mid;
+            } else {
+                lo = mid + 1;
             }
         }
-        throw new IllegalStateException("航点时刻未严格递增，无法定位插值区间");
+        LocalPoint curr = points.get(lo);
+        LocalPoint prev = points.get(lo - 1);
+        double frac = (double) (t - prev.t()) / (double) (curr.t() - prev.t());
+        return new LocalPoint(
+                prev.x() + frac * (curr.x() - prev.x()),
+                prev.y() + frac * (curr.y() - prev.y()),
+                prev.altM() + frac * (curr.altM() - prev.altM()),
+                t);
     }
 
 
@@ -240,13 +256,41 @@ public final class TrackConflictChecker {
 
 
 
+    /** 经差归一化到 [−180, 180]，跨 ±180° 走短侧 */
+    private static double normalizeLonDelta(double dLon) {
+        if (dLon > 180.0) {
+            return dLon - 360.0;
+        }
+        if (dLon < -180.0) {
+            return dLon + 360.0;
+        }
+        return dLon;
+    }
+
+
+
+
+
+    /** 经度回卷到 [−180, 180) */
+    private static double wrapLon(double lon) {
+        double wrapped = (lon + 180.0) % 360.0;
+        if (wrapped < 0.0) {
+            wrapped += 360.0;
+        }
+        return wrapped - 180.0;
+    }
+
+
+
+
+
     @SuppressWarnings("ObjectAllocationInLoop")
-    private static List<LocalPoint> toLocal(Collection<Waypoint> waypoints, Waypoint origin) {
-        double metersPerDegLon = TrackConflictChecker.mPerDegLon(origin.lat());
+    private static List<LocalPoint> toLocal(Collection<Waypoint> waypoints, Waypoint origin, double refLat) {
+        double metersPerDegLon = TrackConflictChecker.mPerDegLon(refLat);
         List<LocalPoint> out = new ArrayList<>(waypoints.size());
         for (Waypoint w : waypoints) {
             out.add(new LocalPoint(
-                    (w.lon() - origin.lon()) * metersPerDegLon,
+                    TrackConflictChecker.normalizeLonDelta(w.lon() - origin.lon()) * metersPerDegLon,
                     (w.lat() - origin.lat()) * TrackConflictChecker.METERS_PER_DEG,
                     w.altM(),
                     w.t()));

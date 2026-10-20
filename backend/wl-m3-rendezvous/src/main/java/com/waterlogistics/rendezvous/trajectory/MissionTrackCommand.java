@@ -64,12 +64,16 @@ public record MissionTrackCommand(
 
         int waypointsPerLeg) {
 
-    private static final int MAX_WAYPOINTS_PER_LEG = 512;
 
     /**
      * 合理纪元上界（2100-01-01），防后续时刻加法溢出
      */
     private static final long MAX_EPOCH_MS = 4_102_444_800_000L;
+
+    /**
+     * 各段速度下限（m/s），防极低速导致航段时长不可控
+     */
+    private static final double MIN_SPEED_MS = 0.1;
 
 
 
@@ -100,20 +104,21 @@ public record MissionTrackCommand(
                 || MissionTrackCommand.isSamePoint(handoverEndLon, handoverEndLat, returnTargetLon, returnTargetLat)) {
             throw new IllegalArgumentException("相邻航段端点不得重合（退化航段）");
         }
-        if (!Double.isFinite(cruiseAltM) || !(cruiseAltM >= (double) 0)) {
-            throw new IllegalArgumentException("巡航高度不能为负且须为有限数，实际 " + cruiseAltM);
+        if (!Double.isFinite(cruiseAltM) || !(cruiseAltM > (double) 0)) {
+            throw new IllegalArgumentException("巡航高度须为正的有限数，实际 " + cruiseAltM);
         }
-        if (waypointsPerLeg < 2 || waypointsPerLeg > MissionTrackCommand.MAX_WAYPOINTS_PER_LEG) {
+        if (waypointsPerLeg < 2 || waypointsPerLeg > GenerateRouteCommand.MAX_WAYPOINT_COUNT) {
             throw new IllegalArgumentException(
-                    "waypointsPerLeg 须在 [2, " + MissionTrackCommand.MAX_WAYPOINTS_PER_LEG + "]，实际 " + waypointsPerLeg
-            );
+                    "waypointsPerLeg 须在 [2, " + GenerateRouteCommand.MAX_WAYPOINT_COUNT + "]，实际 " + waypointsPerLeg);
         }
         if (!Double.isFinite(outboundSpeedMs) || !Double.isFinite(terminalSpeedMs)
                 || !Double.isFinite(returnSpeedMs)
-                || !(outboundSpeedMs > (double) 0) || !(terminalSpeedMs > (double) 0) || !(returnSpeedMs > (double) 0)) {
+                || outboundSpeedMs < MissionTrackCommand.MIN_SPEED_MS || terminalSpeedMs < MissionTrackCommand.MIN_SPEED_MS
+                || returnSpeedMs < MissionTrackCommand.MIN_SPEED_MS) {
             throw new IllegalArgumentException(
-                    "各段速度必须为正的有限数，实际 outboundSpeedMs=" + outboundSpeedMs
-                            + ", terminalSpeedMs=" + terminalSpeedMs + ", returnSpeedMs=" + returnSpeedMs);
+                    "各段速度须不低于 " + MissionTrackCommand.MIN_SPEED_MS + " m/s 且为有限数，实际 outboundSpeedMs="
+                            + outboundSpeedMs + ", terminalSpeedMs=" + terminalSpeedMs
+                            + ", returnSpeedMs=" + returnSpeedMs);
         }
         if (takeoffMs <= 0L) {
             throw new IllegalArgumentException("起飞时刻必须为正，实际 " + takeoffMs);
@@ -128,13 +133,16 @@ public record MissionTrackCommand(
 
 
     /**
-     * 端点重合判定：含 ±180° 等价（lon 差 360° 且同纬度视为同一点）
+     * 端点重合判定：含极点等价（±90° 处任意经度为同一点）与 ±180° 经线等价
      */
     private static boolean isSamePoint(double lonA, double latA, double lonB, double latB) {
-        if (latA != latB) {
+        if (Math.abs(latA - latB) > 1e-9) {
             return false;
         }
-        double dLon = Math.abs(lonA - lonB);
-        return dLon == 0.0 || dLon == 360.0;
+        if (Math.abs(latA) == 90.0) {
+            return true;
+        }
+        double dLon = Math.abs(lonA - lonB) % 360.0;
+        return dLon < 1e-9 || 360.0 - dLon < 1e-9;
     }
 }

@@ -58,7 +58,7 @@ public record GenerateRouteCommand(
 
         double pathRisk) {
 
-    private static final int MAX_WAYPOINT_COUNT = 512;
+    static final int MAX_WAYPOINT_COUNT = 512;
 
 
 
@@ -72,8 +72,13 @@ public record GenerateRouteCommand(
         }
         Objects.requireNonNull(landingPointsAlong, "landingPointsAlong 不能为空");
         Objects.requireNonNull(avoidZones, "avoidZones 不能为空");
-        if (landingPointsAlong.stream().anyMatch(Objects::isNull) || avoidZones.stream().anyMatch(Objects::isNull)) {
-            throw new IllegalArgumentException("landingPointsAlong/avoidZones 不能包含 null");
+        if (landingPointsAlong.stream().anyMatch(id -> id == null || id.isBlank())
+                || avoidZones.stream().anyMatch(id -> id == null || id.isBlank())) {
+            throw new IllegalArgumentException("landingPointsAlong/avoidZones 不能包含 null 或空白标识");
+        }
+        if (landingPointsAlong.stream().distinct().count() != (long) landingPointsAlong.size()
+                || avoidZones.stream().distinct().count() != (long) avoidZones.size()) {
+            throw new IllegalArgumentException("landingPointsAlong/avoidZones 不得包含重复标识");
         }
         landingPointsAlong = List.copyOf(landingPointsAlong);
         avoidZones = List.copyOf(avoidZones);
@@ -84,7 +89,13 @@ public record GenerateRouteCommand(
                 || endLon < -180.0 || endLon > 180.0 || endLat < -90.0 || endLat > 90.0) {
             throw new IllegalArgumentException("起终点经纬度超出地理范围");
         }
-        if (startLon == endLon && startLat == endLat) {
+        double lonDelta = endLon - startLon;
+        if (lonDelta > 180.0) {
+            lonDelta -= 360.0;
+        } else if (lonDelta < -180.0) {
+            lonDelta += 360.0;
+        }
+        if (Math.abs(lonDelta) < 1e-9 && Math.abs(endLat - startLat) < 1e-9) {
             throw new IllegalArgumentException("起终点不能重合（零长度航迹）");
         }
         if (waypointCount < 2 || waypointCount > GenerateRouteCommand.MAX_WAYPOINT_COUNT) {
@@ -97,8 +108,8 @@ public record GenerateRouteCommand(
         if (!Double.isFinite(speedMs) || !(speedMs > (double) 0)) {
             throw new IllegalArgumentException("速度必须为正的有限数，实际 " + speedMs);
         }
-        if (!Double.isFinite(cruiseAltM) || !(cruiseAltM >= (double) 0)) {
-            throw new IllegalArgumentException("巡航高度不能为负且须为有限数，实际 " + cruiseAltM);
+        if (!Double.isFinite(cruiseAltM) || !(cruiseAltM > (double) 0)) {
+            throw new IllegalArgumentException("巡航高度必须为正的有限数，实际 " + cruiseAltM);
         }
         if (!Double.isFinite(energyRatePerSecPct) || !(energyRatePerSecPct >= (double) 0)) {
             throw new IllegalArgumentException("能耗率不能为负且须为有限数，实际 " + energyRatePerSecPct);

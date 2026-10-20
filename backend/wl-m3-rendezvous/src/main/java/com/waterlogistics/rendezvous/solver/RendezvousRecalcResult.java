@@ -28,5 +28,8 @@ public record RendezvousRecalcResult(
     public RendezvousRecalcResult {
         Objects.requireNonNull(requestId, "requestId 不能为空");
         Objects.requireNonNull(solution, "solution 不能为空");
+        if (requestId.isBlank()) {
+            throw new IllegalArgumentException("requestId 不能为空白字符串");
+        }
     }
 }
