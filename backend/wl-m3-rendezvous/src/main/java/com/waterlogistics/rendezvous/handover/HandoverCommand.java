@@ -33,6 +33,7 @@ public record HandoverCommand(
 
         HandoverParams params) {
 
+    @SuppressWarnings("MissingJavadoc")
     public HandoverCommand {
         Objects.requireNonNull(taskId, "taskId 不能为空");
         Objects.requireNonNull(droneId, "droneId 不能为空");
@@ -40,7 +41,7 @@ public record HandoverCommand(
         if (taskId.isBlank() || droneId.isBlank()) {
             throw new IllegalArgumentException("taskId/droneId 不能为空白字符串");
         }
-        if (plannedMeetT <= 0) {
+        if (plannedMeetT <= 0L) {
             throw new IllegalArgumentException("计划会面时刻必须为正的 Unix 毫秒值，实际 " + plannedMeetT);
         }
         if (!Double.isFinite(plannedMeetLon) || !Double.isFinite(plannedMeetLat)
@@ -52,7 +53,8 @@ public record HandoverCommand(
         if (samples.isEmpty()) {
             throw new IllegalArgumentException("末段样本序列不能为空");
         }
-        for (int i = 1; i < samples.size(); i++) {
+        int sampleCount = samples.size();
+        for (int i = 1; i < sampleCount; i++) {
             if (samples.get(i).t() <= samples.get(i - 1).t()) {
                 throw new IllegalArgumentException("样本时间必须严格升序，第 " + i + " 个样本时间非增");
             }

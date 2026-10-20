@@ -7,14 +7,15 @@ package com.waterlogistics.rendezvous.handover;
  * 「投放机构反馈完成」首版简化为 {@code dropDone} 标记（演示由样本序列给出）。
  * 时间须<b>严格升序</b>，相对速度由相邻样本差分得出。
  *
- * @param t          采样时刻，Unix 毫秒
- * @param droneLon   机位经度
- * @param droneLat   机位纬度
- * @param shipLon    船位经度
- * @param shipLat    船位纬度
+ * @param t           采样时刻，Unix 毫秒
+ * @param droneLon    机位经度
+ * @param droneLat    机位纬度
+ * @param shipLon     船位经度
+ * @param shipLat     船位纬度
  * @param windSpeedMs 当时风况（风速），m/s——交接时刻须满足交接风阈值
- * @param dropDone   投放机构反馈完成标记（首版简化）
+ * @param dropDone    投放机构反馈完成标记（首版简化）
  */
+@SuppressWarnings("MissingJavadoc")
 public record HandoverSample(
 
         long t,
@@ -38,7 +39,7 @@ public record HandoverSample(
                 || shipLon < -180.0 || shipLon > 180.0 || shipLat < -90.0 || shipLat > 90.0) {
             throw new IllegalArgumentException("采样坐标必须为有限数且经纬度在合法范围内");
         }
-        if (!Double.isFinite(windSpeedMs) || windSpeedMs < 0) {
+        if (!Double.isFinite(windSpeedMs) || windSpeedMs < (double) 0) {
             throw new IllegalArgumentException("风速不能为负或非有限数，实际 " + windSpeedMs);
         }
     }

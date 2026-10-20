@@ -7,6 +7,7 @@ package com.waterlogistics.rendezvous.port;
  * 那一个是「数据对不上」；两者都属数据前置缺失导致的拒绝，<b>不是算法无解</b>
  * （算法无解走 {@code B_RendezvousSolution.hasSolution=false}）。
  */
+@SuppressWarnings("UncheckedExceptionClass")
 public class SnapshotUnavailableException extends RuntimeException {
 
     private static final long serialVersionUID = 1L;
@@ -19,7 +20,6 @@ public class SnapshotUnavailableException extends RuntimeException {
      * @param shipMmsi 目标船标识
      */
     public SnapshotUnavailableException(String shipMmsi) {
-        super("查无预测快照，拒绝求解：船 "
-                      + (shipMmsi == null || shipMmsi.isBlank() ? "<unknown>" : shipMmsi));
+        super("查无预测快照，拒绝求解：船 " + (shipMmsi == null || shipMmsi.isBlank() ? "<unknown>" : shipMmsi));
     }
 }

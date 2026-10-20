@@ -18,6 +18,7 @@ import java.util.Objects;
  * @param requestId 请求标识（原样返回）
  * @param solution  会面点解（恒非空；其 comboId 由 droneId 当前任务回溯，回溯不到时为 null）
  */
+@SuppressWarnings("MissingJavadoc")
 public record RendezvousRecalcResult(
 
         String requestId,

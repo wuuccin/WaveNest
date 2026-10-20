@@ -29,6 +29,7 @@ import java.util.Objects;
  * @param timestamp       请求时刻，Unix 毫秒（追溯用，不参与求解）
  * @param stateSnapshot   当前状态快照（船侧求解必需，机侧追溯用）
  */
+@SuppressWarnings("MissingJavadoc")
 public record RendezvousRecalcRequest(
 
         String requestId,
@@ -56,7 +57,7 @@ public record RendezvousRecalcRequest(
         if (requestId.isBlank() || droneId.isBlank() || snapshotVersion.isBlank() || shipMmsi.isBlank()) {
             throw new IllegalArgumentException("requestId/droneId/snapshotVersion/shipMmsi 不能为空白字符串");
         }
-        if (timestamp <= 0) {
+        if (timestamp <= 0L) {
             throw new IllegalArgumentException("请求时刻必须为正的 Unix 毫秒值，实际 " + timestamp);
         }
     }

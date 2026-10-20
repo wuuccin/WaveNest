@@ -71,15 +71,9 @@ public class RendezvousRecalcService {
             throw new DroneContextUnavailableException(request.droneId());
         }
 
-        ShipTrackSnapshot snapshot = this.snapshotPort.latest(request.shipMmsi());
-        if (snapshot == null) {
-            throw new SnapshotUnavailableException(request.shipMmsi());
-        }
-        if (snapshot.version() == null
-                || !Objects.equals(request.snapshotVersion(), snapshot.version())) {
-            throw new SnapshotVersionMismatchException(
-                    request.shipMmsi(), request.snapshotVersion(), snapshot.version());
-        }
+        ShipTrackSnapshot snapshot = SnapshotGate.fetchVerified(
+                this.snapshotPort, request.shipMmsi(), request.snapshotVersion()
+                                                               );
 
         RecalcStateSnapshot state = request.stateSnapshot();
         B_RendezvousSolution solution = RendezvousSolver.solve(new RendezvousSolveRequest(

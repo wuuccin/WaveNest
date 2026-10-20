@@ -11,6 +11,7 @@ package com.waterlogistics.rendezvous.port;
  *
  * <p>本接口<b>纯读</b>：不落库、无副作用；返回结果须只读可共享，实现与调用方均不得修改。
  */
+@FunctionalInterface
 public interface DroneContextPort {
 
     /**

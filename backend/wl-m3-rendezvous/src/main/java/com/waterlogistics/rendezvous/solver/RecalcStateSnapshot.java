@@ -16,6 +16,7 @@ package com.waterlogistics.rendezvous.solver;
  * @param droneBattery 电量，满电百分比（非必需，追溯用）
  * @param droneStateT  机状态时刻，Unix 毫秒（非必需，追溯用）
  */
+@SuppressWarnings("MissingJavadoc")
 public record RecalcStateSnapshot(
 
         double shipLon,
@@ -37,33 +38,44 @@ public record RecalcStateSnapshot(
         Long droneStateT) {
 
     public RecalcStateSnapshot {
-        if (!Double.isFinite(shipLon) || !Double.isFinite(shipLat) || !Double.isFinite(shipCogDeg)
-                || !Double.isFinite(sogMs) || !(sogMs >= 0)
-                || shipLon < -180.0 || shipLon > 180.0 || shipLat < -90.0 || shipLat > 90.0
-                || !(shipCogDeg >= 0) || !(shipCogDeg < 360.0)) {
+        if (!Double.isFinite(shipLon) ||
+                !Double.isFinite(shipLat) ||
+                !Double.isFinite(shipCogDeg) ||
+                !Double.isFinite(sogMs) ||
+                !(sogMs >= (double) 0) ||
+                shipLon < -180.0 ||
+                shipLon > 180.0 ||
+                shipLat < -90.0 ||
+                shipLat > 90.0 ||
+                !(shipCogDeg >= (double) 0) ||
+                !(shipCogDeg < 360.0)) {
             throw new IllegalArgumentException(
-                    "船侧求解字段非法：shipLon=" + shipLon + ", shipLat=" + shipLat
-                            + ", shipCogDeg=" + shipCogDeg + ", sogMs=" + sogMs);
+                    "船侧求解字段非法：shipLon=" + shipLon + ", shipLat=" + shipLat + ", shipCogDeg=" + shipCogDeg + ", sogMs=" + sogMs
+            );
         }
-        if (shipStateT <= 0) {
+        if (shipStateT <= 0L) {
             throw new IllegalArgumentException("船状态时刻必须为正，实际 " + shipStateT);
         }
-        boolean droneAllNull = droneLon == null && droneLat == null
-                && droneBattery == null && droneStateT == null;
-        boolean droneAllSet = droneLon != null && droneLat != null
-                && droneBattery != null && droneStateT != null;
+        boolean droneAllNull = droneLon == null && droneLat == null && droneBattery == null && droneStateT == null;
+        boolean droneAllSet = droneLon != null && droneLat != null && droneBattery != null && droneStateT != null;
         if (!droneAllNull && !droneAllSet) {
             throw new IllegalArgumentException("机侧四个字段须同时缺省或同时提供");
         }
         if (droneAllSet) {
-            if (!Double.isFinite(droneLon.doubleValue()) || !Double.isFinite(droneLat.doubleValue())
-                    || !Double.isFinite(droneBattery.doubleValue())
-                    || droneLon.doubleValue() < -180.0 || droneLon.doubleValue() > 180.0 || droneLat.doubleValue() < -90.0 || droneLat.doubleValue() > 90.0
-                    || droneBattery.doubleValue() < 0.0 || droneBattery.doubleValue() > 100.0) {
-                throw new IllegalArgumentException("机侧状态非法：droneLon=" + droneLon
-                                                           + ", droneLat=" + droneLat + ", droneBattery=" + droneBattery);
+            if (!Double.isFinite(droneLon.doubleValue()) ||
+                    !Double.isFinite(droneLat.doubleValue()) ||
+                    !Double.isFinite(droneBattery.doubleValue()) ||
+                    droneLon.doubleValue() < -180.0 ||
+                    droneLon.doubleValue() > 180.0 ||
+                    droneLat.doubleValue() < -90.0 ||
+                    droneLat.doubleValue() > 90.0 ||
+                    droneBattery.doubleValue() < 0.0 ||
+                    droneBattery.doubleValue() > 100.0) {
+                throw new IllegalArgumentException(
+                        "机侧状态非法：droneLon=" + droneLon + ", droneLat=" + droneLat + ", droneBattery=" + droneBattery
+                );
             }
-            if (droneStateT.longValue() <= 0) {
+            if (droneStateT.longValue() <= 0L) {
                 throw new IllegalArgumentException("机状态时刻必须为正，实际 " + droneStateT);
             }
         }

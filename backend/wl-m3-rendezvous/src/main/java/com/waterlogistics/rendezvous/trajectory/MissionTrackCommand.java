@@ -12,23 +12,24 @@ import java.util.Objects;
  * 返程「交接完成位置 → 归巢落点」；三段分别走同一项航迹生成能力后拼接打标。
  * 时间自 {@code takeoffMs} 起按各段精算时长顺延。
  *
- * @param comboId          候选组合标识
- * @param routeId          任务航迹标识（三段航迹以其加后缀命名）
- * @param nestLon          机巢经度
- * @param nestLat          机巢纬度
- * @param meetLon          会面点经度
- * @param meetLat          会面点纬度
- * @param handoverEndLon   交接完成位置经度（末段终点）
- * @param handoverEndLat   交接完成位置纬度
- * @param returnTargetLon  归巢落点经度
- * @param returnTargetLat  归巢落点纬度
- * @param cruiseAltM       巡航高度，米
- * @param outboundSpeedMs  去程速度，m/s
- * @param terminalSpeedMs  末段速度，m/s（伴飞随船，通常显著低于巡航）
- * @param returnSpeedMs    返程速度，m/s
- * @param takeoffMs        起飞时刻（第一段起点时刻），Unix 毫秒
- * @param waypointsPerLeg  每段航点数（2–512）
+ * @param comboId         候选组合标识
+ * @param routeId         任务航迹标识（三段航迹以其加后缀命名）
+ * @param nestLon         机巢经度
+ * @param nestLat         机巢纬度
+ * @param meetLon         会面点经度
+ * @param meetLat         会面点纬度
+ * @param handoverEndLon  交接完成位置经度（末段终点）
+ * @param handoverEndLat  交接完成位置纬度
+ * @param returnTargetLon 归巢落点经度
+ * @param returnTargetLat 归巢落点纬度
+ * @param cruiseAltM      巡航高度，米
+ * @param outboundSpeedMs 去程速度，m/s
+ * @param terminalSpeedMs 末段速度，m/s（伴飞随船，通常显著低于巡航）
+ * @param returnSpeedMs   返程速度，m/s
+ * @param takeoffMs       起飞时刻（第一段起点时刻），Unix 毫秒
+ * @param waypointsPerLeg 每段航点数（2–512）
  */
+@SuppressWarnings("MissingJavadoc")
 public record MissionTrackCommand(
 
         String comboId,
@@ -65,7 +66,9 @@ public record MissionTrackCommand(
 
     private static final int MAX_WAYPOINTS_PER_LEG = 512;
 
-    /** 合理纪元上界（2100-01-01），防后续时刻加法溢出 */
+    /**
+     * 合理纪元上界（2100-01-01），防后续时刻加法溢出
+     */
     private static final long MAX_EPOCH_MS = 4_102_444_800_000L;
 
 
@@ -92,26 +95,27 @@ public record MissionTrackCommand(
                 || returnTargetLat < -90.0 || returnTargetLat > 90.0) {
             throw new IllegalArgumentException("三段几何坐标的经纬度超出合法范围");
         }
-        if (MissionTrackCommand.samePoint(nestLon, nestLat, meetLon, meetLat)
-                || MissionTrackCommand.samePoint(meetLon, meetLat, handoverEndLon, handoverEndLat)
-                || MissionTrackCommand.samePoint(handoverEndLon, handoverEndLat, returnTargetLon, returnTargetLat)) {
+        if (MissionTrackCommand.isSamePoint(nestLon, nestLat, meetLon, meetLat)
+                || MissionTrackCommand.isSamePoint(meetLon, meetLat, handoverEndLon, handoverEndLat)
+                || MissionTrackCommand.isSamePoint(handoverEndLon, handoverEndLat, returnTargetLon, returnTargetLat)) {
             throw new IllegalArgumentException("相邻航段端点不得重合（退化航段）");
         }
-        if (!Double.isFinite(cruiseAltM) || !(cruiseAltM >= 0)) {
+        if (!Double.isFinite(cruiseAltM) || !(cruiseAltM >= (double) 0)) {
             throw new IllegalArgumentException("巡航高度不能为负且须为有限数，实际 " + cruiseAltM);
         }
         if (waypointsPerLeg < 2 || waypointsPerLeg > MissionTrackCommand.MAX_WAYPOINTS_PER_LEG) {
             throw new IllegalArgumentException(
-                    "waypointsPerLeg 须在 [2, " + MissionTrackCommand.MAX_WAYPOINTS_PER_LEG + "]，实际 " + waypointsPerLeg);
+                    "waypointsPerLeg 须在 [2, " + MissionTrackCommand.MAX_WAYPOINTS_PER_LEG + "]，实际 " + waypointsPerLeg
+            );
         }
         if (!Double.isFinite(outboundSpeedMs) || !Double.isFinite(terminalSpeedMs)
                 || !Double.isFinite(returnSpeedMs)
-                || !(outboundSpeedMs > 0) || !(terminalSpeedMs > 0) || !(returnSpeedMs > 0)) {
+                || !(outboundSpeedMs > (double) 0) || !(terminalSpeedMs > (double) 0) || !(returnSpeedMs > (double) 0)) {
             throw new IllegalArgumentException(
                     "各段速度必须为正的有限数，实际 outboundSpeedMs=" + outboundSpeedMs
                             + ", terminalSpeedMs=" + terminalSpeedMs + ", returnSpeedMs=" + returnSpeedMs);
         }
-        if (takeoffMs <= 0) {
+        if (takeoffMs <= 0L) {
             throw new IllegalArgumentException("起飞时刻必须为正，实际 " + takeoffMs);
         }
         if (takeoffMs > MissionTrackCommand.MAX_EPOCH_MS) {
@@ -123,8 +127,10 @@ public record MissionTrackCommand(
 
 
 
-    /** 端点重合判定：含 ±180° 等价（lon 差 360° 且同纬度视为同一点） */
-    private static boolean samePoint(double lonA, double latA, double lonB, double latB) {
+    /**
+     * 端点重合判定：含 ±180° 等价（lon 差 360° 且同纬度视为同一点）
+     */
+    private static boolean isSamePoint(double lonA, double latA, double lonB, double latB) {
         if (latA != latB) {
             return false;
         }

@@ -31,7 +31,9 @@ import java.util.Objects;
  */
 public final class HandoverJudge {
 
-    /** 每度纬差对应的米数（与 GeoApprox 同一近似） */
+    /**
+     * 每度纬差对应的米数（与 GeoApprox 同一近似）
+     */
     private static final double METERS_PER_DEG = Math.PI * 6_371_000.0 / 180.0;
 
 
@@ -53,6 +55,7 @@ public final class HandoverJudge {
      * @throws NullPointerException cmd 为 null（样本非空与时间严格升序已由
      *                              {@link HandoverCommand} 构造期拒绝）
      */
+    @SuppressWarnings("ObjectAllocationInLoop")
     public static B_HandoverConfirmation judge(HandoverCommand cmd) {
         Objects.requireNonNull(cmd, "cmd 不能为空");
         List<HandoverSample> samples = cmd.samples();
@@ -63,31 +66,32 @@ public final class HandoverJudge {
 
         HandoverPhase phase = HandoverPhase.APPROACH;
         Long stableSince = null;
-        long transferStartT = 0;
+        long transferStartT = 0L;
         Double actualMeetLon = null;
         Double actualMeetLat = null;
-        long handoverDoneT = 0;
+        long handoverDoneT = 0L;
         boolean success = false;
 
         double prevDx = HandoverJudge.relativeX(origin, cosLat);
         double prevDy = HandoverJudge.relativeY(origin);
 
-        for (int i = 1; i < samples.size(); i++) {
-            HandoverSample s = samples.get(i);
-            long dtMs = s.t() - samples.get(i - 1).t();
+        int sampleCount = samples.size();
+        for (int i = 1; i < sampleCount; i++) {
+            HandoverSample sample = samples.get(i);
+            long dtMs = sample.t() - samples.get(i - 1).t();
 
-            double dx = HandoverJudge.relativeX(s, cosLat);
-            double dy = HandoverJudge.relativeY(s);
+            double dx = HandoverJudge.relativeX(sample, cosLat);
+            double dy = HandoverJudge.relativeY(sample);
             double dist = Math.hypot(dx, dy);
-            double relSpeed = Math.hypot(dx - prevDx, dy - prevDy) / (dtMs / 1000.0);
+            double relSpeed = Math.hypot(dx - prevDx, dy - prevDy) / ((double) dtMs / 1000.0);
             prevDx = dx;
             prevDy = dy;
 
             if (phase == HandoverPhase.APPROACH) {
                 if (dist < params.approachRadiusM()) {
                     phase = HandoverPhase.MATCH;
-                    actualMeetLon = Double.valueOf(s.droneLon());
-                    actualMeetLat = Double.valueOf(s.droneLat());
+                    actualMeetLon = Double.valueOf(sample.droneLon());
+                    actualMeetLat = Double.valueOf(sample.droneLat());
                 }
                 continue;
             }
@@ -99,20 +103,20 @@ public final class HandoverJudge {
                     continue;
                 }
                 if (stableSince == null) {
-                    stableSince = Long.valueOf(s.t());
+                    stableSince = Long.valueOf(sample.t());
                 }
-                if (s.t() - stableSince.longValue() >= params.stableSec() * 1000.0) {
+                if ((double) (sample.t() - stableSince.longValue()) >= params.stableSec() * 1000.0) {
                     phase = HandoverPhase.TRANSFER;
-                    transferStartT = s.t();
+                    transferStartT = sample.t();
                 }
             }
 
             // 有意落穿：MATCH 段在上方补满稳定窗口后同拍进入 TRANSFER，
             // 允许在该过渡拍即刻接受投放反馈（见 HandoverJudgeTest 同拍投放用例）。
-            if (phase == HandoverPhase.TRANSFER && s.dropDone()) {
-                if (s.windSpeedMs() <= params.windLimitMs()) {
+            if (phase == HandoverPhase.TRANSFER && sample.dropDone()) {
+                if (sample.windSpeedMs() <= params.windLimitMs()) {
                     success = true;
-                    handoverDoneT = s.t();
+                    handoverDoneT = sample.t();
                     break;
                 }
             }
@@ -122,32 +126,41 @@ public final class HandoverJudge {
         Integer handoverTimeCost = null;
         Double energyCost = null;
         if (success) {
-            escortTimeCost = Integer.valueOf((int) Math.min(Integer.MAX_VALUE, (transferStartT - origin.t()) / 1000));
-            handoverTimeCost = Integer.valueOf((int) Math.min(Integer.MAX_VALUE, (handoverDoneT - transferStartT) / 1000));
+            escortTimeCost = Integer.valueOf((int) Math.min((long) Integer.MAX_VALUE, (transferStartT - origin.t()) / 1000L));
+            handoverTimeCost = Integer.valueOf((int) Math.min((long) Integer.MAX_VALUE, (handoverDoneT - transferStartT) / 1000L));
             long totalSec = escortTimeCost.longValue() + handoverTimeCost.longValue();
-            energyCost = Double.valueOf(totalSec * params.energyRatePerSecPct());
+            energyCost = Double.valueOf((double) totalSec * params.energyRatePerSecPct());
         }
 
-        return new B_HandoverConfirmation(cmd.taskId(), cmd.droneId(),
-                                          actualMeetLon, actualMeetLat,
-                                          cmd.plannedMeetLon(), cmd.plannedMeetLat(), cmd.plannedMeetT(),
-                                          success ? Long.valueOf(handoverDoneT) : null, escortTimeCost, handoverTimeCost, energyCost,
-                                          success ? HandoverResult.SUCCESS : HandoverResult.FAILED);
+        return new B_HandoverConfirmation(
+                cmd.taskId(),
+                cmd.droneId(),
+                actualMeetLon,
+                actualMeetLat,
+                cmd.plannedMeetLon(),
+                cmd.plannedMeetLat(),
+                cmd.plannedMeetT(),
+                success ? Long.valueOf(handoverDoneT) : null,
+                escortTimeCost,
+                handoverTimeCost,
+                energyCost,
+                success ? HandoverResult.SUCCESS : HandoverResult.FAILED
+        );
     }
 
 
 
 
 
-    private static double relativeX(HandoverSample s, double cosLat) {
-        return (s.droneLon() - s.shipLon()) * HandoverJudge.METERS_PER_DEG * cosLat;
+    private static double relativeX(HandoverSample sample, double cosLat) {
+        return (sample.droneLon() - sample.shipLon()) * HandoverJudge.METERS_PER_DEG * cosLat;
     }
 
 
 
 
 
-    private static double relativeY(HandoverSample s) {
-        return (s.droneLat() - s.shipLat()) * HandoverJudge.METERS_PER_DEG;
+    private static double relativeY(HandoverSample sample) {
+        return (sample.droneLat() - sample.shipLat()) * HandoverJudge.METERS_PER_DEG;
     }
 }

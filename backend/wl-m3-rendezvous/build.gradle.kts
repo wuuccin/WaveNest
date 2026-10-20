@@ -9,4 +9,7 @@ dependencies {
     implementation(project(":wl-contract"))
     implementation(project(":wl-storage"))
     implementation(libs.bundles.web.common)
+    // 值对象与异常的 getter 用 @Getter；仅编译期需要，不进运行时 classpath（同 wl-storage 实体口径）。
+    compileOnly(libs.lombok)
+    annotationProcessor(libs.lombok)
 }

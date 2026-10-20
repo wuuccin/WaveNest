@@ -18,6 +18,7 @@ import java.util.Objects;
  * @param cruiseSpeedMs 机型巡航速度，m/s
  * @param comboId       当前任务回溯的组合标识；取不到为 {@code null}（透传进返回结果）
  */
+@SuppressWarnings("MissingJavadoc")
 public record DroneContext(
 
         String droneId,
@@ -45,7 +46,7 @@ public record DroneContext(
                 || nestLon < -180.0 || nestLon > 180.0 || nestLat < -90.0 || nestLat > 90.0) {
             throw new IllegalArgumentException("机巢坐标必须为有限数且经纬度在合法范围内");
         }
-        if (!Double.isFinite(cruiseSpeedMs) || !(cruiseSpeedMs > 0)) {
+        if (!Double.isFinite(cruiseSpeedMs) || !(cruiseSpeedMs > (double) 0)) {
             throw new IllegalArgumentException("机型巡航速度必须为正的有限数，实际 " + cruiseSpeedMs);
         }
     }

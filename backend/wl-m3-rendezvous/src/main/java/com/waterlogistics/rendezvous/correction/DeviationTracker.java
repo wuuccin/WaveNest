@@ -59,20 +59,21 @@ public final class DeviationTracker {
                                        List<Double> forecastLons, List<Double> forecastLats, double xtlM) {
         Objects.requireNonNull(forecastLons, "forecastLons 不能为空");
         Objects.requireNonNull(forecastLats, "forecastLats 不能为空");
-        if (!Double.isFinite(shipLon) || !Double.isFinite(shipLat)
-                || !Double.isFinite(xtlM) || xtlM <= 0) {
+        if (!Double.isFinite(shipLon) ||
+                !Double.isFinite(shipLat) ||
+                !Double.isFinite(xtlM) || xtlM <= (double) 0) {
             throw new IllegalArgumentException(
-                    "船位与走廊半宽非法（半宽须为正的有限数），实际 shipLon=" + shipLon
-                            + ", shipLat=" + shipLat + ", xtlM=" + xtlM);
+                    "船位与走廊半宽非法（半宽须为正的有限数），实际 shipLon=" + shipLon + ", shipLat=" + shipLat + ", xtlM=" + xtlM
+            );
         }
         if (forecastLons.size() != forecastLats.size()) {
-            throw new IllegalArgumentException("预测航迹经纬度列长度不一致："
-                                                       + forecastLons.size() + " vs " + forecastLats.size());
+            throw new IllegalArgumentException("预测航迹经纬度列长度不一致：" + forecastLons.size() + " vs " + forecastLats.size());
         }
         if (forecastLons.size() < 2) {
             throw new IllegalArgumentException("预测航迹至少需 2 点，实为 " + forecastLons.size());
         }
-        for (int i = 0; i < forecastLons.size(); i++) {
+        int pointCount = forecastLons.size();
+        for (int i = 0; i < pointCount; i++) {
             Double lonI = forecastLons.get(i);
             Double latI = forecastLats.get(i);
             if (lonI == null || latI == null || !Double.isFinite(lonI.doubleValue()) || !Double.isFinite(latI.doubleValue())) {
@@ -112,24 +113,26 @@ public final class DeviationTracker {
             double xtlM,
             String reason) {
 
+        @SuppressWarnings("MissingJavadoc")
         public PremiseVerdict {
             if (!Double.isFinite(absXteM) || !Double.isFinite(signedXteM) || !Double.isFinite(xtlM)) {
-                throw new IllegalArgumentException("偏差与走廊半宽必须为有限数，实为 absXteM="
-                                                           + absXteM + ", signedXteM=" + signedXteM + ", xtlM=" + xtlM);
+                throw new IllegalArgumentException(
+                        "偏差与走廊半宽必须为有限数，实为 absXteM=" + absXteM + ", signedXteM=" + signedXteM + ", xtlM=" + xtlM
+                );
             }
-            if (xtlM <= 0) {
+            if (xtlM <= (double) 0) {
                 throw new IllegalArgumentException("走廊半宽须为正（米），实为 " + xtlM);
             }
-            if (absXteM < 0) {
+            if (absXteM < (double) 0) {
                 throw new IllegalArgumentException("横向偏差绝对值不得为负，实为 " + absXteM);
             }
             if (absXteM != Math.abs(signedXteM)) {
-                throw new IllegalArgumentException("横向偏差绝对值与带符号值不一致：absXteM="
-                                                           + absXteM + ", signedXteM=" + signedXteM);
+                throw new IllegalArgumentException("横向偏差绝对值与带符号值不一致：absXteM=" + absXteM + ", signedXteM=" + signedXteM);
             }
             if (premiseHolds == (absXteM > xtlM)) {
-                throw new IllegalArgumentException("前提成立性与偏差／走廊半宽矛盾：absXteM="
-                                                           + absXteM + ", xtlM=" + xtlM + ", premiseHolds=" + premiseHolds);
+                throw new IllegalArgumentException(
+                        "前提成立性与偏差／走廊半宽矛盾：absXteM=" + absXteM + ", xtlM=" + xtlM + ", premiseHolds=" + premiseHolds
+                );
             }
             if (reason == null || reason.isBlank()) {
                 throw new IllegalArgumentException("判定结果须给出结论说明");
@@ -145,8 +148,8 @@ public final class DeviationTracker {
          *
          * @return {@code true}＝带符号横向偏差为正，即船在预测航迹左侧
          */
-        public boolean leftOfTrack() {
-            return this.signedXteM > 0;
+        public boolean isLeftOfTrack() {
+            return this.signedXteM > (double) 0;
         }
     }
 
@@ -155,6 +158,6 @@ public final class DeviationTracker {
 
 
     private static double round1(double v) {
-        return Math.round(v * 10.0) / 10.0;
+        return (double) Math.round(v * 10.0) / 10.0;
     }
 }

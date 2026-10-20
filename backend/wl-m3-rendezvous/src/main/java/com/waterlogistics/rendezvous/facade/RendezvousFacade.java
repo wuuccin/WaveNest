@@ -37,6 +37,7 @@ import java.util.Objects;
  * <p>端口接线：{@code TrajectorySnapshotPort} 与 {@code DroneContextPort} 均由 M2 实现、
  * {@code wl-app} 装配（本类构造器接收）——M3 全程不知道 M2 存在。
  */
+@SuppressWarnings("OverlyCoupledClass")
 public class RendezvousFacade {
 
     private final RendezvousSolveService solveService;
@@ -118,9 +119,9 @@ public class RendezvousFacade {
      * @param params 间隔与采样参数（调用方注入）
      * @return 冲突结论；绕行几何首版留桩为 null
      */
-    public B_ConflictResult checkConflict(B_FlyableRoute route, B_FlyableRoute other,
-                                          ConflictParams params) {
-        return TrackConflictChecker.check(route, other, params);
+    public B_ConflictResult detectConflict(B_FlyableRoute route, B_FlyableRoute other,
+                                           ConflictParams params) {
+        return TrackConflictChecker.detect(route, other, params);
     }
 
 

@@ -51,15 +51,8 @@ public class RendezvousSolveService {
      */
     public B_RendezvousSolution solve(RendezvousCommand cmd) {
         Objects.requireNonNull(cmd, "cmd 不能为空");
-        ShipTrackSnapshot snapshot = this.snapshotPort.latest(cmd.shipMmsi());
-        if (snapshot == null) {
-            throw new SnapshotUnavailableException(cmd.shipMmsi());
-        }
-        if (snapshot.version() == null
-                || !Objects.equals(cmd.snapshotVersion(), snapshot.version())) {
-            throw new SnapshotVersionMismatchException(
-                    cmd.shipMmsi(), cmd.snapshotVersion(), snapshot.version());
-        }
+        ShipTrackSnapshot snapshot = SnapshotGate.fetchVerified(
+                this.snapshotPort, cmd.shipMmsi(), cmd.snapshotVersion());
         return RendezvousSolver.solve(new RendezvousSolveRequest(
                 cmd.comboId(), cmd.nestLon(), cmd.nestLat(), cmd.cruiseSpeedMs(),
                 cmd.representativeWind(), snapshot, null /* shipState：常规求解回落快照插值 */,

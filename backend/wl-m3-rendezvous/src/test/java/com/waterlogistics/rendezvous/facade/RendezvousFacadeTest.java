@@ -137,7 +137,7 @@ class RendezvousFacadeTest {
                         new Waypoint(122.1, 30.0, 60.0, 15.0, NOW + 600_000L)),
                 600, 0.0, 0.0, List.of(), List.of());
 
-        B_ConflictResult res = facade.checkConflict(a, b, new ConflictParams(100, 25, 1_000));
+        B_ConflictResult res = facade.detectConflict(a, b, new ConflictParams(100, 25, 1_000));
 
         assertFalse(res.conflictFlag(), "空间远离：包围盒粗筛短路");
         assertEquals("RV-A", res.checksumVersion(), "checksumVersion 取被查航迹版本");

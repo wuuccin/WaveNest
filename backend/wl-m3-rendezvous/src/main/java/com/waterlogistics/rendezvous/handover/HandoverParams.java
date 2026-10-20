@@ -12,6 +12,7 @@ package com.waterlogistics.rendezvous.handover;
  * @param windLimitMs         交接风阈值，m/s（不能为负，可为 0）
  * @param energyRatePerSecPct 能耗率，%／s（首版线性能耗模型：能耗＝时长×率；不能为负，可为 0）
  */
+@SuppressWarnings("MissingJavadoc")
 public record HandoverParams(
 
         double approachRadiusM,
@@ -28,22 +29,21 @@ public record HandoverParams(
 
     public HandoverParams {
         if (!Double.isFinite(approachRadiusM) || !Double.isFinite(posErrorM) || !Double.isFinite(speedErrorMs)
-                || !(approachRadiusM > 0) || !(posErrorM > 0) || !(speedErrorMs > 0)) {
+                || !(approachRadiusM > (double) 0) || !(posErrorM > (double) 0) || !(speedErrorMs > (double) 0)) {
             throw new IllegalArgumentException(
-                    "收敛与误差阈值必须为正的有限数，实际 approachRadiusM=" + approachRadiusM
-                            + ", posErrorM=" + posErrorM + ", speedErrorMs=" + speedErrorMs);
+                    "收敛与误差阈值必须为正的有限数，实际 approachRadiusM="
+                            + approachRadiusM + ", posErrorM=" + posErrorM + ", speedErrorMs=" + speedErrorMs);
         }
         if (!(posErrorM < approachRadiusM)) {
             throw new IllegalArgumentException(
-                    "相对位置误差阈值必须小于接近段收敛阈值，实际 posErrorM=" + posErrorM
-                            + ", approachRadiusM=" + approachRadiusM);
+                    "相对位置误差阈值必须小于接近段收敛阈值，实际 posErrorM=" + posErrorM + ", approachRadiusM=" + approachRadiusM);
         }
         if (!Double.isFinite(stableSec) || !Double.isFinite(windLimitMs)
                 || !Double.isFinite(energyRatePerSecPct)
-                || !(stableSec > 0) || !(windLimitMs >= 0) || !(energyRatePerSecPct >= 0)) {
+                || !(stableSec > (double) 0) || !(windLimitMs >= (double) 0) || !(energyRatePerSecPct >= (double) 0)) {
             throw new IllegalArgumentException(
-                    "稳定持续时间须为正、风阈与能耗率不能为负且均须为有限数，实际 stableSec=" + stableSec
-                            + ", windLimitMs=" + windLimitMs + ", energyRatePerSecPct=" + energyRatePerSecPct);
+                    "稳定持续时间须为正、风阈与能耗率不能为负且均须为有限数，实际 stableSec="
+                            + stableSec + ", windLimitMs=" + windLimitMs + ", energyRatePerSecPct=" + energyRatePerSecPct);
         }
     }
 }

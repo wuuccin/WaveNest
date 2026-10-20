@@ -33,7 +33,7 @@ class TrackConflictCheckerTest {
     /** 十字交汇、同时到达、同高：采样判冲突，CPA≈0 落在交汇时刻。 */
     @Test
     void crossAtSameTime_shouldFlagConflictWithNearZeroCpa() {
-        B_ConflictResult res = TrackConflictChecker.check(eastTrack(), northTrack(T0, 60.0), PARAMS);
+        B_ConflictResult res = TrackConflictChecker.detect(eastTrack(), northTrack(T0, 60.0), PARAMS);
 
         assertTrue(res.conflictFlag(), "同时到达交点且同高，应判冲突");
         assertNotNull(res.cpaPoint(), "采样路径应产最近接近点");
@@ -51,7 +51,7 @@ class TrackConflictCheckerTest {
     /** 高度相隔 40 m（≥垂直安全间隔 25 m）：垂直箱隙不可能越限，包围盒粗筛直接剔除。 */
     @Test
     void verticalSeparated_shouldNotConflict() {
-        B_ConflictResult res = TrackConflictChecker.check(eastTrack(), northTrack(T0, 100.0), PARAMS);
+        B_ConflictResult res = TrackConflictChecker.detect(eastTrack(), northTrack(T0, 100.0), PARAMS);
 
         assertFalse(res.conflictFlag(), "垂直 40 m 已隔开——双间隔须同时成立");
         assertNull(res.cpaPoint(), "垂直箱隙≥安全间隔：粗筛剔除，不产 CPA");
@@ -61,7 +61,7 @@ class TrackConflictCheckerTest {
     /** 时间错峰 200 s：仍偶遇但拉开≈2.1 km，不判冲突；CPA 给出（采样路径）。 */
     @Test
     void crossingApart_shouldNotConflictButReportCpa() {
-        B_ConflictResult res = TrackConflictChecker.check(
+        B_ConflictResult res = TrackConflictChecker.detect(
                 eastTrack(), northTrack(T0 + 200_000L, 60.0), PARAMS);
 
         assertFalse(res.conflictFlag(), "错峰 200 s 已拉开安全距离");
@@ -72,7 +72,7 @@ class TrackConflictCheckerTest {
     /** 时间窗完全错开：直接短路，不产 CPA。 */
     @Test
     void noTimeOverlap_shouldShortCircuit() {
-        B_ConflictResult res = TrackConflictChecker.check(
+        B_ConflictResult res = TrackConflictChecker.detect(
                 eastTrack(), northTrack(T0 + 1_300_000L, 60.0), PARAMS);
 
         assertFalse(res.conflictFlag(), "时间窗无重叠不判冲突");
@@ -85,7 +85,7 @@ class TrackConflictCheckerTest {
         B_FlyableRoute far = route("RT-C",
                 LON0 + 1.0, latAt(-HALF_M), LON0 + 1.0, latAt(HALF_M), 60.0, T0);
 
-        B_ConflictResult res = TrackConflictChecker.check(eastTrack(), far, PARAMS);
+        B_ConflictResult res = TrackConflictChecker.detect(eastTrack(), far, PARAMS);
 
         assertFalse(res.conflictFlag(), "空间远离不应判冲突");
         assertNull(res.cpaPoint(), "粗筛短路不产 CPA");
@@ -104,10 +104,10 @@ class TrackConflictCheckerTest {
                 List.of(new Waypoint(121.0, 30.0, 60.0, 15.0, T0)), 0, 0.0, 0.0, List.of(), List.of());
 
         assertThrows(IllegalArgumentException.class,
-                () -> TrackConflictChecker.check(tooShort, eastTrack(), PARAMS), "航点不足 2 应拒绝");
+                     () -> TrackConflictChecker.detect(tooShort, eastTrack(), PARAMS), "航点不足 2 应拒绝");
         assertThrows(IllegalArgumentException.class,
-                () -> TrackConflictChecker.check(eastTrack(), northTrack(T0, 60.0),
-                        new ConflictParams(100, 25, 0)), "采样步长非正应拒绝");
+                () -> TrackConflictChecker.detect(eastTrack(), northTrack(T0, 60.0),
+                                                  new ConflictParams(100, 25, 0)), "采样步长非正应拒绝");
         assertThrows(IllegalArgumentException.class,
                 () -> new ConflictParams(Double.POSITIVE_INFINITY, 25, 1_000),
                 "无穷大安全间隔应拒绝（防判据恒真——Infinity 不得穿透）");
@@ -122,14 +122,14 @@ class TrackConflictCheckerTest {
                 0, 0.0, 0.0, List.of(), List.of());
 
         assertThrows(IllegalArgumentException.class,
-                () -> TrackConflictChecker.check(unsorted, eastTrack(), PARAMS),
+                () -> TrackConflictChecker.detect(unsorted, eastTrack(), PARAMS),
                 "航点时刻非严格递增应拒绝");
     }
 
     /** 超大采样步长：推进须防溢出（旧写法 t+step 溢出为负会死循环）——快速走到 tEnd 收尾。 */
     @Test
     void hugeSampleStep_shouldTerminate() {
-        B_ConflictResult res = TrackConflictChecker.check(
+        B_ConflictResult res = TrackConflictChecker.detect(
                 eastTrack(), northTrack(T0, 60.0), new ConflictParams(100, 25, Long.MAX_VALUE));
 
         assertFalse(res.conflictFlag(), "仅两端点采样且相距远：不判冲突");

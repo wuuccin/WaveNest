@@ -34,7 +34,9 @@ public final class TrackGenerator {
 
 
 
-    /** 经度回卷到 [-180, 180)，保证跨 ±180° 铺点仍落在合法范围 */
+    /**
+     * 经度回卷到 [-180, 180)，保证跨 ±180° 铺点仍落在合法范围
+     */
     private static double wrapLon(double lon) {
         double wrapped = (lon + 180.0) % 360.0;
         if (wrapped < 0.0) {
@@ -48,25 +50,14 @@ public final class TrackGenerator {
 
 
     /**
-     * 生成一段可飞航迹（起点 → 终点）。
+     * 直线插值铺点——经差同距离口径归一化（跨 ±180° 走短侧），经度回卷到 [-180, 180)。
      *
-     * @param cmd 生成入参（航点数与速度等前置由 {@link GenerateRouteCommand} 构造期校验）
-     * @return 可飞航迹；{@code routeVersion} 由 routeId 与起点时刻确定性生成，
-     *         重算（6a 会面点重算、D 功能 7 定案后重出）换起点时刻即换新版本
+     * @param cmd     生成入参（航点数、起终点与速度已由 {@link GenerateRouteCommand} 构造期校验）
+     * @param tauFine 精算飞行时长（秒，至少 1），航点时刻按此比例铺点
+     * @return 均匀铺点后的航点序列（首点为起点、末点为终点）
      */
-    public static B_FlyableRoute generate(GenerateRouteCommand cmd) {
-        Objects.requireNonNull(cmd, "cmd 不能为空");
-
-        double distanceM = GeoApprox.distanceM(
-                cmd.startLon(), cmd.startLat(), cmd.endLon(), cmd.endLat());
-        double tauSec = distanceM / cmd.speedMs();
-        if (tauSec > Integer.MAX_VALUE) {
-            throw new IllegalArgumentException(
-                    "航段精算时长超出可表示范围（" + tauSec + " s），请检查速度与几何输入");
-        }
-        int tauFine = Math.max(1, (int) Math.round(tauSec));
-
-        // 经差同距离口径归一化（跨 ±180° 走短侧）；经度回卷到 [-180,180)
+    @SuppressWarnings("ObjectAllocationInLoop")
+    private static List<Waypoint> buildWaypoints(GenerateRouteCommand cmd, int tauFine) {
         double dLon = cmd.endLon() - cmd.startLon();
         if (dLon > 180.0) {
             dLon -= 360.0;
@@ -74,15 +65,41 @@ public final class TrackGenerator {
             dLon += 360.0;
         }
         List<Waypoint> waypoints = new ArrayList<>(cmd.waypointCount());
-        for (int i = 0; i < cmd.waypointCount(); i++) {
-            double k = (double) i / (cmd.waypointCount() - 1);
+        int waypointCount = cmd.waypointCount();
+        for (int i = 0; i < waypointCount; i++) {
+            double frac = (double) i / (double) (waypointCount - 1);
             waypoints.add(new Waypoint(
-                    TrackGenerator.wrapLon(cmd.startLon() + k * dLon),
-                    cmd.startLat() + k * (cmd.endLat() - cmd.startLat()),
+                    TrackGenerator.wrapLon(cmd.startLon() + frac * dLon),
+                    cmd.startLat() + frac * (cmd.endLat() - cmd.startLat()),
                     cmd.cruiseAltM(),
                     cmd.speedMs(),
-                    cmd.startMs() + Math.round(k * tauFine * 1000.0)));
+                    cmd.startMs() + Math.round(frac * (double) tauFine * 1000.0)));
         }
+        return waypoints;
+    }
+
+
+
+
+
+    /**
+     * 生成一段可飞航迹（起点 → 终点）。
+     *
+     * @param cmd 生成入参（航点数与速度等前置由 {@link GenerateRouteCommand} 构造期校验）
+     * @return 可飞航迹；{@code routeVersion} 由 routeId 与起点时刻确定性生成，
+     * 重算（6a 会面点重算、D 功能 7 定案后重出）换起点时刻即换新版本
+     */
+    public static B_FlyableRoute generate(GenerateRouteCommand cmd) {
+        Objects.requireNonNull(cmd, "cmd 不能为空");
+
+        double distanceM = GeoApprox.distanceM(cmd.startLon(), cmd.startLat(), cmd.endLon(), cmd.endLat());
+        double tauSec = distanceM / cmd.speedMs();
+        if (tauSec > (double) Integer.MAX_VALUE) {
+            throw new IllegalArgumentException("航段精算时长超出可表示范围（" + tauSec + " s），请检查速度与几何输入");
+        }
+        int tauFine = Math.max(1, (int) Math.round(tauSec));
+
+        List<Waypoint> waypoints = TrackGenerator.buildWaypoints(cmd, tauFine);
 
         return new B_FlyableRoute(
                 cmd.routeId(),
@@ -90,10 +107,11 @@ public final class TrackGenerator {
                 cmd.comboId(),
                 waypoints,
                 tauFine,
-                tauFine * cmd.energyRatePerSecPct(),
+                (double) tauFine * cmd.energyRatePerSecPct(),
                 cmd.pathRisk(),
                 cmd.landingPointsAlong(),
-                cmd.avoidZones());
+                cmd.avoidZones()
+        );
     }
 
 

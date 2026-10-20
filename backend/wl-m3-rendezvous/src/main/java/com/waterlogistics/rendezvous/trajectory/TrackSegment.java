@@ -1,7 +1,9 @@
 package com.waterlogistics.rendezvous.trajectory;
 
+import lombok.Getter;
+
+import java.util.Collection;
 import java.util.HashSet;
-import java.util.Set;
 
 
 
@@ -13,15 +15,25 @@ import java.util.Set;
  */
 public enum TrackSegment {
 
-    /** 机巢 → 会面点 */
+    /**
+     * 机巢 → 会面点
+     */
     OUTBOUND("去程"),
 
-    /** 会面点 → 交接完成位置（甲板上方控制段） */
+    /**
+     * 会面点 → 交接完成位置（甲板上方控制段）
+     */
     TERMINAL("末段交接"),
 
-    /** 交接完成位置 → 归巢落点 */
+    /**
+     * 交接完成位置 → 归巢落点
+     */
     RETURN("返程");
 
+    /**
+     * 分段着色的对端口径词（中文）
+     */
+    @Getter
     private final String value;
 
 
@@ -37,26 +49,13 @@ public enum TrackSegment {
 
 
     static {
-        Set<String> seen = new HashSet<>();
+        Collection<String> seen = new HashSet<>(TrackSegment.values().length);
         for (TrackSegment segment : TrackSegment.values()) {
             if (!seen.add(segment.value)) {
                 throw new IllegalStateException("航迹分段口径词重复：" + segment.value);
             }
         }
     }
-
-    /**
-     * 返回分段着色的对端口径词。
-     *
-     * @return 分段着色的对端口径词（中文）
-     */
-    public String getValue() {
-        return this.value;
-    }
-
-
-
-
 
     /**
      * 按对端口径词解析枚举。

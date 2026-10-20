@@ -11,6 +11,7 @@ import java.util.Objects;
  *
  * @param points 全部航点（去程 → 末段交接 → 返程 顺序拼接；构造时防御拷贝，外部再改不影响本值）
  */
+@SuppressWarnings("MissingJavadoc")
 public record SegmentedTrack(
 
         List<SegmentedWaypoint> points) {

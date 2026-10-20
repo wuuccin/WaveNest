@@ -17,6 +17,7 @@ import java.util.Objects;
  * @param nowMs      当前时刻，Unix 毫秒（不可行判定基准）
  * @param timeGridMs 时刻精度粒度，毫秒（取整对齐用；来源 {@code sys_param}）
  */
+@SuppressWarnings("MissingJavadoc")
 public record TakeoffTimeCommand(
 
         String comboId,
@@ -37,13 +38,13 @@ public record TakeoffTimeCommand(
         if (tauFineSec <= 0) {
             throw new IllegalArgumentException("精算飞行时长必须为正，实际 " + tauFineSec);
         }
-        if (timeGridMs <= 0) {
+        if (timeGridMs <= 0L) {
             throw new IllegalArgumentException("时刻精度粒度必须为正，实际 " + timeGridMs);
         }
-        if (meetTMs < 0) {
+        if (meetTMs < 0L) {
             throw new IllegalArgumentException("会面时刻不能为负，实际 " + meetTMs);
         }
-        if (nowMs < 0) {
+        if (nowMs < 0L) {
             throw new IllegalArgumentException("当前时刻不能为负，实际 " + nowMs);
         }
     }

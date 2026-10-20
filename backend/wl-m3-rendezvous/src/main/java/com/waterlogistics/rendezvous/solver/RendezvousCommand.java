@@ -28,6 +28,7 @@ import java.util.Objects;
  * @param convergeEpsilonSec  不动点迭代收敛阈值 ε_t，秒
  * @param maxIterations       不动点迭代最大次数
  */
+@SuppressWarnings("MissingJavadoc")
 public record RendezvousCommand(
 
         String comboId,
@@ -62,28 +63,31 @@ public record RendezvousCommand(
         if (comboId.isBlank() || shipMmsi.isBlank() || snapshotVersion.isBlank()) {
             throw new IllegalArgumentException("comboId/shipMmsi/snapshotVersion 不能为空白字符串");
         }
-        if (!Double.isFinite(nestLon) || !Double.isFinite(nestLat)
-                || nestLon < -180.0 || nestLon > 180.0 || nestLat < -90.0 || nestLat > 90.0) {
+        if (!Double.isFinite(nestLon) ||
+                !Double.isFinite(nestLat) ||
+                nestLon < -180.0 ||
+                nestLon > 180.0 ||
+                nestLat < -90.0 ||
+                nestLat > 90.0) {
             throw new IllegalArgumentException("机巢坐标必须为有限数且经纬度在合法范围内");
         }
-        if (!Double.isFinite(cruiseSpeedMs) || !(cruiseSpeedMs > 0)) {
+        if (!Double.isFinite(cruiseSpeedMs) || !(cruiseSpeedMs > (double) 0)) {
             throw new IllegalArgumentException("巡航速度必须为正的有限数，实际 " + cruiseSpeedMs);
         }
         if (meetWindowMarginSec < 0) {
             throw new IllegalArgumentException("会面时间窗余量不能为负，实际 " + meetWindowMarginSec);
         }
-        if (!Double.isFinite(convergeEpsilonSec) || !(convergeEpsilonSec > 0)) {
+        if (!Double.isFinite(convergeEpsilonSec) || !(convergeEpsilonSec > (double) 0)) {
             throw new IllegalArgumentException("收敛阈值必须为正的有限数，实际 " + convergeEpsilonSec);
         }
         if (maxIterations <= 0) {
             throw new IllegalArgumentException("最大迭代次数必须为正，实际 " + maxIterations);
         }
-        if (nowMs <= 0) {
+        if (nowMs <= 0L) {
             throw new IllegalArgumentException("求解起点必须为合法的 Unix 毫秒时刻，实际 " + nowMs);
         }
         if (deadlineMs < nowMs) {
-            throw new IllegalArgumentException(
-                    "最晚会面时刻不得早于求解起点，实际 nowMs=" + nowMs + ", deadlineMs=" + deadlineMs);
+            throw new IllegalArgumentException("最晚会面时刻不得早于求解起点，实际 nowMs=" + nowMs + ", deadlineMs=" + deadlineMs);
         }
     }
 }
