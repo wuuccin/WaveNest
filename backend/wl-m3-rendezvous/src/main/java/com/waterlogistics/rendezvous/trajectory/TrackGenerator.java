@@ -3,9 +3,12 @@ package com.waterlogistics.rendezvous.trajectory;
 import com.waterlogistics.algo.meeting.GeoApprox;
 import com.waterlogistics.algo.meeting.model.B_FlyableRoute;
 import com.waterlogistics.algo.meeting.model.Waypoint;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+
+
 
 /**
  * 航迹生成——「给定起点与终点，生成一条满足水域约束的可飞航迹」的<b>首版简化实现</b>
@@ -20,12 +23,29 @@ import java.util.Objects;
  * 分段标签的演示航迹，供大屏分段着色。
  *
  * <p>已知局限（首版注明）：时长按大圆距离计算、航点按经纬度<b>线性内插</b>——短航段
- * 两者差异可忽略；跨 180° 经线的航段会绕行（演示不覆盖，精算版随寻路内核一并处理）。
+ * 两者差异可忽略；跨 ±180° 经线的航段按短侧归一化铺点（与距离口径一致）。
  */
 public final class TrackGenerator {
 
     private TrackGenerator() {
     }
+
+
+
+
+
+    /** 经度回卷到 [-180, 180)，保证跨 ±180° 铺点仍落在合法范围 */
+    private static double wrapLon(double lon) {
+        double wrapped = (lon + 180.0) % 360.0;
+        if (wrapped < 0.0) {
+            wrapped += 360.0;
+        }
+        return wrapped - 180.0;
+    }
+
+
+
+
 
     /**
      * 生成一段可飞航迹（起点 → 终点）。
@@ -39,13 +59,25 @@ public final class TrackGenerator {
 
         double distanceM = GeoApprox.distanceM(
                 cmd.startLon(), cmd.startLat(), cmd.endLon(), cmd.endLat());
-        int tauFine = Math.max(1, (int) Math.round(distanceM / cmd.speedMs()));
+        double tauSec = distanceM / cmd.speedMs();
+        if (tauSec > Integer.MAX_VALUE) {
+            throw new IllegalArgumentException(
+                    "航段精算时长超出可表示范围（" + tauSec + " s），请检查速度与几何输入");
+        }
+        int tauFine = Math.max(1, (int) Math.round(tauSec));
 
+        // 经差同距离口径归一化（跨 ±180° 走短侧）；经度回卷到 [-180,180)
+        double dLon = cmd.endLon() - cmd.startLon();
+        if (dLon > 180.0) {
+            dLon -= 360.0;
+        } else if (dLon < -180.0) {
+            dLon += 360.0;
+        }
         List<Waypoint> waypoints = new ArrayList<>(cmd.waypointCount());
         for (int i = 0; i < cmd.waypointCount(); i++) {
             double k = (double) i / (cmd.waypointCount() - 1);
             waypoints.add(new Waypoint(
-                    cmd.startLon() + k * (cmd.endLon() - cmd.startLon()),
+                    TrackGenerator.wrapLon(cmd.startLon() + k * dLon),
                     cmd.startLat() + k * (cmd.endLat() - cmd.startLat()),
                     cmd.cruiseAltM(),
                     cmd.speedMs(),
@@ -64,6 +96,10 @@ public final class TrackGenerator {
                 cmd.avoidZones());
     }
 
+
+
+
+
     /**
      * 生成三段任务航迹（去程／末段交接／返程）并打分段标签——供大屏分段着色
      * （《43》§6.3）。三段分别走 {@link #generate} 同一项能力，时间自起飞时刻顺延。
@@ -76,31 +112,33 @@ public final class TrackGenerator {
      */
     public static SegmentedTrack generateMissionTrack(MissionTrackCommand cmd) {
         Objects.requireNonNull(cmd, "cmd 不能为空");
-        B_FlyableRoute outbound = generate(new GenerateRouteCommand(
+        B_FlyableRoute outbound = TrackGenerator.generate(new GenerateRouteCommand(
                 cmd.comboId(), cmd.routeId() + "-out",
                 cmd.nestLon(), cmd.nestLat(), cmd.meetLon(), cmd.meetLat(),
                 cmd.cruiseAltM(), cmd.outboundSpeedMs(), cmd.takeoffMs(),
                 cmd.waypointsPerLeg(), List.of(), List.of(), 0.0, 0.0));
 
         long terminalStartMs = outbound.waypoints().get(outbound.waypoints().size() - 1).t();
-        B_FlyableRoute terminal = generate(new GenerateRouteCommand(
+        B_FlyableRoute terminal = TrackGenerator.generate(new GenerateRouteCommand(
                 cmd.comboId(), cmd.routeId() + "-term",
                 cmd.meetLon(), cmd.meetLat(), cmd.handoverEndLon(), cmd.handoverEndLat(),
                 cmd.cruiseAltM(), cmd.terminalSpeedMs(), terminalStartMs,
                 cmd.waypointsPerLeg(), List.of(), List.of(), 0.0, 0.0));
 
         long returnStartMs = terminal.waypoints().get(terminal.waypoints().size() - 1).t();
-        B_FlyableRoute returning = generate(new GenerateRouteCommand(
+        B_FlyableRoute returning = TrackGenerator.generate(new GenerateRouteCommand(
                 cmd.comboId(), cmd.routeId() + "-ret",
                 cmd.handoverEndLon(), cmd.handoverEndLat(), cmd.returnTargetLon(), cmd.returnTargetLat(),
                 cmd.cruiseAltM(), cmd.returnSpeedMs(), returnStartMs,
                 cmd.waypointsPerLeg(), List.of(), List.of(), 0.0, 0.0));
 
-        List<SegmentedWaypoint> points = new ArrayList<>(
-                cmd.waypointsPerLeg() * 3);
+        // 段边界点只保留一次：末段与返程各跳过首点（与上一段末点同坐标、同时刻）
+        List<SegmentedWaypoint> points = new ArrayList<>(cmd.waypointsPerLeg() * 3 - 2);
         outbound.waypoints().forEach(w -> points.add(new SegmentedWaypoint(w, TrackSegment.OUTBOUND)));
-        terminal.waypoints().forEach(w -> points.add(new SegmentedWaypoint(w, TrackSegment.TERMINAL)));
-        returning.waypoints().forEach(w -> points.add(new SegmentedWaypoint(w, TrackSegment.RETURN)));
+        terminal.waypoints().subList(1, terminal.waypoints().size())
+                .forEach(w -> points.add(new SegmentedWaypoint(w, TrackSegment.TERMINAL)));
+        returning.waypoints().subList(1, returning.waypoints().size())
+                .forEach(w -> points.add(new SegmentedWaypoint(w, TrackSegment.RETURN)));
 
         return new SegmentedTrack(points);
     }

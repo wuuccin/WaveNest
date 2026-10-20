@@ -9,7 +9,7 @@ import org.springframework.stereotype.Component;
  *
  * <p>算法层只依赖 {@link SysParamProvider} 接口（wl-algo 不碰 DB）；
  * 本桥只读 wl-storage 的 {@link SysParamLoader}（张睿哲所有，不改其文件），
- * 按 G 组 18 个 camelCase 键取值（与 37 §5.14.1 已灌库 A 组键同风格），
+ * 按 G 组 17 个 camelCase 键取值（与 37 §5.14.1 已灌库 A 组键同风格；偏航 5＋低电量 4＋失联 3＋气象 5），
  * 键缺失/未灌库/值非法时回落 {@link SysParamProvider#defaults()} 兜底值——
  * G 组键灌库前全链路可用默认值跑通，灌库后零改动生效。</p>
  */

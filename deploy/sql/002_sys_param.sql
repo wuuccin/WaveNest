@@ -98,8 +98,6 @@ INSERT INTO `sys_param` (`param_key`, `param_value`, `category`, `description`) 
 ('nestCapacity',        '4',      '容量', '机巢容量 C（首版不分机型档；nest 表 capacity 初始化源，nest 表为权威）'),
 ('forcedStopSlotSec',   '900',    '容量', '迫停标称时长 d（秒；占位时隙标称长度）');
 
-<<<<<<< HEAD
-
 -- ---------------- E 组（重规划与返航兜底，84 §5.14.1，26 项；4 项与 A 组同名不重复灌） ----------------
 -- 说明：与 A 组同名的 rhoTh / vStopMs / mOfN / rotWindowFrames 已在上面 A 组段内灌入，此处不重复。
 INSERT INTO `sys_param` (`param_key`, `param_value`, `category`, `description`) VALUES
@@ -141,13 +139,49 @@ INSERT INTO `sys_param` (`param_key`, `param_value`, `category`, `description`) 
 ('minBatteryPercent',   '30',     '阈值', '候选无人机最低电量门槛（%）'),
 ('maxNestDistanceKm',   '5',      '阈值', '机巢到取货点最大半径（km）');
 
+-- ---------------- G 组检测阈值（16 键，来源 SysParamBridge／86；值=代码现有默认，2026-10-18 灌） ----------------
+INSERT INTO `sys_param` (`param_key`, `param_value`, `category`, `description`) VALUES
+('offtrackWarningThreshold',     '30.0', '阈值', '偏航预警阈值（米）'),
+('offtrackCriticalThreshold',    '50.0', '阈值', '偏航严重阈值（米）'),
+('offtrackDebounceCount',        '3',    '阈值', '偏航触发去抖点数'),
+('offtrackClearCount',           '5',    '阈值', '偏航解除去抖点数'),
+('offtrackDowngradeCount',       '3',    '阈值', '偏航严重→预警降级去抖'),
+('lowBatteryClear',              '30.0', '阈值', '低电量清除阈值（%）'),
+('lowBatterySevere',             '10.0', '阈值', '低电量严重阈值（%）'),
+('lowBatteryDowngradeDebounce',  '3',    '阈值', '低电量降级去抖点数'),
+('heartbeatLostWindowSec',       '30',   '窗口', '失联判定窗口（秒）'),
+('heartbeatLossWindowSec',       '120',  '窗口', '灭失判定窗口（秒）'),
+('heartbeatCheckIntervalSec',    '5',    '窗口', '检测轮询间隔（秒）'),
+('weatherWindWarningThreshold',  '8.0',  '阈值', '风速预警阈值（m/s）'),
+('weatherWindCriticalThreshold', '12.0', '阈值', '风速严重阈值（m/s）'),
+('weatherWindSurgeThreshold',    '0.5',  '阈值', '风速突变阈值（(m/s)/s）'),
+('weatherSurgeWindowSec',        '10',   '窗口', '突变检测窗口（秒）'),
+('weatherClearDebounce',         '5',    '阈值', '清除防抖采样点数');
+-- 注：2026-10-18 已决——lowBatteryTrigger(20) 为全项目唯一低电量键，G 组告警与 E 组功能 10
+--     A5 兜底共用此键；原 E 组 e10LowBatteryAbs(15) 已删除，不再使用。
+
+-- ---------------- PR #6 会面与风况（7 键，来源 DroneContextAdapter／RendezvousCoordinator；值=代码现有默认，2026-10-18 灌） ----------------
+INSERT INTO `sys_param` (`param_key`, `param_value`, `category`, `description`) VALUES
+('droneCruiseSpeedMs',           '12.0', '阈值', '巡航速度兜底（m/s，机型档案落地后作废）'),
+('rendezvousHorizonSec',         '1800', '窗口', '会面求解时域（秒）'),
+('rendezvousWindowMarginSec',    '120',  '窗口', '会面时间窗余量（秒）'),
+('rendezvousEpsilonSec',         '1.0',  '阈值', '不动点迭代收敛阈值（秒）'),
+('rendezvousMaxIter',            '50',   '阈值', '迭代最大次数'),
+('windSpeedMs',                  '0.0',  '阈值', '代表风速兜底（无快照时）'),
+('windDirDeg',                   '0.0',  '阈值', '代表风向兜底（度）');
+
 -- TODO: 档 A 9 键——吴可欣已于 2026-10-16 补齐 `37` §5.14.1 的 E 组键名（见本文件 E 组段），
 --       但**尚未按「档 A」形态灌入**，待 37 登记后灌
 -- TODO: 档 B 9 键——待 37 登记后灌入
 -- TODO: 档 C（L1/熔断）——暂不灌
 
--- 2026-10-18 已决：低电量阈值只用 lowBatteryTrigger=20；不再初始化旧键。
--- 已有数据库用 deploy/migrations/2026-10-18-low-battery-trigger.sql 增量修正，勿重建业务表。
+-- ✅ 低电量阈值单一来源已决（2026-10-18，吴可欣裁决）：
+--   全项目低电量阈值统一为 `lowBatteryTrigger`(20)，G 组告警与 E 组功能 10 A5 兜底共用此一键，
+--   依据《84》§2.2／§4.3「低电量阈值 G-11 为全项目单一来源（首版静态、不按机型）」
+--   与《86》引用口径「E 组 e10_low_battery_abs 引同一值」。
+--   原 E 组段 `e10LowBatteryAbs`(15) 已于本次删除，不再使用；E 侧
+--   `HomecomingParams.batteryAbsoluteFloorPct` 改由本键注入（见该类 javadoc）。
+--   键名已为 camelCase，与 G 组 17 键风格一致。
 -- =====================================================================
 --   D 组功能 5/6/7/8 参数（83 §7）：w_time/w_energy/T_hold/batch_window 等——16 号接入时按需灌入
 --   C/F/G 组参数（82/85/86）：只列名目未给取值

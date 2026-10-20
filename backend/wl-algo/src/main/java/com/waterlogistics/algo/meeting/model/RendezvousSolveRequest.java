@@ -1,5 +1,7 @@
 package com.waterlogistics.algo.meeting.model;
 
+import java.util.Objects;
+
 /**
  * 会面点求解入参——组合级一次一调（《81-B组算法方案》§3.1、《32-M3-动态会面》§3.1）。
  *
@@ -7,7 +9,7 @@ package com.waterlogistics.algo.meeting.model;
  * （《81》§2.4 硬约束 2）；求解起点为当前时刻，无需「最早可起飞时刻」入参
  * （《32》§3.1 判定 1）。
  *
- * @param comboId             候选组合标识（会面点为组合级产物）
+ * @param comboId             候选组合标识（会面点为组合级产物；重算路径回溯不到当前组合时可为 {@code null}）
  * @param nestLon             机巢起点经度
  * @param nestLat             机巢起点纬度
  * @param cruiseSpeedMs       机型巡航速度，m/s（机型档案）
@@ -49,4 +51,22 @@ public record RendezvousSolveRequest(
         double convergeEpsilonSec,
 
         int maxIterations) {
+
+    public RendezvousSolveRequest {
+        Objects.requireNonNull(snapshot, "snapshot 不能为空");
+        Objects.requireNonNull(representativeWind, "representativeWind 不能为空");
+        if (maxIterations <= 0) {
+            throw new IllegalArgumentException("最大迭代次数必须为正，实际 " + maxIterations);
+        }
+        if (!Double.isFinite(convergeEpsilonSec) || convergeEpsilonSec <= 0) {
+            throw new IllegalArgumentException("收敛阈值必须为正的有限数，实际 " + convergeEpsilonSec);
+        }
+        if (meetWindowMarginSec < 0) {
+            throw new IllegalArgumentException("会面时间窗余量不能为负，实际 " + meetWindowMarginSec);
+        }
+        if (deadlineMs < nowMs) {
+            throw new IllegalArgumentException(
+                    "最晚会面时刻不得早于求解起点，实际 nowMs=" + nowMs + ", deadlineMs=" + deadlineMs);
+        }
+    }
 }

@@ -4,6 +4,9 @@ package com.waterlogistics.rendezvous.handover;
  * 末段四子阶段——接近 → 匹配 → 交接 → 脱离（《81-B组算法方案》§3.6、《32-M3-动态会面》
  * §3.4）。四子阶段为 {@code 末段交接中} 的<b>内部过程</b>，不建独立任务状态
  * （《23-状态机定义》v0.4 裁定）。
+ *
+ * <p>落库与传输一律使用 {@link #getValue()}（中文阶段词）；{@code ordinal()} 与
+ * {@code name()} 不得作为持久化或传输取值。
  */
 public enum HandoverPhase {
 
@@ -21,18 +24,43 @@ public enum HandoverPhase {
 
     private final String value;
 
+
+
+
+
     HandoverPhase(String value) {
         this.value = value;
     }
 
-    /** 返回对外口径的阶段词 */
+
+
+
+
+    /**
+     * 返回对外口径的阶段词。
+     *
+     * @return 对外口径的阶段词（中文）
+     */
     public String getValue() {
-        return value;
+        return this.value;
     }
 
-    /** 按对外口径词解析枚举 */
+
+
+
+
+    /**
+     * 按对外口径词解析枚举。
+     *
+     * @param value 对外口径词（中文阶段词；空白或未知即拒绝）
+     * @return 对应的末段子阶段
+     * @throws IllegalArgumentException 入参为空/空白或无匹配口径词
+     */
     public static HandoverPhase fromValue(String value) {
-        for (HandoverPhase phase : values()) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException("末段子阶段不能为空");
+        }
+        for (HandoverPhase phase : HandoverPhase.values()) {
             if (phase.value.equals(value)) {
                 return phase;
             }

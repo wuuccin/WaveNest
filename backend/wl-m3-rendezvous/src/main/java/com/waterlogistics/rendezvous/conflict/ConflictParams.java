@@ -7,7 +7,7 @@ package com.waterlogistics.rendezvous.conflict;
  *
  * @param horizontalSepM 水平安全间隔，米
  * @param verticalSepM   垂直安全间隔，米
- * @param sampleStepMs   冲突时间采样步长，毫秒（正数）
+ * @param sampleStepMs   冲突时间采样步长，毫秒（正数；过大值降低检出分辨率——短于一步的冲突可能漏报，上界由调用方按最短可检冲突口径控制）
  */
 public record ConflictParams(
 
@@ -18,10 +18,10 @@ public record ConflictParams(
         long sampleStepMs) {
 
     public ConflictParams {
-        if (!Double.isFinite(horizontalSepM) || !Double.isFinite(verticalSepM)
-                || !(horizontalSepM > 0) || !(verticalSepM > 0)) {
+        if (!Double.isFinite(horizontalSepM) || !Double.isFinite(verticalSepM) || !(horizontalSepM > 0) || !(verticalSepM > 0)) {
             throw new IllegalArgumentException(
-                    "安全间隔必须为正的有限数，实际 " + horizontalSepM + "/" + verticalSepM);
+                    "安全间隔必须为正的有限数，实际 horizontalSepM=" + horizontalSepM + ", verticalSepM=" + verticalSepM
+            );
         }
         if (sampleStepMs <= 0) {
             throw new IllegalArgumentException("采样步长必须为正，实际 " + sampleStepMs);

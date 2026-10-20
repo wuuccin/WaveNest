@@ -28,4 +28,13 @@ public record B_TakeoffTimeResult(
         TakeoffInfeasibleReason infeasibleReason,
 
         int tauCoarseUsed) {
+
+    public B_TakeoffTimeResult {
+        if (feasible && infeasibleReason != null) {
+            throw new IllegalArgumentException("可行结果不应携带不可行原因");
+        }
+        if (!feasible && infeasibleReason == null) {
+            throw new IllegalArgumentException("不可行结果必须给出不可行原因");
+        }
+    }
 }

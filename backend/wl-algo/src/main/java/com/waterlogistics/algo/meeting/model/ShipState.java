@@ -7,8 +7,8 @@ package com.waterlogistics.algo.meeting.model;
  * <p>注意：这<b>不是运动模型</b>——船的运动仍全部取自预测快照；本锚点只用于定
  * 「朝哪飞」，供代表风况修正有效速度。
  *
- * @param lon    船位经度
- * @param lat    船位纬度
+ * @param lon    船位经度，十进制度（项目基准坐标系）
+ * @param lat    船位纬度，十进制度（项目基准坐标系）
  * @param cogDeg 航向，度
  * @param sogMs  航速，m/s
  * @param t      状态时刻，Unix 毫秒（6a 以此为求解起点）
@@ -24,4 +24,20 @@ public record ShipState(
         double sogMs,
 
         long t) {
+
+    public ShipState {
+        if (!Double.isFinite(lon) || !Double.isFinite(lat)
+                || lon < -180.0 || lon > 180.0 || lat < -90.0 || lat > 90.0) {
+            throw new IllegalArgumentException("船位非法：lon=" + lon + ", lat=" + lat);
+        }
+        if (!Double.isFinite(cogDeg) || cogDeg < 0.0 || cogDeg >= 360.0) {
+            throw new IllegalArgumentException("航向非法：cogDeg=" + cogDeg);
+        }
+        if (!Double.isFinite(sogMs) || sogMs < 0.0) {
+            throw new IllegalArgumentException("航速非法：sogMs=" + sogMs);
+        }
+        if (t <= 0) {
+            throw new IllegalArgumentException("状态时刻必须为正，实际 " + t);
+        }
+    }
 }

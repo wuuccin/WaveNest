@@ -16,7 +16,8 @@ replay_pid*
 *.jfr
 
 # ---------- IntelliJ IDEA ----------
-.idea/
+.idea/*
+!.idea/inspectionProfiles/
 *.iml
 *.ipr
 *.iws

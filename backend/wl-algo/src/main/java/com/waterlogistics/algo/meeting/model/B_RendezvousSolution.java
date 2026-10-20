@@ -1,5 +1,7 @@
 package com.waterlogistics.algo.meeting.model;
 
+import java.util.Objects;
+
 /**
  * 会面点解（{@code B_} 前缀＝算法层 B 组产出）——字段照《81-B组算法方案》§2.3 第（1）项
  * 一字不改；{@code hasSolution=false} 时会面字段一律为 {@code null}，由工厂方法钉死该不变量。
@@ -45,6 +47,31 @@ public record B_RendezvousSolution(
         Integer tauCoarse,
 
         String snapshotVersion) {
+
+    public B_RendezvousSolution {
+        Objects.requireNonNull(solutionId, "solutionId 不能为空");
+        Objects.requireNonNull(snapshotVersion, "snapshotVersion 不能为空");
+        if (hasSolution) {
+            if (noSolutionReason != null) {
+                throw new IllegalArgumentException("有解时 noSolutionReason 必须为空");
+            }
+            if (meetLon == null || meetLat == null || meetTMin == null || meetTMax == null
+                    || shipArriveT == null || droneArriveT == null || tauCoarse == null) {
+                throw new IllegalArgumentException("有解时会面字段不能为空");
+            }
+            if (meetTMin > meetTMax) {
+                throw new IllegalArgumentException("会面时刻窗下界不得晚于上界");
+            }
+        } else {
+            if (noSolutionReason == null) {
+                throw new IllegalArgumentException("无解时 noSolutionReason 不能为空");
+            }
+            if (meetLon != null || meetLat != null || meetTMin != null || meetTMax != null
+                    || shipArriveT != null || droneArriveT != null || tauCoarse != null) {
+                throw new IllegalArgumentException("无解时会面字段必须为 null");
+            }
+        }
+    }
 
     /**
      * 有解构造：窗口＝[t*, t*＋余量]（调用方算好上下界），双方到达时刻＝最早相遇时刻。

@@ -5,9 +5,12 @@ import com.waterlogistics.algo.meeting.model.B_FlyableRoute;
 import com.waterlogistics.algo.meeting.model.ConflictSpaceTime;
 import com.waterlogistics.algo.meeting.model.CpaPoint;
 import com.waterlogistics.algo.meeting.model.Waypoint;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+
+
 
 /**
  * 航迹级空域冲突二查（简化版）——检测对象①「机—机」两条航迹的时空冲突
@@ -35,8 +38,16 @@ public final class TrackConflictChecker {
     /** 每度纬差对应的米数（与 GeoApprox 同一近似） */
     private static final double METERS_PER_DEG = Math.PI * 6_371_000.0 / 180.0;
 
+
+
+
+
     private TrackConflictChecker() {
     }
+
+
+
+
 
     /**
      * 检测两条航迹的时空冲突。
@@ -49,16 +60,16 @@ public final class TrackConflictChecker {
      * @throws NullPointerException     route／other／params 为 null
      */
     public static B_ConflictResult check(B_FlyableRoute route, B_FlyableRoute other,
-            ConflictParams params) {
+                                         ConflictParams params) {
         Objects.requireNonNull(route, "route 不能为空");
         Objects.requireNonNull(other, "other 不能为空");
         Objects.requireNonNull(params, "params 不能为空");
-        requireUsable(route, "route");
-        requireUsable(other, "other");
+        TrackConflictChecker.requireUsable(route, "route");
+        TrackConflictChecker.requireUsable(other, "other");
 
         Waypoint origin = route.waypoints().get(0);
-        List<LocalPoint> a = toLocal(route.waypoints(), origin);
-        List<LocalPoint> b = toLocal(other.waypoints(), origin);
+        List<LocalPoint> a = TrackConflictChecker.toLocal(route.waypoints(), origin);
+        List<LocalPoint> b = TrackConflictChecker.toLocal(other.waypoints(), origin);
 
         B_ConflictResult shortCircuit = new B_ConflictResult(
                 false, null, null, null, null, null, route.routeVersion());
@@ -68,7 +79,7 @@ public final class TrackConflictChecker {
         if (tStart > tEnd) {
             return shortCircuit;
         }
-        if (!boxesOverlap(a, b, params)) {
+        if (!TrackConflictChecker.boxesOverlap(a, b, params)) {
             return shortCircuit;
         }
 
@@ -85,8 +96,8 @@ public final class TrackConflictChecker {
         long step = params.sampleStepMs();
         long t = tStart;
         while (true) {
-            LocalPoint pa = interpolate(a, t);
-            LocalPoint pb = interpolate(b, t);
+            LocalPoint pa = TrackConflictChecker.interpolate(a, t);
+            LocalPoint pb = TrackConflictChecker.interpolate(b, t);
             double h = Math.hypot(pa.x() - pb.x(), pa.y() - pb.y());
             double v = Math.abs(pa.altM() - pb.altM());
             double d3 = Math.sqrt(h * h + v * v);
@@ -113,16 +124,20 @@ public final class TrackConflictChecker {
         }
 
         CpaPoint cpaPoint = new CpaPoint(
-                origin.lon() + bestMidX / mPerDegLon(origin.lat()),
-                origin.lat() + bestMidY / METERS_PER_DEG,
+                origin.lon() + bestMidX / TrackConflictChecker.mPerDegLon(origin.lat()),
+                origin.lat() + bestMidY / TrackConflictChecker.METERS_PER_DEG,
                 bestMidAlt);
         ConflictSpaceTime interval = anyConflict
                 ? new ConflictSpaceTime(null, firstConflictT, lastConflictT)
                 : null;
 
         return new B_ConflictResult(
-                anyConflict, interval, cpaPoint, bestT, bestD3, null, route.routeVersion());
+                anyConflict, interval, cpaPoint, Long.valueOf(bestT), Double.valueOf(bestD3), null, route.routeVersion());
     }
+
+
+
+
 
     private static void requireUsable(B_FlyableRoute route, String name) {
         if (route.waypoints() == null || route.waypoints().size() < 2) {
@@ -136,20 +151,28 @@ public final class TrackConflictChecker {
         }
     }
 
+
+
+
+
     /**
      * 三维包围盒粗筛——§3.4 步骤 2：水平箱距（二维）与垂直箱隙<b>都</b>小于各自安全
      * 间隔才可能冲突，否则近零成本剔除。箱距是任意轨迹点对距离的下界，故剔除不丢真冲突。
      */
     private static boolean boxesOverlap(List<LocalPoint> a, List<LocalPoint> b,
-            ConflictParams params) {
-        double[] ba = box(a);
-        double[] bb = box(b);
+                                        ConflictParams params) {
+        double[] ba = TrackConflictChecker.box(a);
+        double[] bb = TrackConflictChecker.box(b);
         double dxGap = Math.max(0, Math.max(ba[0] - bb[1], bb[0] - ba[1]));
         double dyGap = Math.max(0, Math.max(ba[2] - bb[3], bb[2] - ba[3]));
         double altGap = Math.max(0, Math.max(ba[4] - bb[5], bb[4] - ba[5]));
         return Math.hypot(dxGap, dyGap) < params.horizontalSepM()
                 && altGap < params.verticalSepM();
     }
+
+
+
+
 
     /** 返回 {minX, maxX, minY, maxY, minAlt, maxAlt} */
     private static double[] box(List<LocalPoint> points) {
@@ -167,6 +190,10 @@ public final class TrackConflictChecker {
         }
         return box;
     }
+
+
+
+
 
     /** 段内线性插值；越界取端点（不外推） */
     private static LocalPoint interpolate(List<LocalPoint> points, long t) {
@@ -190,29 +217,41 @@ public final class TrackConflictChecker {
                         t);
             }
         }
-        return last;
+        throw new IllegalStateException("航点时刻未严格递增，无法定位插值区间");
     }
+
+
+
+
 
     /**
      * 经度方向米/度——高纬处 cos(φ)→0，取 1 m 兜底避免除零／精度崩
      * （同 {@code ConstantVelocityPredictor} 既有写法，正反变换共用同一取值）。
      */
     private static double mPerDegLon(double lat) {
-        return Math.max(METERS_PER_DEG * Math.cos(Math.toRadians(lat)), 1.0);
+        return Math.max(TrackConflictChecker.METERS_PER_DEG * Math.cos(Math.toRadians(lat)), 1.0);
     }
 
+
+
+
+
     private static List<LocalPoint> toLocal(List<Waypoint> waypoints, Waypoint origin) {
-        double metersPerDegLon = mPerDegLon(origin.lat());
+        double metersPerDegLon = TrackConflictChecker.mPerDegLon(origin.lat());
         List<LocalPoint> out = new ArrayList<>(waypoints.size());
         for (Waypoint w : waypoints) {
             out.add(new LocalPoint(
                     (w.lon() - origin.lon()) * metersPerDegLon,
-                    (w.lat() - origin.lat()) * METERS_PER_DEG,
+                    (w.lat() - origin.lat()) * TrackConflictChecker.METERS_PER_DEG,
                     w.altM(),
                     w.t()));
         }
         return out;
     }
+
+
+
+
 
     /** 局部米制点（共原点平移系） */
     private record LocalPoint(double x, double y, double altM, long t) {

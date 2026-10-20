@@ -2,8 +2,11 @@ package com.waterlogistics.rendezvous.handover;
 
 import com.waterlogistics.algo.meeting.model.B_HandoverConfirmation;
 import com.waterlogistics.algo.meeting.model.HandoverResult;
+
 import java.util.List;
 import java.util.Objects;
+
+
 
 /**
  * 末段会面与交接判定（简化版）——把「船体随动坐标系下的前馈＋反馈控制」简化为
@@ -31,8 +34,16 @@ public final class HandoverJudge {
     /** 每度纬差对应的米数（与 GeoApprox 同一近似） */
     private static final double METERS_PER_DEG = Math.PI * 6_371_000.0 / 180.0;
 
+
+
+
+
     private HandoverJudge() {
     }
+
+
+
+
 
     /**
      * 判定一次末段会面与交接。
@@ -58,15 +69,15 @@ public final class HandoverJudge {
         long handoverDoneT = 0;
         boolean success = false;
 
-        double prevDx = relativeX(origin, cosLat);
-        double prevDy = relativeY(origin);
+        double prevDx = HandoverJudge.relativeX(origin, cosLat);
+        double prevDy = HandoverJudge.relativeY(origin);
 
         for (int i = 1; i < samples.size(); i++) {
             HandoverSample s = samples.get(i);
             long dtMs = s.t() - samples.get(i - 1).t();
 
-            double dx = relativeX(s, cosLat);
-            double dy = relativeY(s);
+            double dx = HandoverJudge.relativeX(s, cosLat);
+            double dy = HandoverJudge.relativeY(s);
             double dist = Math.hypot(dx, dy);
             double relSpeed = Math.hypot(dx - prevDx, dy - prevDy) / (dtMs / 1000.0);
             prevDx = dx;
@@ -75,8 +86,8 @@ public final class HandoverJudge {
             if (phase == HandoverPhase.APPROACH) {
                 if (dist < params.approachRadiusM()) {
                     phase = HandoverPhase.MATCH;
-                    actualMeetLon = s.droneLon();
-                    actualMeetLat = s.droneLat();
+                    actualMeetLon = Double.valueOf(s.droneLon());
+                    actualMeetLat = Double.valueOf(s.droneLat());
                 }
                 continue;
             }
@@ -88,14 +99,16 @@ public final class HandoverJudge {
                     continue;
                 }
                 if (stableSince == null) {
-                    stableSince = s.t();
+                    stableSince = Long.valueOf(s.t());
                 }
-                if (s.t() - stableSince >= params.stableSec() * 1000.0) {
+                if (s.t() - stableSince.longValue() >= params.stableSec() * 1000.0) {
                     phase = HandoverPhase.TRANSFER;
                     transferStartT = s.t();
                 }
             }
 
+            // 有意落穿：MATCH 段在上方补满稳定窗口后同拍进入 TRANSFER，
+            // 允许在该过渡拍即刻接受投放反馈（见 HandoverJudgeTest 同拍投放用例）。
             if (phase == HandoverPhase.TRANSFER && s.dropDone()) {
                 if (s.windSpeedMs() <= params.windLimitMs()) {
                     success = true;
@@ -109,23 +122,32 @@ public final class HandoverJudge {
         Integer handoverTimeCost = null;
         Double energyCost = null;
         if (success) {
-            escortTimeCost = (int) Math.min(Integer.MAX_VALUE, (transferStartT - origin.t()) / 1000);
-            handoverTimeCost = (int) Math.min(Integer.MAX_VALUE, (handoverDoneT - transferStartT) / 1000);
-            energyCost = (escortTimeCost + handoverTimeCost) * params.energyRatePerSecPct();
+            escortTimeCost = Integer.valueOf((int) Math.min(Integer.MAX_VALUE, (transferStartT - origin.t()) / 1000));
+            handoverTimeCost = Integer.valueOf((int) Math.min(Integer.MAX_VALUE, (handoverDoneT - transferStartT) / 1000));
+            long totalSec = escortTimeCost.longValue() + handoverTimeCost.longValue();
+            energyCost = Double.valueOf(totalSec * params.energyRatePerSecPct());
         }
 
         return new B_HandoverConfirmation(cmd.taskId(), cmd.droneId(),
-                actualMeetLon, actualMeetLat,
-                cmd.plannedMeetLon(), cmd.plannedMeetLat(), cmd.plannedMeetT(),
-                success ? handoverDoneT : null, escortTimeCost, handoverTimeCost, energyCost,
-                success ? HandoverResult.SUCCESS : HandoverResult.FAILED);
+                                          actualMeetLon, actualMeetLat,
+                                          cmd.plannedMeetLon(), cmd.plannedMeetLat(), cmd.plannedMeetT(),
+                                          success ? Long.valueOf(handoverDoneT) : null, escortTimeCost, handoverTimeCost, energyCost,
+                                          success ? HandoverResult.SUCCESS : HandoverResult.FAILED);
     }
+
+
+
+
 
     private static double relativeX(HandoverSample s, double cosLat) {
-        return (s.droneLon() - s.shipLon()) * METERS_PER_DEG * cosLat;
+        return (s.droneLon() - s.shipLon()) * HandoverJudge.METERS_PER_DEG * cosLat;
     }
 
+
+
+
+
     private static double relativeY(HandoverSample s) {
-        return (s.droneLat() - s.shipLat()) * METERS_PER_DEG;
+        return (s.droneLat() - s.shipLat()) * HandoverJudge.METERS_PER_DEG;
     }
 }

@@ -11,11 +11,15 @@ public class SnapshotUnavailableException extends RuntimeException {
 
     private static final long serialVersionUID = 1L;
 
+
+
+
+
     /**
      * @param shipMmsi 目标船标识
      */
     public SnapshotUnavailableException(String shipMmsi) {
         super("查无预测快照，拒绝求解：船 "
-                + (shipMmsi == null || shipMmsi.isBlank() ? "<unknown>" : shipMmsi));
+                      + (shipMmsi == null || shipMmsi.isBlank() ? "<unknown>" : shipMmsi));
     }
 }
