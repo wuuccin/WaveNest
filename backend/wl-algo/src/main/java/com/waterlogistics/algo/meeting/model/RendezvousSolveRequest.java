@@ -52,21 +52,39 @@ public record RendezvousSolveRequest(
 
         int maxIterations) {
 
+    /** 不动点迭代次数的统一上界（三层共用，防配置异常导致不可控循环） */
+    public static final int MAX_ITERATIONS = 1000;
+
+    /** 会面时间窗余量的统一上界，秒（一天，防配置异常把窗口退化为截止时刻） */
+    public static final int MAX_WINDOW_MARGIN_SEC = 86_400;
+
     public RendezvousSolveRequest {
         Objects.requireNonNull(snapshot, "snapshot 不能为空");
+        if (snapshot.points() == null || snapshot.points().isEmpty()) {
+            throw new IllegalArgumentException("快照点列不能为空");
+        }
         Objects.requireNonNull(representativeWind, "representativeWind 不能为空");
-        if (maxIterations <= 0) {
-            throw new IllegalArgumentException("最大迭代次数必须为正，实际 " + maxIterations);
+        if (maxIterations <= 0 || maxIterations > MAX_ITERATIONS) {
+            throw new IllegalArgumentException(
+                    "最大迭代次数须在 [1, " + MAX_ITERATIONS + "] 内，实际 " + maxIterations);
         }
         if (!Double.isFinite(convergeEpsilonSec) || convergeEpsilonSec <= 0) {
             throw new IllegalArgumentException("收敛阈值必须为正的有限数，实际 " + convergeEpsilonSec);
         }
-        if (meetWindowMarginSec < 0) {
-            throw new IllegalArgumentException("会面时间窗余量不能为负，实际 " + meetWindowMarginSec);
+        if (meetWindowMarginSec < 0 || meetWindowMarginSec > MAX_WINDOW_MARGIN_SEC) {
+            throw new IllegalArgumentException(
+                    "会面时间窗余量须在 [0, " + MAX_WINDOW_MARGIN_SEC + "] 秒内，实际 " + meetWindowMarginSec);
         }
         if (deadlineMs < nowMs) {
             throw new IllegalArgumentException(
                     "最晚会面时刻不得早于求解起点，实际 nowMs=" + nowMs + ", deadlineMs=" + deadlineMs);
+        }
+        if (!Double.isFinite(nestLon) || nestLon < -180.0 || nestLon > 180.0
+                || !Double.isFinite(nestLat) || nestLat < -90.0 || nestLat > 90.0) {
+            throw new IllegalArgumentException("机巢坐标必须为有限数且经纬度在合法范围内");
+        }
+        if (!Double.isFinite(cruiseSpeedMs) || cruiseSpeedMs <= 0) {
+            throw new IllegalArgumentException("巡航速度必须为正的有限数，实际 " + cruiseSpeedMs);
         }
     }
 }

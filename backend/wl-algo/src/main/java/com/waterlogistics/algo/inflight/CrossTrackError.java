@@ -1,5 +1,6 @@
 package com.waterlogistics.algo.inflight;
 
+import com.waterlogistics.algo.meeting.GeoApprox;
 import java.util.List;
 
 /**
@@ -37,11 +38,8 @@ public final class CrossTrackError {
     /** 船位于航迹右侧时符号为负 */
     public static final double SIGN_RIGHT = -1.0;
 
-    /** 地球平均半径，米（与 {@code GeoApprox} 同值，避免两套米制） */
-    private static final double EARTH_RADIUS_M = 6371000.0;
-
     /** 每度对应的米数 */
-    private static final double METERS_PER_DEG = Math.PI * EARTH_RADIUS_M / 180.0;
+    private static final double METERS_PER_DEG = GeoApprox.METERS_PER_DEG;
 
     private CrossTrackError() {
     }

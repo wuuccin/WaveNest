@@ -12,7 +12,8 @@ public final class GeoApprox {
     private static final double EARTH_RADIUS_M = 6371000.0;
 
     /** 每度纬差对应的米数（π·R/180） */
-    private static final double METERS_PER_DEG = Math.PI * EARTH_RADIUS_M / 180.0;
+    /** 每度纬差对应的米数（π·R/180），供全工程复用，避免另立第二套米制定义 */
+    public static final double METERS_PER_DEG = Math.PI * EARTH_RADIUS_M / 180.0;
 
     private GeoApprox() {
     }
@@ -20,12 +21,12 @@ public final class GeoApprox {
     /**
      * 局部平面近似距离（等距圆球），米；两点间距远小于地球半径时误差可忽略。
      *
-     * <p>经差先归一化到 (−180, 180]，跨 ±180° 经线的点对不会被算成整球距离。本类距离用
+     * <p>经差先归一化到 [−180, 180]（跨 ±180° 经线时不取整球跨度）。本类距离用
      * 等距近似、方位用球面初始方位，两种模型只在十公里级作业区一致，勿超尺度复用。
      */
     public static double distanceM(double lon1, double lat1, double lon2, double lat2) {
-        requireLatLon(lon1, lat1);
-        requireLatLon(lon2, lat2);
+        requireLonLat(lon1, lat1);
+        requireLonLat(lon2, lat2);
         double midLatRad = Math.toRadians((lat1 + lat2) / 2);
         double dLon = lon2 - lon1;
         if (dLon > 180.0) {
@@ -45,8 +46,8 @@ public final class GeoApprox {
      * 用于风向修正。
      */
     public static double bearingDeg(double lon1, double lat1, double lon2, double lat2) {
-        requireLatLon(lon1, lat1);
-        requireLatLon(lon2, lat2);
+        requireLonLat(lon1, lat1);
+        requireLonLat(lon2, lat2);
         double phi1 = Math.toRadians(lat1);
         double phi2 = Math.toRadians(lat2);
         double dLon = Math.toRadians(lon2 - lon1);
@@ -56,7 +57,7 @@ public final class GeoApprox {
         return (deg + 360.0) % 360.0;
     }
 
-    private static void requireLatLon(double lon, double lat) {
+    private static void requireLonLat(double lon, double lat) {
         if (!Double.isFinite(lon) || !Double.isFinite(lat)
                 || lon < -180.0 || lon > 180.0 || lat < -90.0 || lat > 90.0) {
             throw new IllegalArgumentException(

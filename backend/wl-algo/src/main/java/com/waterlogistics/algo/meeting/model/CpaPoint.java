@@ -17,4 +17,15 @@ public record CpaPoint(
         double lat,
 
         double altM) {
+
+    public CpaPoint {
+        if (!Double.isFinite(lon) || lon < -180.0 || lon > 180.0
+                || !Double.isFinite(lat) || lat < -90.0 || lat > 90.0) {
+            throw new IllegalArgumentException(
+                    "最近接近点经纬度必须为有限数且在合法范围内，实际 lon=" + lon + ", lat=" + lat);
+        }
+        if (!Double.isFinite(altM)) {
+            throw new IllegalArgumentException("最近接近点高度必须为有限数，实际 altM=" + altM);
+        }
+    }
 }
