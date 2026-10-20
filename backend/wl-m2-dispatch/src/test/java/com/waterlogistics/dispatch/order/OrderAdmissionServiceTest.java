@@ -29,7 +29,7 @@ class OrderAdmissionServiceTest {
     @BeforeEach
     void setUp() {
         recorder = new TaskLogRecorder();
-        service = new OrderAdmissionService(recorder);
+        service = new OrderAdmissionService(recorder, event -> { });
     }
 
     private static OrderSubmitRequest request(String mmsi, Double weight, Long expectedTimeMs, String priority) {

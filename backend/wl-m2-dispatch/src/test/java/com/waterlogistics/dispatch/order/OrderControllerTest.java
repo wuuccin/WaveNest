@@ -31,7 +31,7 @@ class OrderControllerTest {
     void setUp() {
         gateService = new DispatchGateService();
         controller = new OrderController(
-                new OrderAdmissionService(new TaskLogRecorder()), gateService);
+                new OrderAdmissionService(new TaskLogRecorder(), event -> { }), gateService);
     }
 
     @Test

@@ -1,6 +1,7 @@
 package com.waterlogistics.dispatch.queue;
 
 import com.waterlogistics.contract.state.OrderStatus;
+import com.waterlogistics.dispatch.gate.DispatchGateService;
 import com.waterlogistics.storage.entity.OrderTaskEntity;
 import com.waterlogistics.storage.entity.TaskLogEntity;
 import com.waterlogistics.storage.repository.OrderTaskMapper;
@@ -23,10 +24,13 @@ public class TaskQueueService {
 
     private final OrderTaskMapper orderTaskMapper;
     private final TaskLogMapper taskLogMapper;
+    private final DispatchGateService dispatchGateService;
 
-    public TaskQueueService(OrderTaskMapper orderTaskMapper, TaskLogMapper taskLogMapper) {
+    public TaskQueueService(OrderTaskMapper orderTaskMapper, TaskLogMapper taskLogMapper,
+            DispatchGateService dispatchGateService) {
         this.orderTaskMapper = orderTaskMapper;
         this.taskLogMapper = taskLogMapper;
+        this.dispatchGateService = dispatchGateService;
     }
 
     /**
@@ -40,11 +44,25 @@ public class TaskQueueService {
         transition(order, OrderStatus.PENDING_ACCEPT, OrderStatus.WAIT_DISPATCH, "受理");
     }
 
-    /** 组批调度：待调度 → 调度中（第 2 步起开始求解） */
+    /**
+     * 组批调度：待调度 → 调度中（第 2 步起开始求解）。
+     *
+     * <p><b>B3 闸门联动</b>：组批入口查 {@link DispatchGateService#isOpen()}，
+     * 气象熔断时新单转「已受理待唤醒」而非拒单（22 §3.2：熔断期间不拒单），
+     * 待闸门解除后由重入队链路重新进入组批。
+     */
     @Transactional
     public void startDispatch(String orderId) {
         OrderTaskEntity order = orderTaskMapper.selectById(orderId);
         requireStatus(order, OrderStatus.WAIT_DISPATCH);
+
+        if (!dispatchGateService.isOpen()) {
+            // 熔断：延后到「已受理待唤醒」，不拒单
+            transition(order, OrderStatus.WAIT_DISPATCH, OrderStatus.ACCEPTED_WAIT_WAKE,
+                    "闸门熔断-延后");
+            return;
+        }
+
         transition(order, OrderStatus.WAIT_DISPATCH, OrderStatus.DISPATCHING, "组批调度");
     }
 

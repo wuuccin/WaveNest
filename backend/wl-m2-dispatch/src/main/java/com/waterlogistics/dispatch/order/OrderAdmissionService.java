@@ -11,6 +11,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 
 /**
@@ -41,13 +42,17 @@ public class OrderAdmissionService {
 
     private final TaskLogRecorder taskLogRecorder;
 
+    private final ApplicationEventPublisher eventPublisher;
+
     /** 已受理订单，key = orderId。 */
     private final Map<String, OrderView> orders = new ConcurrentHashMap<>();
 
     private final AtomicLong sequence = new AtomicLong();
 
-    public OrderAdmissionService(TaskLogRecorder taskLogRecorder) {
+    public OrderAdmissionService(TaskLogRecorder taskLogRecorder,
+            ApplicationEventPublisher eventPublisher) {
         this.taskLogRecorder = taskLogRecorder;
+        this.eventPublisher = eventPublisher;
     }
 
     /**
@@ -84,6 +89,11 @@ public class OrderAdmissionService {
         log.info("建单成功：orderId={} mmsi={} 载重={}kg 优先级={} 状态={}",
                 orderId, request.shipMmsi(), request.goodsWeight(),
                 OrderPriority.fromCode(request.priority()), OrderStatus.PENDING_ACCEPT.getValue());
+
+        // B0：发布「订单已受理」事件，由 DispatchTrigger 驱动落库 → 受理 → 组批调度
+        eventPublisher.publishEvent(new OrderSubmittedEvent(
+                orderId, request.shipMmsi(), request.goodsWeight(), request.goodsType(),
+                request.expectedTimeMs(), request.priority(), nowMs));
 
         return OrderSubmitResponse.accepted(view);
     }
