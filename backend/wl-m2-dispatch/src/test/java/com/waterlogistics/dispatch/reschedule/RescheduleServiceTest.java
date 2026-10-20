@@ -132,7 +132,7 @@ class RescheduleServiceTest {
         private String requeuedOrderId;
 
         private RecordingTaskQueue() {
-            super(null, null);
+            super(null, null, null);
         }
 
         @Override
