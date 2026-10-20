@@ -107,7 +107,7 @@ class RendezvousDeviationRecorderTest {
                 113.20, 30.35,
                 1700000000000L,
                 1700000010000L,
-                null, null, null,
+                120, 60, 0.85,
                 HandoverResult.SUCCESS
         );
 

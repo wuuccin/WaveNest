@@ -21,9 +21,14 @@ import org.junit.jupiter.api.Test;
 class DeliveryConfirmTest {
 
     private static B_HandoverConfirmation confirmation(HandoverResult result, Long doneT) {
+        boolean success = result == HandoverResult.SUCCESS;
         return new B_HandoverConfirmation("TASK-1", "DRONE-1",
                 120.15, 30.28, 120.10, 30.20, 1_700_000_000_000L,
-                doneT, 120, 60, 18.5, result);
+                doneT,
+                success ? Integer.valueOf(120) : null,
+                success ? Integer.valueOf(60) : null,
+                success ? Double.valueOf(18.5) : null,
+                result);
     }
 
     /** 交接成功：任务进「返航中」、货物「已装机 → 已交付」 */

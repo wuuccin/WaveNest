@@ -15,18 +15,23 @@ import java.util.Objects;
  * <ul>
  *   <li>求解起点为当前时刻（《32》§3.1 判定 1）；相遇条件为 |P(t) − N| ≤ v·(t − now)；</li>
  *   <li>取最早满足者为会面时刻 t*，P(t*) 即会面点；</li>
- *   <li><b>不把「迭代不收敛」直接当无解</b>，一律以二分结果为准（《81》§3.1 收敛性与数值注意）；</li>
+ *   <li><b>不把「迭代不收敛」直接当无解</b>：二分负责兜底，固定点结果须先验会面条件已满足
+ *       才接受（《81》§3.1 收敛性与数值注意）；</li>
  *   <li>「追不上」＝在 [now, min(T_max, 末点时刻)] 内无根——短路出口（《32》§4.3）；</li>
  *   <li>纯函数：无状态副作用、同输入同输出（《81》§2.4 硬约束 1）。</li>
  * </ul>
  *
  * <p>首版简化（留接口待精算版）：有效速度取<b>单次值</b>——沿「巢 → 当前船位」方位的
  * 代表风况修正，不逐迭代、不逐段修正（《81》§3.1 步骤 2「首版每组合取一个代表风况」）。
+ *
+ * <p>检出分辨率：粗扫按 256／1024／4096 逐级加密，最细间隔为窗口的 1/4096（1 h 窗口约 0.9 s）；
+ * 短于该间隔且完全落在两探测点之间的可行窗口可能漏判，故 {@code CANNOT_CATCH} 是「按此分辨率
+ * 未找到」而非解析意义上的精确判定。
  */
 public final class RendezvousSolver {
 
-    /** 粗扫步数：把可求解窗口切成该数量级的探测格，用于定位首个变号区间 */
-    private static final int COARSE_SCAN_STEPS = 256;
+    /** 粗扫分级：先稀后密，避免短促可达落在两个探测点之间被漏判 */
+    private static final int[] COARSE_SCAN_STEPS = {256, 1024, 4096};
 
     private RendezvousSolver() {
     }
@@ -42,6 +47,9 @@ public final class RendezvousSolver {
         Objects.requireNonNull(request.snapshot(), "snapshot 不能为空");
         Objects.requireNonNull(request.representativeWind(), "representativeWind 不能为空");
         String snapshotVersion = request.snapshot().version();
+        if (snapshotVersion == null || snapshotVersion.isBlank()) {
+            throw new IllegalArgumentException("快照版本不能为空");
+        }
         String solutionId = "RS-" + request.comboId() + "-" + snapshotVersion + "-" + request.nowMs();
 
         List<ShipPoint> points = request.snapshot().points();
@@ -52,7 +60,7 @@ public final class RendezvousSolver {
 
         long tLo = request.nowMs();
         long tHi = Math.min(request.deadlineMs(), points.get(points.size() - 1).t());
-        if (tHi <= tLo) {
+        if (tHi < tLo) {
             return B_RendezvousSolution.unsolvable(solutionId, request.comboId(),
                     NoSolutionReason.OTHER, snapshotVersion);
         }
@@ -63,23 +71,42 @@ public final class RendezvousSolver {
         double[] anchor = request.shipState() != null
                 ? new double[] {request.shipState().lon(), request.shipState().lat()}
                 : TrackInterpolator.positionAt(request.snapshot(), tLo);
-        double bearing = GeoApprox.bearingDeg(request.nestLon(), request.nestLat(), anchor[0], anchor[1]);
-        double v = EffectiveSpeed.alongBearing(
-                request.cruiseSpeedMs(), request.representativeWind(), bearing);
+        double nestToAnchorM = GeoApprox.distanceM(
+                request.nestLon(), request.nestLat(), anchor[0], anchor[1]);
+        // 船已在巢位：方位无定义，不做风向修正（会面即当前时刻，由窗口判定）
+        double v = nestToAnchorM <= 1e-9
+                ? request.cruiseSpeedMs()
+                : EffectiveSpeed.alongBearing(request.cruiseSpeedMs(),
+                        request.representativeWind(),
+                        GeoApprox.bearingDeg(request.nestLon(), request.nestLat(), anchor[0], anchor[1]));
         if (v <= 0) {
             return B_RendezvousSolution.unsolvable(solutionId, request.comboId(),
                     NoSolutionReason.CANNOT_CATCH, snapshotVersion);
         }
 
-        // 不动点迭代给一个根；二分另给 [tLo, tHi] 内的根，两处都取到时取较早者——
-        // 非单调船迹可能让迭代收敛到较晚的根，违反「取最早满足者」（类注释）。
-        double t = solveByFixedPoint(request, tLo, v);
-        if (!(t <= tHi)) {
-            t = Double.NaN;
-        }
-        double tBisection = solveByBisection(request, tLo, tHi, v);
-        if (!Double.isNaN(tBisection)) {
-            t = Double.isNaN(t) ? tBisection : Math.min(t, tBisection);
+        double t;
+        if (tLo == tHi) {
+            // 零时长窗口：船已在可及范围内则即刻会面，否则判追不上
+            if (gapMeters(request, tLo, tLo, v) > 0) {
+                return B_RendezvousSolution.unsolvable(solutionId, request.comboId(),
+                        NoSolutionReason.CANNOT_CATCH, snapshotVersion);
+            }
+            t = tLo;
+        } else {
+            // 不动点迭代给一个根；二分另给最早根，两处都取到时取较早者——
+            // 非单调船迹可能让迭代收敛到较晚的根，违反「取最早满足者」（类注释）。
+            t = solveByFixedPoint(request, tLo, v);
+            if (!(t <= tHi)) {
+                t = Double.NaN;
+            }
+            double tBisection = solveByBisection(request, tLo, tHi, v);
+            // 固定点结果须先验会面条件已满足，否则可能早于真实根
+            if (!Double.isNaN(t) && gapMeters(request, Math.round(t), tLo, v) > 0) {
+                t = Double.NaN;
+            }
+            if (!Double.isNaN(tBisection)) {
+                t = Double.isNaN(t) ? tBisection : Math.min(t, tBisection);
+            }
         }
         if (Double.isNaN(t)) {
             return B_RendezvousSolution.unsolvable(solutionId, request.comboId(),
@@ -88,9 +115,9 @@ public final class RendezvousSolver {
 
         long meetT = Math.round(t);
         double[] meeting = TrackInterpolator.positionAt(request.snapshot(), meetT);
-        int tauCoarse = (int) Math.round(
+        int tauCoarse = (int) Math.ceil(
                 GeoApprox.distanceM(request.nestLon(), request.nestLat(), meeting[0], meeting[1]) / v);
-        long meetTMax = meetT + request.meetWindowMarginSec() * 1000L;
+        long meetTMax = Math.min(meetT + request.meetWindowMarginSec() * 1000L, request.deadlineMs());
 
         return B_RendezvousSolution.solved(solutionId, request.comboId(),
                 meeting[0], meeting[1], meetT, meetTMax, meetT, tauCoarse, snapshotVersion);
@@ -115,17 +142,33 @@ public final class RendezvousSolver {
     /**
      * 求 g(t) = d(t) − v·(t−tLo) 在 [tLo, tHi] 内的最早变号区间并细化到根；无根返回 {@code NaN}。
      *
-     * <p>船迹非单调时 g(t) 可多次变号，直接二分会落到较晚的根——先按粗步长扫描定位
-     * 首个 g(t) ≤ 0 的区间，再在该区间内二分。
+     * <p>船迹非单调时 g(t) 可多次变号，固定步长扫描可能把「短暂达标」漏在两个探测点之间；
+     * 先按稀步长扫描，未找到根再逐级加密，最后才判无根。
      */
     private static double solveByBisection(RendezvousSolveRequest request, long tLo, long tHi, double v) {
         if (gapMeters(request, tLo, tLo, v) <= 0) {
             return tLo;
         }
         long span = tHi - tLo;
-        long coarseStep = Math.max(1L, span / COARSE_SCAN_STEPS);
+        for (int steps : COARSE_SCAN_STEPS) {
+            long step = Math.max(1L, span / steps);
+            double root = scanFirstCrossing(request, tLo, tHi, v, step);
+            if (!Double.isNaN(root)) {
+                return root;
+            }
+            if (step == 1L) {
+                // 已达毫秒分辨率，再加密不会产生新的探测点
+                return Double.NaN;
+            }
+        }
+        return Double.NaN;
+    }
+
+    /** 按给定步长扫描首个「g(t) ≤ 0」的区间并细化；未命中返回 {@code NaN} */
+    private static double scanFirstCrossing(RendezvousSolveRequest request,
+            long tLo, long tHi, double v, long step) {
         long lo = tLo;
-        for (long probe = tLo + coarseStep; ; probe += coarseStep) {
+        for (long probe = tLo + step; ; probe += step) {
             long hi = Math.min(probe, tHi);
             if (gapMeters(request, hi, tLo, v) <= 0) {
                 return bisect(request, lo, hi, tLo, v);

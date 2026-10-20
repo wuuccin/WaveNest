@@ -5,23 +5,27 @@ package com.waterlogistics.rendezvous.port;
  * （《81-B组算法方案》§2.5）。与 {@link TrajectorySnapshotPort} 同模式：接口由 M3
  * 声明、实现接线在装配层——M3 不读库。
  *
- * <p>首版实现为 {@code DroneContextAdapter}（装配层）：读 {@code drone}／{@code nest}
+ * <p>首版实现为 M2 侧 {@code DroneContextAdapter}，由装配层接线：读 {@code drone}／{@code nest}
  * 台账，巡航速度取 {@code sys_param.droneCruiseSpeedMs} 单值（当前各机型同速）；
  * 按机型区分速度待机型档案落地后由实现补齐，接口约定不变。
  *
  * <p>本接口<b>纯读</b>：不落库、无副作用；返回结果须只读可共享，实现与调用方均不得修改。
  */
+@FunctionalInterface
 public interface DroneContextPort {
 
     /**
      * 按执行机实例反查上下文。
      *
-     * <p>实现侧须对 {@code null}／空白 {@code droneId} 做防御，返回 {@code null} 而非抛异常；
-     * 实现<b>不得</b>抛 {@link DroneContextUnavailableException}——该异常由调用方在拿到
-     * {@code null} 后转换抛出。
+     * <p>{@code droneId} 非空、非空白是<b>调用方前置</b>（请求对象构造期已校验）；实现可假定
+     * 该前置成立，违例时以 {@link IllegalArgumentException} 暴露调用方缺陷，<b>不得</b>把
+     * 非法入参伪装成 {@code null}。实现不得抛 {@link DroneContextUnavailableException}；
+     * 该异常由调用方在拿到 {@code null} 后转换抛出。底层存储读取失败属基础设施故障，
+     * 实现须包装为未检查异常（保留原因），调用方不得当作「查无该机」处理。
      *
      * @param droneId 执行机实例（消费侧保证非空、非空白——请求对象构造期已校验）
      * @return 反查结果；查无该机时为 {@code null}，由调用方按「拒绝求解」处理；返回结果只读共享
+     * @throws IllegalArgumentException {@code droneId} 为空/空白（调用方缺陷，实现须显式抛出）
      */
     DroneContext resolve(String droneId);
 }

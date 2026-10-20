@@ -62,6 +62,7 @@ public class RendezvousRecalcService {
      * @throws DroneContextUnavailableException 反查不到执行机台账——拒绝求解
      * @throws SnapshotUnavailableException     查无该船快照——拒绝求解
      * @throws SnapshotVersionMismatchException 期望版本与快照实际版本不一致——拒绝求解
+     * @throws IllegalArgumentException         快照点列为空、船状态时刻超出快照覆盖或时限早于状态时刻——拒绝重算
      */
     public RendezvousRecalcResult recompute(RendezvousRecalcRequest request, RecalcOptions options) {
         Objects.requireNonNull(request, "request 不能为空");
@@ -71,17 +72,23 @@ public class RendezvousRecalcService {
             throw new DroneContextUnavailableException(request.droneId());
         }
 
-        ShipTrackSnapshot snapshot = this.snapshotPort.latest(request.shipMmsi());
-        if (snapshot == null) {
-            throw new SnapshotUnavailableException(request.shipMmsi());
-        }
-        if (snapshot.version() == null
-                || !Objects.equals(request.snapshotVersion(), snapshot.version())) {
-            throw new SnapshotVersionMismatchException(
-                    request.shipMmsi(), request.snapshotVersion(), snapshot.version());
-        }
+        ShipTrackSnapshot snapshot = SnapshotGate.fetchVerified(
+                this.snapshotPort, request.shipMmsi(), request.snapshotVersion()
+                                                               );
 
         RecalcStateSnapshot state = request.stateSnapshot();
+        if (snapshot.points() == null || snapshot.points().isEmpty()) {
+            throw new IllegalArgumentException("快照点列不能为空，拒绝重算");
+        }
+        long snapshotEndT = snapshot.points().get(snapshot.points().size() - 1).t();
+        if (state.shipStateT() > snapshotEndT) {
+            throw new IllegalArgumentException("船状态时刻超出快照覆盖范围，实际 shipStateT="
+                                                       + state.shipStateT() + ", 快照末点=" + snapshotEndT);
+        }
+        if (options.deadlineMs() < state.shipStateT()) {
+            throw new IllegalArgumentException("最晚会面时刻不得早于船状态时刻，实际 deadlineMs="
+                                                       + options.deadlineMs() + ", shipStateT=" + state.shipStateT());
+        }
         B_RendezvousSolution solution = RendezvousSolver.solve(new RendezvousSolveRequest(
                 context.comboId(), context.nestLon(), context.nestLat(), context.cruiseSpeedMs(),
                 options.representativeWind(), snapshot,

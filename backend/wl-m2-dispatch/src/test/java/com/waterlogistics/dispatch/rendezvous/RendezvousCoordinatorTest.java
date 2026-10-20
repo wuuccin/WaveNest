@@ -9,6 +9,8 @@ import com.waterlogistics.algo.meeting.model.B_RendezvousSolution;
 import com.waterlogistics.algo.meeting.model.NoSolutionReason;
 import com.waterlogistics.algo.meeting.model.ShipPoint;
 import com.waterlogistics.algo.meeting.model.ShipTrackSnapshot;
+import com.waterlogistics.algo.meeting.model.Wind;
+import com.waterlogistics.dispatch.weather.WeatherSnapshotPort;
 import com.waterlogistics.rendezvous.facade.RendezvousFacade;
 import com.waterlogistics.rendezvous.port.DroneContext;
 import com.waterlogistics.rendezvous.solver.RendezvousCommand;
@@ -17,6 +19,7 @@ import com.waterlogistics.storage.param.SysParamLoader;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
@@ -35,6 +38,12 @@ class RendezvousCoordinatorTest {
 
     private static final long MEET_T_MS = 1_700_000_000_000L;
 
+    private static final double LON0 = 121.0;
+
+    private static final double LAT0 = 30.0;
+
+    private static final double GAP_M = 10_000.0;
+
     private static OrderTaskEntity order() {
         OrderTaskEntity order = new OrderTaskEntity();
         order.setOrderId("ORDER-1");
@@ -50,7 +59,7 @@ class RendezvousCoordinatorTest {
     @Test
     void solveFor_shouldReturnMeetPlanWhenSolvable() {
         RendezvousCoordinator coordinator = new RendezvousCoordinator(
-                new StubbedFacade(true), id -> droneContext(), mmsi -> snapshot(), sysParams());
+                new StubbedFacade(true), id -> droneContext(), mmsi -> snapshot(), sysParams(), () -> null);
 
         RendezvousCoordinator.MeetPlan plan = coordinator.solveFor(order(), "COMBO-1", "DRONE-1");
 
@@ -68,7 +77,7 @@ class RendezvousCoordinatorTest {
     @Test
     void solveFor_shouldRejectWhenDroneLedgerMissing() {
         RendezvousCoordinator coordinator = new RendezvousCoordinator(
-                new StubbedFacade(true), id -> null, mmsi -> snapshot(), sysParams());
+                new StubbedFacade(true), id -> null, mmsi -> snapshot(), sysParams(), () -> null);
 
         IllegalStateException thrown = assertThrows(IllegalStateException.class,
                 () -> coordinator.solveFor(order(), "COMBO-1", "DRONE-X"));
@@ -81,7 +90,7 @@ class RendezvousCoordinatorTest {
     @Test
     void solveFor_shouldRejectWhenSnapshotMissing() {
         RendezvousCoordinator coordinator = new RendezvousCoordinator(
-                new StubbedFacade(true), id -> droneContext(), mmsi -> null, sysParams());
+                new StubbedFacade(true), id -> droneContext(), mmsi -> null, sysParams(), () -> null);
 
         IllegalStateException thrown = assertThrows(IllegalStateException.class,
                 () -> coordinator.solveFor(order(), "COMBO-1", "DRONE-1"));
@@ -94,13 +103,76 @@ class RendezvousCoordinatorTest {
     @Test
     void solveFor_shouldRejectWhenUnsolvable() {
         RendezvousCoordinator coordinator = new RendezvousCoordinator(
-                new StubbedFacade(false), id -> droneContext(), mmsi -> snapshot(), sysParams());
+                new StubbedFacade(false), id -> droneContext(), mmsi -> snapshot(), sysParams(), () -> null);
 
         IllegalStateException thrown = assertThrows(IllegalStateException.class,
                 () -> coordinator.solveFor(order(), "COMBO-1", "DRONE-1"));
 
         assertTrue(thrown.getMessage().contains("会面求解无解"),
                 "须点明是求解无解而非其它失败：" + thrown.getMessage());
+    }
+
+    /** 气象快照可用时：代表风况取最新观测，不落 sys_param 的静态值。 */
+    @Test
+    void solveFor_shouldUseLatestWeatherSnapshotForWind() {
+        StubbedFacade facade = new StubbedFacade(true);
+        RendezvousCoordinator coordinator = new RendezvousCoordinator(
+                facade, id -> droneContext(), mmsi -> snapshot(), sysParams(),
+                () -> new WeatherSnapshotPort.LatestWind(4.5, 300.0, MEET_T_MS));
+
+        coordinator.solveFor(order(), "COMBO-1", "DRONE-1");
+
+        Wind wind = facade.lastCommand().representativeWind();
+        assertEquals(4.5, wind.speedMs(), 1e-9, "代表风况风速须取气象快照");
+        assertEquals(300.0, wind.dirDeg(), 1e-9, "代表风况风向须取气象快照");
+    }
+
+    /** 气象快照缺失时：回落 sys_param 静态风况，主链不得中断。 */
+    @Test
+    void solveFor_shouldFallBackToSysParamsWhenWeatherMissing() {
+        StubbedFacade facade = new StubbedFacade(true);
+        SysParamLoader params = new SysParamLoader(null) {
+            @Override
+            public int getInt(String key, int defaultValue) {
+                return defaultValue;
+            }
+
+            @Override
+            public double getDouble(String key, double defaultValue) {
+                return switch (key) {
+                    case "windSpeedMs" -> 6.0;
+                    case "windDirDeg" -> 120.0;
+                    default -> defaultValue;
+                };
+            }
+        };
+        RendezvousCoordinator coordinator = new RendezvousCoordinator(
+                facade, id -> droneContext(), mmsi -> snapshot(), params, () -> null);
+
+        coordinator.solveFor(order(), "COMBO-1", "DRONE-1");
+
+        Wind wind = facade.lastCommand().representativeWind();
+        assertEquals(6.0, wind.speedMs(), 1e-9, "无气象快照时回落 sys_param 风速");
+        assertEquals(120.0, wind.dirDeg(), 1e-9, "无气象快照时回落 sys_param 风向");
+    }
+
+    /** 风况随快照变化：顺风比逆风更早会面（真实求解器贯通）。 */
+    @Test
+    void solveFor_shouldShiftPlanWithWindFromSnapshot() {
+        RendezvousCoordinator headwind = new RendezvousCoordinator(
+                new RendezvousFacade(mmsi -> movingSnapshot(), id -> null),
+                id -> droneContextAt(15.0), mmsi -> movingSnapshot(), sysParams(),
+                () -> new WeatherSnapshotPort.LatestWind(3.0, 90.0, MEET_T_MS));
+        RendezvousCoordinator tailwind = new RendezvousCoordinator(
+                new RendezvousFacade(mmsi -> movingSnapshot(), id -> null),
+                id -> droneContextAt(15.0), mmsi -> movingSnapshot(), sysParams(),
+                () -> new WeatherSnapshotPort.LatestWind(3.0, 270.0, MEET_T_MS));
+
+        RendezvousCoordinator.MeetPlan head = headwind.solveFor(order(), "COMBO-1", "DRONE-1");
+        RendezvousCoordinator.MeetPlan tail = tailwind.solveFor(order(), "COMBO-1", "DRONE-1");
+
+        assertTrue(tail.takeoffTime().isBefore(head.takeoffTime()),
+                "顺风应更早会面：逆风 " + head.takeoffTime() + "，顺风 " + tail.takeoffTime());
     }
 
     /** 求解阈值桩：全部回缺省，代表库里没登记新键的情形 */
@@ -123,10 +195,37 @@ class RendezvousCoordinatorTest {
                 List.of(new ShipPoint(MEET_T_MS, 115.0, 29.0, 90.0, 10.0, 10.0)));
     }
 
+    private static DroneContext droneContextAt(double cruiseMs) {
+        return new DroneContext("DRONE-1", "NEST-A",
+                LON0 - GAP_M / mPerDegLon(LAT0), LAT0, cruiseMs, null);
+    }
+
+    /** 匀速直线船迹：自当前时刻起东行 5 m/s，覆盖约 1990 s（求解时限内）。 */
+    private static ShipTrackSnapshot movingSnapshot() {
+        long now = System.currentTimeMillis();
+        double mpl = mPerDegLon(LAT0);
+        List<ShipPoint> points = new ArrayList<>(200);
+        for (int i = 0; i < 200; i++) {
+            double dist = 5.0 * i * 10;
+            points.add(new ShipPoint(now + (long) i * 10_000L, LON0 + dist / mpl, LAT0, 90.0, 0.0, 0.0));
+        }
+        return new ShipTrackSnapshot("1", MMSI, now, 86_400, points);
+    }
+
+    private static double mPerDeg() {
+        return Math.PI * 6_371_000.0 / 180.0;
+    }
+
+    private static double mPerDegLon(double lat) {
+        return mPerDeg() * Math.cos(Math.toRadians(lat));
+    }
+
     /** 门面板：按 solvable 返回有解／无解（M3 是普通类，故用继承覆盖，不引入 mock 框架） */
     private static final class StubbedFacade extends RendezvousFacade {
 
         private final boolean solvable;
+
+        private RendezvousCommand lastCommand;
 
         private StubbedFacade(boolean solvable) {
             // 门面构造器会对两个端口做 requireNonNull，故此处给占位实现；
@@ -137,12 +236,17 @@ class RendezvousCoordinatorTest {
 
         @Override
         public B_RendezvousSolution solve(RendezvousCommand cmd) {
+            lastCommand = cmd;
             if (!solvable) {
                 return B_RendezvousSolution.unsolvable("SOL-1", cmd.comboId(),
                         NoSolutionReason.CANNOT_CATCH, cmd.snapshotVersion());
             }
             return B_RendezvousSolution.solved("SOL-1", cmd.comboId(), 115.0, 29.0,
                     MEET_T_MS, MEET_T_MS, MEET_T_MS, 300, cmd.snapshotVersion());
+        }
+
+        RendezvousCommand lastCommand() {
+            return lastCommand;
         }
     }
 }

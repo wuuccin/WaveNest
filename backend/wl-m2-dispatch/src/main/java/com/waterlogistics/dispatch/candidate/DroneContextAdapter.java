@@ -60,11 +60,12 @@ public class DroneContextAdapter implements DroneContextPort {
      * @param droneId 执行机实例
      * @return 反查结果；<b>机或归属机巢查无时返回 {@code null}</b>，
      *         由调用方按「拒绝求解」处理（端口契约要求）
+     * @throws IllegalArgumentException {@code droneId} 为空/空白（调用方缺陷）
      */
     @Override
     public DroneContext resolve(String droneId) {
         if (droneId == null || droneId.isBlank()) {
-            return null;
+            throw new IllegalArgumentException("droneId 不能为空：调用方前置校验缺失");
         }
         DroneEntity drone = droneMapper.selectById(droneId);
         if (drone == null || drone.getHomeNestId() == null || drone.getHomeNestId().isBlank()) {

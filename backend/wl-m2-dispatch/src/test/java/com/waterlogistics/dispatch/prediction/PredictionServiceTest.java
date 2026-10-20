@@ -28,7 +28,7 @@ class PredictionServiceTest {
     private static final long T0 = 1_760_000_000_000L;
     private static final double LON = 121.4700;
     private static final double LAT = 30.5000;
-    private static final double METERS_PER_DEG_LAT = 111_320.0;
+    private static final double METERS_PER_DEG_LAT = com.waterlogistics.algo.meeting.GeoApprox.METERS_PER_DEG;
 
     private PredictionService service;
 

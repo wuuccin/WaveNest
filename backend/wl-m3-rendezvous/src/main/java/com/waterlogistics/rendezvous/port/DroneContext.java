@@ -18,6 +18,7 @@ import java.util.Objects;
  * @param cruiseSpeedMs 机型巡航速度，m/s
  * @param comboId       当前任务回溯的组合标识；取不到为 {@code null}（透传进返回结果）
  */
+@SuppressWarnings("MissingJavadoc")
 public record DroneContext(
 
         String droneId,
@@ -32,6 +33,12 @@ public record DroneContext(
 
         String comboId) {
 
+    private static final double MAX_CRUISE_SPEED_MS = 100.0;
+
+
+
+
+
     public DroneContext {
         Objects.requireNonNull(droneId, "droneId 不能为空");
         Objects.requireNonNull(homeNestId, "homeNestId 不能为空");
@@ -39,14 +46,15 @@ public record DroneContext(
             throw new IllegalArgumentException("droneId/homeNestId 不能为空白字符串");
         }
         if (comboId != null && comboId.isBlank()) {
-            throw new IllegalArgumentException("comboId 只能为 null 或非空白字符串");
+            comboId = null;
         }
         if (!Double.isFinite(nestLon) || !Double.isFinite(nestLat)
                 || nestLon < -180.0 || nestLon > 180.0 || nestLat < -90.0 || nestLat > 90.0) {
             throw new IllegalArgumentException("机巢坐标必须为有限数且经纬度在合法范围内");
         }
-        if (!Double.isFinite(cruiseSpeedMs) || !(cruiseSpeedMs > 0)) {
-            throw new IllegalArgumentException("机型巡航速度必须为正的有限数，实际 " + cruiseSpeedMs);
+        if (!Double.isFinite(cruiseSpeedMs) || !(cruiseSpeedMs > (double) 0) || cruiseSpeedMs > DroneContext.MAX_CRUISE_SPEED_MS) {
+            throw new IllegalArgumentException(
+                    "机型巡航速度必须为正的有限数且在合理量级内，实际 " + cruiseSpeedMs);
         }
     }
 }

@@ -121,7 +121,7 @@ class RendezvousFacadeTest {
                 60.0, 15.0, NOW, 5, List.of(), List.of(), 0.05, 0.2));
 
         assertEquals(200, route.tauFine(), "航迹经门面同一能力：3000/15＝200 s");
-        assertEquals("RV-RT-1-" + NOW, route.routeVersion(), "版本按起点时刻生成");
+        assertTrue(route.routeVersion().startsWith("RV-RT-1-" + NOW), "版本按起点时刻与几何指纹生成");
     }
 
     /** 门面冲突二查透传：空间远离由包围盒粗筛短路。 */
@@ -137,7 +137,7 @@ class RendezvousFacadeTest {
                         new Waypoint(122.1, 30.0, 60.0, 15.0, NOW + 600_000L)),
                 600, 0.0, 0.0, List.of(), List.of());
 
-        B_ConflictResult res = facade.checkConflict(a, b, new ConflictParams(100, 25, 1_000));
+        B_ConflictResult res = facade.detectConflict(a, b, new ConflictParams(100, 25, 1_000));
 
         assertFalse(res.conflictFlag(), "空间远离：包围盒粗筛短路");
         assertEquals("RV-A", res.checksumVersion(), "checksumVersion 取被查航迹版本");

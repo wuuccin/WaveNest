@@ -18,6 +18,7 @@ import java.util.Objects;
  * @param requestId 请求标识（原样返回）
  * @param solution  会面点解（恒非空；其 comboId 由 droneId 当前任务回溯，回溯不到时为 null）
  */
+@SuppressWarnings("MissingJavadoc")
 public record RendezvousRecalcResult(
 
         String requestId,
@@ -27,5 +28,8 @@ public record RendezvousRecalcResult(
     public RendezvousRecalcResult {
         Objects.requireNonNull(requestId, "requestId 不能为空");
         Objects.requireNonNull(solution, "solution 不能为空");
+        if (requestId.isBlank()) {
+            throw new IllegalArgumentException("requestId 不能为空白字符串");
+        }
     }
 }
