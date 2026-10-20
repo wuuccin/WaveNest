@@ -101,9 +101,18 @@ public class CandidateSelector {
                 d.getModel(),
                 d.getStatus(),
                 d.getBattery() != null ? d.getBattery().doubleValue() : 0.0,
-                d.getMaxPayload() != null ? d.getMaxPayload().doubleValue() : 0.0));
+                d.getMaxPayload() != null ? d.getMaxPayload().doubleValue() : 0.0,
+                // 机型能力两列（10-20 B1）：DB 缺失时给 NaN 表示"未登记"，
+                // 由 FeasibilityJudge 按回退口径处理——这里既不臆造 0，也不填默认值冒充真值
+                optionalDouble(d.getWindLimitMs()),
+                optionalDouble(d.getCruiseSpeedMs())));
         }
 
         return new CandidateInput(pickupLon, pickupLat, payloadKg, nestViews, droneViews);
+    }
+
+    /** {@code BigDecimal} → {@code double}；为 {@code null} 时给 {@code NaN}（＝未登记） */
+    private static double optionalDouble(BigDecimal v) {
+        return v != null ? v.doubleValue() : Double.NaN;
     }
 }
