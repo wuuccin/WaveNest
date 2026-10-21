@@ -1,5 +1,6 @@
 package com.waterlogistics.app;
 
+import com.waterlogistics.contract.mq.AisMessage;
 import com.waterlogistics.contract.rest.DispatchGate;
 import com.waterlogistics.contract.rest.GateSource;
 import com.waterlogistics.contract.rest.GateStatus;
@@ -8,6 +9,7 @@ import com.waterlogistics.dispatch.gate.DispatchGateService;
 import com.waterlogistics.dispatch.order.OrderAdmissionService;
 import com.waterlogistics.dispatch.order.OrderSubmitRequest;
 import com.waterlogistics.dispatch.order.OrderSubmitResponse;
+import com.waterlogistics.dispatch.prediction.PredictionService;
 import com.waterlogistics.dispatch.queue.TaskQueueService;
 import com.waterlogistics.storage.entity.OrderTaskEntity;
 import com.waterlogistics.storage.entity.TaskLogEntity;
@@ -19,7 +21,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -46,6 +48,8 @@ class SmokeM6M2Test {
     private DispatchGateService dispatchGateService;
     @Autowired
     private OrderAdmissionService admissionService;
+    @Autowired
+    private PredictionService predictionService;
 
     /** 判据：sys_param 有行、关键键可读（含 M6 新增两键）；2026-10-18 改按键断言，不锁总数 */
     @Test
@@ -70,38 +74,46 @@ class SmokeM6M2Test {
     }
 
     /**
-     * 判据：主链自然触发 —— 下单后由 DispatchTrigger 自动推进
-     * 「待受理 → 待调度 → 调度中」，无需手动调用 accept/startDispatch。
-     * 再手动 dispatch 走到「已派发」，验证 task_log 留痕。
+     * 判据（C0）：主链自然触发 —— 下单后由 DispatchTrigger 落库、受理，
+     * 再由 DispatchOrchestrator 自动完成「组批 → 选机 → 会面 → 派发」，
+     * 订单自然走到「已派发」，drone_id／meet_time／meet_lon／meet_lat 均有值，
+     * 且 task_log 无「重入队」记录（首次派发不走 requeue）。
      */
     @Test
     void orderStateMachineWalk() {
-        // 下单（B0 自然触发：submit 内部发布事件，DispatchTrigger 落库 + accept + startDispatch）
+        // 前置：喂一条 AIS 让该船有预测快照——候选距离过滤（机巢 5km 内）
+        // 与会面求解（船轨迹快照）都以真实船位为前提；船位取在演示机巢旁
+        predictionService.refresh(new AisMessage(
+                "123456789", "冒烟测试船", 114.306, 30.606, 5.0, 90.0,
+                System.currentTimeMillis()));
+
+        // 下单（C0 自然触发：submit 发事件 → DispatchTrigger 落库＋受理
+        //   → DispatchOrchestrator 组批 → 选机 → 会面 → 派发）
         OrderSubmitResponse resp = admissionService.submit(new OrderSubmitRequest(
                 "123456789", 5.5, "医疗物资",
                 System.currentTimeMillis() + 3_600_000L, "URGENT"));
         assertThat(resp.accepted()).isTrue();
         String orderId = resp.orderId();
 
-        // 自然触发后订单应已到「调度中」（不再卡在待受理/待调度）
-        OrderTaskEntity afterTrigger = orderTaskMapper.selectById(orderId);
-        assertThat(afterTrigger.getStatus()).isEqualTo(OrderStatus.DISPATCHING.getValue());
-
-        // 手动派发（候选/会面/派发由后续调度链异步完成，此处验证派发步）
-        taskQueueService.dispatch(orderId, "DRONE-SMOKE", LocalDateTime.now().plusMinutes(30));
+        // 自然触发后订单应已到「已派发」，四字段均有值（C0 完成判据）
         OrderTaskEntity after = orderTaskMapper.selectById(orderId);
         assertThat(after.getStatus()).isEqualTo(OrderStatus.DISPATCHED.getValue());
-        assertThat(after.getDroneId()).isEqualTo("DRONE-SMOKE");
+        assertThat(after.getDroneId()).isNotBlank();
+        assertThat(after.getMeetTime()).isNotNull();
+        assertThat(after.getMeetLon()).isNotNull();
+        assertThat(after.getMeetLat()).isNotNull();
 
         // 状态机违规流转防护：已派发后不允许再受理
         assertThatThrownBy(() -> taskQueueService.accept(after))
             .isInstanceOf(IllegalStateException.class);
 
-        // task_log 与流转同步留痕：订单接入(OrderAdmissionService) + 受理 + 组批调度 + 派发 = 4 条
-        Long logs = taskLogMapper.selectCount(
+        // task_log 与流转同步留痕：订单接入(OrderAdmissionService) + 受理 + 组批调度 + 派发 = 4 条，
+        // 且无「重入队」——首次派发不走 requeue（C0 判据）
+        List<TaskLogEntity> logs = taskLogMapper.selectList(
             new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<TaskLogEntity>()
                 .eq(TaskLogEntity::getOrderId, orderId));
-        assertThat(logs).isEqualTo(4L);
+        assertThat(logs).hasSize(4);
+        assertThat(logs).noneMatch(entry -> "重入队".equals(entry.getOpType()));
     }
 
     /** 判据：闸门口径（22 §3.2）——正常放行 / 熔断回显契约 record */

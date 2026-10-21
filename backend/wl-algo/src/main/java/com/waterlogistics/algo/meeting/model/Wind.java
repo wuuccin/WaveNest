@@ -32,6 +32,13 @@ public record Wind(
         if (!Double.isFinite(gustMs) || gustMs < 0.0) {
             throw new IllegalArgumentException("阵风须为非负有限值，实际 " + gustMs);
         }
+        if (gustMs != 0.0 && gustMs < speedMs) {
+            throw new IllegalArgumentException("阵风不应小于持续风速，实际 gust=" + gustMs + "、speed=" + speedMs);
+        }
+        // 仅接受合理的度值（含负角/超一圈的等价写法），其余视为上游单位或口径错误
+        if (dirDeg < -360.0 || dirDeg > 720.0) {
+            throw new IllegalArgumentException("风向超出合理范围（度），疑似单位/口径错误，实际 " + dirDeg);
+        }
         // 归一化：360 → 0；-0.0 → 0.0（保证 record 等值语义一致）
         speedMs += 0.0;
         gustMs += 0.0;

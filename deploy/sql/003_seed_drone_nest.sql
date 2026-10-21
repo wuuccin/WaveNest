@@ -62,7 +62,7 @@ INSERT INTO `nest` (`nest_id`, `lon`, `lat`, `capacity`, `supported_models`, `ow
 ON DUPLICATE KEY UPDATE
     `lon` = VALUES(`lon`), `lat` = VALUES(`lat`),
     `capacity` = VALUES(`capacity`), `supported_models` = VALUES(`supported_models`),
-    `status` = VALUES(`status`);
+    `owner` = VALUES(`owner`), `status` = VALUES(`status`);
 
 -- ---------------------------------------------------------------------
 -- 无人机（4 架，覆盖 2 机型 × 2 机巢）

@@ -70,6 +70,10 @@ public class RendezvousFacade {
      *
      * @param cmd 组合级求解命令（快照由其经端口自取并校验版本）
      * @return 会面点解；无解走 {@code hasSolution=false}
+     * @throws com.waterlogistics.rendezvous.port.SnapshotUnavailableException     查无快照或归属不符
+     * @throws com.waterlogistics.rendezvous.port.SnapshotVersionMismatchException 快照版本不一致
+     * @throws IllegalArgumentException 命令入参非法
+     * @throws NullPointerException     命令为 {@code null}
      */
     public B_RendezvousSolution solve(RendezvousCommand cmd) {
         return this.solveService.solve(cmd);
@@ -84,6 +88,8 @@ public class RendezvousFacade {
      *
      * @param cmd 航迹生成入参（起点、终点、巡检参数全由调用方注入）
      * @return 可飞航迹（首版为直线简化，寻路内核留桩待精算版替换）
+     * @throws IllegalArgumentException 航迹入参非法
+     * @throws NullPointerException     入参为 {@code null}
      */
     public B_FlyableRoute generateTrack(GenerateRouteCommand cmd) {
         return TrackGenerator.generate(cmd);
@@ -101,6 +107,11 @@ public class RendezvousFacade {
      * @param request 重算请求（E 组按同源口径构造）
      * @param options 任务与阈值参数（调用方注入）
      * @return requestId ＋ 会面点解
+     * @throws com.waterlogistics.rendezvous.port.DroneContextUnavailableException 查无执行机台账
+     * @throws com.waterlogistics.rendezvous.port.SnapshotUnavailableException     查无快照或归属不符
+     * @throws com.waterlogistics.rendezvous.port.SnapshotVersionMismatchException 快照版本不一致
+     * @throws IllegalArgumentException 请求或选项非法
+     * @throws NullPointerException     请求或选项为 {@code null}
      */
     public RendezvousRecalcResult recompute(RendezvousRecalcRequest request, RecalcOptions options) {
         return this.recalcService.recompute(request, options);
@@ -118,6 +129,8 @@ public class RendezvousFacade {
      * @param other  对照航迹
      * @param params 间隔与采样参数（调用方注入）
      * @return 冲突结论；绕行几何首版留桩为 null
+     * @throws IllegalArgumentException 航迹航点不足或非严格递增
+     * @throws NullPointerException     入参为 {@code null}
      */
     public B_ConflictResult detectConflict(B_FlyableRoute route, B_FlyableRoute other,
                                            ConflictParams params) {
@@ -134,6 +147,7 @@ public class RendezvousFacade {
      *
      * @param cmd 回填入参（会面时刻、精算时长、当前时刻、时刻精度粒度全由调用方注入）
      * @return 算式结果（反推起飞时刻＋可行性；不可行走「早于当前时刻」）
+     * @throws IllegalArgumentException 回填入参非法
      */
     public B_TakeoffTimeResult computeTakeoffTime(TakeoffTimeCommand cmd) {
         return TakeoffTimeCalculator.compute(cmd);
@@ -149,6 +163,8 @@ public class RendezvousFacade {
      *
      * @param cmd 判定入参（计划会面基准＋末段采样＋阈值，全由调用方注入）
      * @return 交接完成确认（失败含「重试／悬停等待」的简化结论：样本耗尽即放弃）
+     * @throws IllegalArgumentException 判定入参非法
+     * @throws NullPointerException     入参为 {@code null}
      */
     public B_HandoverConfirmation judgeHandover(HandoverCommand cmd) {
         return HandoverJudge.judge(cmd);

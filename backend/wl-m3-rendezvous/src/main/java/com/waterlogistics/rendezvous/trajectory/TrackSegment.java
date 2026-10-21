@@ -1,5 +1,6 @@
 package com.waterlogistics.rendezvous.trajectory;
 
+import com.waterlogistics.rendezvous.support.WireText;
 import lombok.Getter;
 
 
@@ -42,6 +43,19 @@ public enum TrackSegment {
         this.value = value;
     }
 
+    /**
+     * 固定排序秩，与声明顺序解耦，供分段拼接校验使用。
+     *
+     * @return 去程 0、末段交接 1、返程 2
+     */
+    public int rank() {
+        return switch (this) {
+            case OUTBOUND -> 0;
+            case TERMINAL -> 1;
+            case RETURN -> 2;
+        };
+    }
+
 
 
 
@@ -55,15 +69,18 @@ public enum TrackSegment {
      * @throws IllegalArgumentException 入参为空/空白或无匹配口径词
      */
     public static TrackSegment fromValue(String value) {
-        if (value == null || value.isBlank()) {
+        if (value == null) {
             throw new IllegalArgumentException("航迹分段不能为空");
         }
-        String normalized = value.replace('\u00A0', ' ').strip();
+        String normalized = WireText.normalizeToken(value);
+        if (normalized.isEmpty()) {
+            throw new IllegalArgumentException("航迹分段不能为空");
+        }
         for (TrackSegment segment : TrackSegment.values()) {
             if (segment.value.equals(normalized)) {
                 return segment;
             }
         }
-        throw new IllegalArgumentException("未知航迹分段：" + normalized);
+        throw new IllegalArgumentException("未知航迹分段：" + WireText.escapeForLog(normalized));
     }
 }

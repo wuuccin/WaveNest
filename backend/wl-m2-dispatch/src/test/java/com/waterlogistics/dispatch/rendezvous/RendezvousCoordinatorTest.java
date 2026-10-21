@@ -10,7 +10,11 @@ import com.waterlogistics.algo.meeting.model.NoSolutionReason;
 import com.waterlogistics.algo.meeting.model.ShipPoint;
 import com.waterlogistics.algo.meeting.model.ShipTrackSnapshot;
 import com.waterlogistics.algo.meeting.model.Wind;
+import com.waterlogistics.contract.mq.WeatherData;
+import com.waterlogistics.dispatch.weather.WeatherSnapshotAdapter;
 import com.waterlogistics.dispatch.weather.WeatherSnapshotPort;
+import com.waterlogistics.dispatch.weather.WeatherSettings;
+import com.waterlogistics.dispatch.weather.WeatherSnapshotStore;
 import com.waterlogistics.rendezvous.facade.RendezvousFacade;
 import com.waterlogistics.rendezvous.port.DroneContext;
 import com.waterlogistics.rendezvous.solver.RendezvousCommand;
@@ -59,7 +63,7 @@ class RendezvousCoordinatorTest {
     @Test
     void solveFor_shouldReturnMeetPlanWhenSolvable() {
         RendezvousCoordinator coordinator = new RendezvousCoordinator(
-                new StubbedFacade(true), id -> droneContext(), mmsi -> snapshot(), sysParams(), () -> null);
+                new StubbedFacade(true), id -> droneContext(), mmsi -> snapshot(), sysParams(), (lon, lat, now) -> null);
 
         RendezvousCoordinator.MeetPlan plan = coordinator.solveFor(order(), "COMBO-1", "DRONE-1");
 
@@ -77,7 +81,7 @@ class RendezvousCoordinatorTest {
     @Test
     void solveFor_shouldRejectWhenDroneLedgerMissing() {
         RendezvousCoordinator coordinator = new RendezvousCoordinator(
-                new StubbedFacade(true), id -> null, mmsi -> snapshot(), sysParams(), () -> null);
+                new StubbedFacade(true), id -> null, mmsi -> snapshot(), sysParams(), (lon, lat, now) -> null);
 
         IllegalStateException thrown = assertThrows(IllegalStateException.class,
                 () -> coordinator.solveFor(order(), "COMBO-1", "DRONE-X"));
@@ -90,7 +94,7 @@ class RendezvousCoordinatorTest {
     @Test
     void solveFor_shouldRejectWhenSnapshotMissing() {
         RendezvousCoordinator coordinator = new RendezvousCoordinator(
-                new StubbedFacade(true), id -> droneContext(), mmsi -> null, sysParams(), () -> null);
+                new StubbedFacade(true), id -> droneContext(), mmsi -> null, sysParams(), (lon, lat, now) -> null);
 
         IllegalStateException thrown = assertThrows(IllegalStateException.class,
                 () -> coordinator.solveFor(order(), "COMBO-1", "DRONE-1"));
@@ -103,7 +107,7 @@ class RendezvousCoordinatorTest {
     @Test
     void solveFor_shouldRejectWhenUnsolvable() {
         RendezvousCoordinator coordinator = new RendezvousCoordinator(
-                new StubbedFacade(false), id -> droneContext(), mmsi -> snapshot(), sysParams(), () -> null);
+                new StubbedFacade(false), id -> droneContext(), mmsi -> snapshot(), sysParams(), (lon, lat, now) -> null);
 
         IllegalStateException thrown = assertThrows(IllegalStateException.class,
                 () -> coordinator.solveFor(order(), "COMBO-1", "DRONE-1"));
@@ -118,7 +122,7 @@ class RendezvousCoordinatorTest {
         StubbedFacade facade = new StubbedFacade(true);
         RendezvousCoordinator coordinator = new RendezvousCoordinator(
                 facade, id -> droneContext(), mmsi -> snapshot(), sysParams(),
-                () -> new WeatherSnapshotPort.LatestWind(4.5, 300.0, MEET_T_MS));
+                (lon, lat, now) -> new WeatherSnapshotPort.LatestWind(4.5, 300.0, MEET_T_MS));
 
         coordinator.solveFor(order(), "COMBO-1", "DRONE-1");
 
@@ -147,7 +151,7 @@ class RendezvousCoordinatorTest {
             }
         };
         RendezvousCoordinator coordinator = new RendezvousCoordinator(
-                facade, id -> droneContext(), mmsi -> snapshot(), params, () -> null);
+                facade, id -> droneContext(), mmsi -> snapshot(), params, (lon, lat, now) -> null);
 
         coordinator.solveFor(order(), "COMBO-1", "DRONE-1");
 
@@ -162,17 +166,44 @@ class RendezvousCoordinatorTest {
         RendezvousCoordinator headwind = new RendezvousCoordinator(
                 new RendezvousFacade(mmsi -> movingSnapshot(), id -> null),
                 id -> droneContextAt(15.0), mmsi -> movingSnapshot(), sysParams(),
-                () -> new WeatherSnapshotPort.LatestWind(3.0, 90.0, MEET_T_MS));
+                (lon, lat, now) -> new WeatherSnapshotPort.LatestWind(3.0, 90.0, MEET_T_MS));
         RendezvousCoordinator tailwind = new RendezvousCoordinator(
                 new RendezvousFacade(mmsi -> movingSnapshot(), id -> null),
                 id -> droneContextAt(15.0), mmsi -> movingSnapshot(), sysParams(),
-                () -> new WeatherSnapshotPort.LatestWind(3.0, 270.0, MEET_T_MS));
+                (lon, lat, now) -> new WeatherSnapshotPort.LatestWind(3.0, 270.0, MEET_T_MS));
 
         RendezvousCoordinator.MeetPlan head = headwind.solveFor(order(), "COMBO-1", "DRONE-1");
         RendezvousCoordinator.MeetPlan tail = tailwind.solveFor(order(), "COMBO-1", "DRONE-1");
 
         assertTrue(tail.takeoffTime().isBefore(head.takeoffTime()),
                 "顺风应更早会面：逆风 " + head.takeoffTime() + "，顺风 " + tail.takeoffTime());
+    }
+
+    /** 气象快照仓到适配器再到协调器：顺风应比逆风更早会面。 */
+    @Test
+    void solveFor_shouldConsumeWindFromStore() {
+        long now = System.currentTimeMillis();
+        RendezvousCoordinator headwind = new RendezvousCoordinator(
+                new RendezvousFacade(mmsi -> movingSnapshot(), id -> null),
+                id -> droneContextAt(15.0), mmsi -> movingSnapshot(), sysParams(),
+                new WeatherSnapshotAdapter(storeWithWind(now, 90.0)));
+        RendezvousCoordinator tailwind = new RendezvousCoordinator(
+                new RendezvousFacade(mmsi -> movingSnapshot(), id -> null),
+                id -> droneContextAt(15.0), mmsi -> movingSnapshot(), sysParams(),
+                new WeatherSnapshotAdapter(storeWithWind(now, 270.0)));
+
+        RendezvousCoordinator.MeetPlan head = headwind.solveFor(order(), "COMBO-1", "DRONE-1");
+        RendezvousCoordinator.MeetPlan tail = tailwind.solveFor(order(), "COMBO-1", "DRONE-1");
+
+        assertTrue(tail.takeoffTime().isBefore(head.takeoffTime()),
+                "顺风应更早会面：逆风 " + head.takeoffTime() + "，顺风 " + tail.takeoffTime());
+    }
+
+    private static WeatherSnapshotStore storeWithWind(long obsMs, double dirDeg) {
+        WeatherSnapshotStore store = new WeatherSnapshotStore(WeatherSettings.defaults());
+        store.accept(new WeatherData(LON0 - GAP_M / mPerDegLon(LAT0), LAT0,
+                3.0, dirDeg, 0.0, obsMs, obsMs, obsMs));
+        return store;
     }
 
     /** 求解阈值桩：全部回缺省，代表库里没登记新键的情形 */
@@ -202,7 +233,7 @@ class RendezvousCoordinatorTest {
 
     /** 匀速直线船迹：自当前时刻起东行 5 m/s，覆盖约 1990 s（求解时限内）。 */
     private static ShipTrackSnapshot movingSnapshot() {
-        long now = System.currentTimeMillis();
+        long now = System.currentTimeMillis() - 1_000L;
         double mpl = mPerDegLon(LAT0);
         List<ShipPoint> points = new ArrayList<>(200);
         for (int i = 0; i < 200; i++) {

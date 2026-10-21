@@ -92,7 +92,7 @@ class TrackGeneratorTest {
         for (int i = 1; i < route.waypoints().size(); i++) {
             assertTrue(route.waypoints().get(i).t() > route.waypoints().get(i - 1).t(), "时间仍严格递增");
         }
-        assertEquals(0.5 / 15.0 * 0.05, route.energyExact(), 1e-6, "能耗按未舍入时长计（0.5 m ÷ 15 m/s）");
+        assertEquals(1.0 * 0.05, route.energyExact(), 1e-9, "能耗按整秒时长计（钳制后 1 s × 0.05%/s）");
     }
 
     /** 分段口径词唯一：fromValue 首个匹配即返回，重复会导致解析错段。 */

@@ -1,55 +1,37 @@
 package com.waterlogistics.dispatch.weather;
 
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.waterlogistics.storage.entity.WeatherEntity;
-import com.waterlogistics.storage.repository.WeatherMapper;
-import java.math.BigDecimal;
-import java.time.ZoneId;
+import com.waterlogistics.contract.mq.WeatherData;
 import java.util.Objects;
 import org.springframework.stereotype.Service;
 
 /**
- * 最新风况快照的库取实现——读 {@code weather} 表最新一条观测。
+ * 最新风况快照的仓取实现：按位置与当前时刻从气象快照仓取最近的新鲜观测。
  *
- * <p>取数纪律：只读、无副作用；风速非负且有限、风向回卷到 [0,360) 才可用；
- * 观测时刻或风要素缺失时返回 {@code null}，由调用方回落 {@code sys_param}。
+ * <p>取数纪律：只读、无副作用；观测过期或缺失即返回 {@code null}，由调用方回落
+ * {@code sys_param} 的静态风况，气象链路异常不得中断调度主链。
  */
 @Service
 public class WeatherSnapshotAdapter implements WeatherSnapshotPort {
 
-    /** 表内时刻按演示期统一东八区解释（与 {@code application.yml} 一致）。 */
-    private static final ZoneId ZONE = ZoneId.of("Asia/Shanghai");
+    private final WeatherSnapshotStore store;
 
-    private final WeatherMapper weatherMapper;
-
-    public WeatherSnapshotAdapter(WeatherMapper weatherMapper) {
-        this.weatherMapper = Objects.requireNonNull(weatherMapper, "weatherMapper 不能为空");
+    public WeatherSnapshotAdapter(WeatherSnapshotStore store) {
+        this.store = Objects.requireNonNull(store, "store 不能为空");
     }
 
     @Override
-    public LatestWind latest() {
-        WeatherEntity latest = weatherMapper.selectOne(new LambdaQueryWrapper<WeatherEntity>()
-                .orderByDesc(WeatherEntity::getTs)
-                .last("LIMIT 1"));
-        return toLatest(latest);
+    public LatestWind latest(double lon, double lat, long nowMs) {
+        return store.nearest(lon, lat, nowMs).map(WeatherSnapshotAdapter::toLatest).orElse(null);
     }
 
-    private static LatestWind toLatest(WeatherEntity entity) {
-        if (entity == null || entity.getTs() == null) {
-            return null;
-        }
-        BigDecimal speed = entity.getWindSpeed();
-        BigDecimal dir = entity.getWindDir();
-        if (speed == null || dir == null) {
-            return null;
-        }
-        double speedMs = speed.doubleValue();
-        double rawDir = dir.doubleValue();
-        if (!Double.isFinite(speedMs) || speedMs < 0.0 || !Double.isFinite(rawDir)) {
+    private static LatestWind toLatest(WeatherData data) {
+        double speedMs = data.windSpeedMs();
+        double rawDir = data.windDirDeg();
+        if (!Double.isFinite(speedMs) || speedMs < 0.0
+                || !Double.isFinite(rawDir) || data.obsTs() <= 0L) {
             return null;
         }
         double dirDeg = ((rawDir % 360.0) + 360.0) % 360.0;
-        long obsMs = entity.getTs().atZone(ZONE).toInstant().toEpochMilli();
-        return new LatestWind(speedMs, dirDeg, obsMs);
+        return new LatestWind(speedMs, dirDeg, data.obsTs());
     }
 }

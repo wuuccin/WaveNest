@@ -32,9 +32,9 @@ import java.util.Objects;
  * <p>坐标处理：以<b>被查航迹首点</b>为原点做局部米制平移（同 {@code GeoApprox} 近似），
  * 两航迹共用同一原点——包围盒、距离与 CPA 全部在米制下计算。
  *
- * <p>冲突区间口径：{@code conflictSpaceTime} 是采样点的<b>保守包络</b>（首末冲突采样点，
- * 两端含），边界带至多一个采样步长的量化误差，可能覆盖两段相邻冲突之间的空档——
- * 消费方按「保守扩大」使用，不得当作精确边界。
+ * <p>冲突区间口径：{@code conflictSpaceTime} 取首末冲突采样点，<b>两端边界向内量化</b>，
+ * 真实起点最多晚报、终点最多早报一个采样步长；中间空档可能被并段扩大。消费方须向两端
+ * 各外扩一个 {@code sampleStepMs} 后再使用，不得按边界直接错峰。
  *
  * <p>检出限制：判据只在离散采样时刻求值，<b>最短可检冲突时长＝{@code sampleStepMs}</b>——
  * 更短且恰好落在两采样点之间的冲突会漏检（区间本身仍只会被保守扩大）。经度方向的米/度
@@ -45,7 +45,9 @@ import java.util.Objects;
  */
 public final class TrackConflictChecker {
 
-    /** 每度纬差对应的米数（与 GeoApprox 同一近似） */
+    /**
+     * 每度纬差对应的米数（与 GeoApprox 同一近似）
+     */
     private static final double METERS_PER_DEG = GeoApprox.METERS_PER_DEG;
 
 
@@ -66,7 +68,7 @@ public final class TrackConflictChecker {
      * @param other  对照航迹
      * @param params 间隔与采样参数（调用方注入；数值前置由 {@link ConflictParams} 构造期校验）
      * @return 冲突结论；包围盒粗筛或时间窗短路时不产 CPA，绕行几何首版恒为 null
-     * @throws IllegalArgumentException 航迹航点不足或航点时刻非严格递增
+     * @throws IllegalArgumentException 入参航迹结构非法（由 {@code B_FlyableRoute} 构造期保证）
      * @throws NullPointerException     route／other／params 为 null
      */
     public static B_ConflictResult detect(B_FlyableRoute route, B_FlyableRoute other,
@@ -74,8 +76,6 @@ public final class TrackConflictChecker {
         Objects.requireNonNull(route, "route 不能为空");
         Objects.requireNonNull(other, "other 不能为空");
         Objects.requireNonNull(params, "params 不能为空");
-        TrackConflictChecker.requireUsable(route, "route");
-        TrackConflictChecker.requireUsable(other, "other");
 
         Waypoint origin = route.waypoints().get(0);
         double refLat = (origin.lat() + other.waypoints().get(0).lat()) / 2.0;
@@ -95,17 +95,49 @@ public final class TrackConflictChecker {
             return shortCircuit;
         }
 
-        // 时间同步采样（含两端点）：双间隔判据 + 全程三维最近接近点
-        double bestD3 = Double.POSITIVE_INFINITY;
-        long bestT = tStart;
-        double bestMidX = (double) 0;
-        double bestMidY = (double) 0;
-        double bestMidAlt = (double) 0;
+        SamplingResult sampled = TrackConflictChecker.sampleConflicts(routePoints, otherPoints, tStart, tEnd, params);
+        NearestApproach best = sampled.best();
+        CpaPoint cpaPoint = new CpaPoint(
+                TrackConflictChecker.wrapLon(origin.lon()
+                                                     + best.midX / TrackConflictChecker.mPerDegLon(refLat)),
+                origin.lat() + best.midY / TrackConflictChecker.METERS_PER_DEG,
+                best.midAlt);
+        ConflictSpaceTime interval = sampled.interval();
+
+        return new B_ConflictResult(
+                interval != null, interval, cpaPoint, Long.valueOf(best.t), Double.valueOf(best.d3), null, route.routeVersion());
+    }
+
+
+
+
+
+    /**
+     * 时间同步采样（含两端点）——按「水平距离＜水平安全间隔 且 垂直间隔＜垂直安全间隔」记冲突区间，
+     * 并全程／冲突段各跟踪一个三维最近接近点。
+     *
+     * @param routePoints 被查航迹局部米制点列
+     * @param otherPoints 对照航迹局部米制点列
+     * @param tStart      两航迹时间窗起点（采样含端点）
+     * @param tEnd        两航迹时间窗终点（采样含端点）
+     * @param params      间隔与采样参数
+     * @return 冲突区间（无冲突为 null）与选定的最近接近点
+     */
+    private static SamplingResult sampleConflicts(List<LocalPoint> routePoints, List<LocalPoint> otherPoints,
+                                                  long tStart, long tEnd, ConflictParams params) {
+        NearestApproach bestAny = new NearestApproach();
+        NearestApproach bestConflict = new NearestApproach();
         long firstConflictT = 0L;
         long lastConflictT = 0L;
         boolean anyConflict = false;
 
+        long window = tEnd - tStart;
+        long maxSamples = 200_000L;
         long step = params.sampleStepMs();
+        if (window / step > maxSamples) {
+            // 时间窗过长时按上限自适应放大步长，避免迭代膨胀（检出分辨率随之下调）
+            step = window / maxSamples + 1L;
+        }
         long t = tStart;
         while (true) {
             LocalPoint pa = TrackConflictChecker.interpolate(routePoints, t);
@@ -113,20 +145,15 @@ public final class TrackConflictChecker {
             double h = Math.hypot(pa.x() - pb.x(), pa.y() - pb.y());
             double v = Math.abs(pa.altM() - pb.altM());
             double d3 = Math.sqrt(h * h + v * v);
+            bestAny.consider(d3, t, pa, pb);
 
-            if (d3 < bestD3) {
-                bestD3 = d3;
-                bestT = t;
-                bestMidX = (pa.x() + pb.x()) / 2.0;
-                bestMidY = (pa.y() + pb.y()) / 2.0;
-                bestMidAlt = (pa.altM() + pb.altM()) / 2.0;
-            }
             if (h < params.horizontalSepM() && v < params.verticalSepM()) {
                 if (!anyConflict) {
                     firstConflictT = t;
                     anyConflict = true;
                 }
                 lastConflictT = t;
+                bestConflict.consider(d3, t, pa, pb);
             }
 
             if (t == tEnd) {
@@ -135,35 +162,16 @@ public final class TrackConflictChecker {
             t = (tEnd - t <= step) ? tEnd : t + step;
         }
 
-        CpaPoint cpaPoint = new CpaPoint(
-                TrackConflictChecker.wrapLon(origin.lon()
-                                                     + bestMidX / TrackConflictChecker.mPerDegLon(origin.lat())),
-                origin.lat() + bestMidY / TrackConflictChecker.METERS_PER_DEG,
-                bestMidAlt);
         ConflictSpaceTime interval = anyConflict
                 ? new ConflictSpaceTime(null, firstConflictT, lastConflictT)
                 : null;
-
-        return new B_ConflictResult(
-                anyConflict, interval, cpaPoint, Long.valueOf(bestT), Double.valueOf(bestD3), null, route.routeVersion());
+        return new SamplingResult(anyConflict ? bestConflict : bestAny, interval);
     }
 
 
 
 
 
-    private static void requireUsable(B_FlyableRoute route, String name) {
-        if (route.waypoints() == null || route.waypoints().size() < 2) {
-            throw new IllegalArgumentException(name + " 至少需要 2 个航点");
-        }
-        List<Waypoint> waypoints = route.waypoints();
-        int waypointCount = waypoints.size();
-        for (int i = 1; i < waypointCount; i++) {
-            if (waypoints.get(i).t() <= waypoints.get(i - 1).t()) {
-                throw new IllegalArgumentException(name + " 航点时刻必须严格递增（第 " + i + " 个非增）");
-            }
-        }
-    }
 
 
 
@@ -188,7 +196,9 @@ public final class TrackConflictChecker {
 
 
 
-    /** 返回 {minX, maxX, minY, maxY, minAlt, maxAlt} */
+    /**
+     * 返回 {minX, maxX, minY, maxY, minAlt, maxAlt}
+     */
     private static double[] box(Iterable<LocalPoint> points) {
         double[] box = {
                 Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY,
@@ -209,7 +219,9 @@ public final class TrackConflictChecker {
 
 
 
-    /** 段内线性插值；越界取端点（不外推） */
+    /**
+     * 段内线性插值；越界取端点（不外推）
+     */
     private static LocalPoint interpolate(List<LocalPoint> points, long t) {
         LocalPoint first = points.get(0);
         LocalPoint last = points.get(points.size() - 1);
@@ -256,7 +268,9 @@ public final class TrackConflictChecker {
 
 
 
-    /** 经差归一化到 [−180, 180]，跨 ±180° 走短侧 */
+    /**
+     * 经差归一化到 [−180, 180]，跨 ±180° 走短侧
+     */
     private static double normalizeLonDelta(double dLon) {
         if (dLon > 180.0) {
             return dLon - 360.0;
@@ -271,7 +285,9 @@ public final class TrackConflictChecker {
 
 
 
-    /** 经度回卷到 [−180, 180) */
+    /**
+     * 经度回卷到 [−180, 180)
+     */
     private static double wrapLon(double lon) {
         double wrapped = (lon + 180.0) % 360.0;
         if (wrapped < 0.0) {
@@ -302,7 +318,79 @@ public final class TrackConflictChecker {
 
 
 
-    /** 局部米制点（共原点平移系） */
+    /**
+     * 最近接近点跟踪器——采样循环里按三维距离打擂台的共用状态（全程与冲突段各持一份）。
+     */
+    private static final class NearestApproach {
+
+        private double d3 = Double.POSITIVE_INFINITY;
+
+        private long t;
+
+        private double midX;
+
+        private double midY;
+
+        private double midAlt;
+
+
+
+
+
+        private NearestApproach() {
+            this.t = 0L;
+            this.midX = (double) 0;
+            this.midY = (double) 0;
+            this.midAlt = (double) 0;
+        }
+
+
+
+
+
+        /**
+         * 用当拍采样参与打擂台，更近则刷新记录。
+         *
+         * @param d3 当拍三维距离，米
+         * @param t  当拍采样时刻，Unix 毫秒
+         * @param pa 被查航迹当拍位置
+         * @param pb 对照航迹当拍位置
+         */
+        private void consider(double d3, long t, LocalPoint pa, LocalPoint pb) {
+            if (d3 < this.d3) {
+                this.d3 = d3;
+                this.t = t;
+                this.midX = (pa.x() + pb.x()) / 2.0;
+                this.midY = (pa.y() + pb.y()) / 2.0;
+                this.midAlt = (pa.altM() + pb.altM()) / 2.0;
+            }
+        }
+    }
+
+
+
+
+
+
+
+    /**
+     * 同步采样结果——冲突区间（无冲突时为 {@code null}）与选定的最近接近点。
+     *
+     * @param best     最近接近点（有冲突取冲突段内者，否则取全程者）
+     * @param interval 冲突区间；{@code null} 表示无冲突
+     */
+    private record SamplingResult(NearestApproach best, ConflictSpaceTime interval) {
+    }
+
+
+
+
+
+
+
+    /**
+     * 局部米制点（共原点平移系）
+     */
     private record LocalPoint(double x, double y, double altM, long t) {
     }
 }

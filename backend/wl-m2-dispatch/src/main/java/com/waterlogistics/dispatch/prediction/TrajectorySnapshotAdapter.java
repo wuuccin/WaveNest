@@ -53,14 +53,14 @@ public class TrajectorySnapshotAdapter implements TrajectorySnapshotPort {
      *
      * @param shipMmsi 目标船标识
      * @return M3 侧快照；<b>查无此船或尚无预测时返回 {@code null}</b>
-     *         ——这是接口约定的返回值：M3 侧（{@code RendezvousSolveService} 与
-     *         {@code RendezvousRecalcService}）判 null 后抛
-     *         {@code SnapshotUnavailableException} 拒绝求解，本类<b>不越界抛异常</b>
+     *         ——这是接口约定的返回值：M3 侧判 null 后抛
+     *         {@code SnapshotUnavailableException} 拒绝求解
+     * @throws IllegalArgumentException 目标船标识为空或空白（调用方缺陷）
      */
     @Override
     public ShipTrackSnapshot latest(String shipMmsi) {
         if (shipMmsi == null || shipMmsi.isBlank()) {
-            return null;
+            throw new IllegalArgumentException("shipMmsi 不能为空：调用方前置校验缺失");
         }
         return predictionService.snapshotOf(shipMmsi)
                 .map(TrajectorySnapshotAdapter::toShipTrackSnapshot)

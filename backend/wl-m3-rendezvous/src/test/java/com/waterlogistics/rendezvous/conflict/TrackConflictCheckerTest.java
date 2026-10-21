@@ -100,11 +100,10 @@ class TrackConflictCheckerTest {
                         List.of(), 0, 0.0, 0.0, List.of(), List.of()),
                 "空航迹构造期即拒绝");
 
-        B_FlyableRoute tooShort = new B_FlyableRoute("RT-X", "RV-X", "combo-1",
-                List.of(new Waypoint(121.0, 30.0, 60.0, 15.0, T0)), 0, 0.0, 0.0, List.of(), List.of());
-
         assertThrows(IllegalArgumentException.class,
-                     () -> TrackConflictChecker.detect(tooShort, eastTrack(), PARAMS), "航点不足 2 应拒绝");
+                () -> new B_FlyableRoute("RT-X", "RV-X", "combo-1",
+                        List.of(new Waypoint(121.0, 30.0, 60.0, 15.0, T0)), 0, 0.0, 0.0, List.of(), List.of()),
+                "航点不足 2 构造期即拒绝");
         assertThrows(IllegalArgumentException.class,
                 () -> TrackConflictChecker.detect(eastTrack(), northTrack(T0, 60.0),
                                                   new ConflictParams(100, 25, 0)), "采样步长非正应拒绝");

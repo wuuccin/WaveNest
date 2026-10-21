@@ -17,15 +17,17 @@ public interface DroneContextPort {
     /**
      * 按执行机实例反查上下文。
      *
-     * <p>{@code droneId} 非空、非空白是<b>调用方前置</b>（请求对象构造期已校验）；实现可假定
-     * 该前置成立，违例时以 {@link IllegalArgumentException} 暴露调用方缺陷，<b>不得</b>把
-     * 非法入参伪装成 {@code null}。实现不得抛 {@link DroneContextUnavailableException}；
-     * 该异常由调用方在拿到 {@code null} 后转换抛出。底层存储读取失败属基础设施故障，
-     * 实现须包装为未检查异常（保留原因），调用方不得当作「查无该机」处理。
+     * <p>{@code droneId} 非空、非空白由调用方先校验（请求对象构造期），实现仍须做一次
+     * 显式防御：违例时抛 {@link IllegalArgumentException}，<b>不得</b>把非法入参伪装成
+     * {@code null}。{@code null} 返回值不区分「查无该机」「无归属机巢」「机巢坐标缺失」
+     * 三种成因，调用方不得假定单一原因。实现不得抛 {@link DroneContextUnavailableException}，
+     * 该异常由调用方在拿到 {@code null} 后转换抛出；底层存储读取失败属基础设施故障，
+     * 实现须包装为未检查异常并保留原因，调用方不得当作「查无该机」。
      *
      * @param droneId 执行机实例（消费侧保证非空、非空白——请求对象构造期已校验）
-     * @return 反查结果；查无该机时为 {@code null}，由调用方按「拒绝求解」处理；返回结果只读共享
+     * @return 反查结果；查无该机、或缺归属机巢/机巢坐标时为 {@code null}，由调用方按「拒绝求解」处理；返回结果只读共享
      * @throws IllegalArgumentException {@code droneId} 为空/空白（调用方缺陷，实现须显式抛出）
+     * @throws RuntimeException         底层存储读取失败（实现须包装并保留原因，禁止转为 {@code null}）
      */
     DroneContext resolve(String droneId);
 }

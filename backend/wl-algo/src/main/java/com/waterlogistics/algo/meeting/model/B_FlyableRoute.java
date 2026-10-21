@@ -19,7 +19,7 @@ import java.util.Objects;
  * @param routeId           航迹标识（对象标识）
  * @param routeVersion      航迹版本（重算即换新）
  * @param comboId           绑定的候选组合标识
- * @param waypoints         航点序列，时间升序
+ * @param waypoints         航点序列，按时刻严格升序（相邻航点时刻不得相同）
  * @param tauFine           精算飞行时长 τ_fine，秒（精算账）
  * @param energyExact       精确能耗，满电百分比（精算账）
  * @param pathRisk          路径风险 [0,1]，供 D 组风险项
@@ -53,29 +53,34 @@ public record B_FlyableRoute(
         if (routeId.isBlank() || routeVersion.isBlank() || comboId.isBlank()) {
             throw new IllegalArgumentException("routeId/routeVersion/comboId 不能为空白字符串");
         }
-        if (waypoints == null || waypoints.isEmpty()) {
-            throw new IllegalArgumentException("waypoints 不能为空：C 组据其粗估航迹长度");
+        if (waypoints == null || waypoints.size() < 2) {
+            throw new IllegalArgumentException("waypoints 至少需要 2 个航点：C 组据其粗估航迹长度，单点航迹长度为 0");
         }
-        for (int i = 0; i < waypoints.size(); i++) {
-            Waypoint waypoint = waypoints.get(i);
-            if (waypoint == null) {
-                throw new IllegalArgumentException("waypoints 第 " + i + " 个元素为空");
-            }
-            if (i > 0 && waypoint.t() <= waypoints.get(i - 1).t()) {
+        try {
+            waypoints = List.copyOf(waypoints);
+        } catch (NullPointerException e) {
+            throw new IllegalArgumentException("waypoints 不能包含空元素", e);
+        }
+        for (int i = 1; i < waypoints.size(); i++) {
+            if (waypoints.get(i).t() <= waypoints.get(i - 1).t()) {
                 throw new IllegalArgumentException("waypoints 须按时刻严格升序，下标 " + i + " 处不满足");
             }
         }
-        waypoints = List.copyOf(waypoints);
-        landingPointsAlong = landingPointsAlong == null ? List.of() : landingPointsAlong;
-        avoidZones = avoidZones == null ? List.of() : avoidZones;
-        if (landingPointsAlong.stream().anyMatch(id -> id == null || id.isBlank())
-                || avoidZones.stream().anyMatch(id -> id == null || id.isBlank())) {
-            throw new IllegalArgumentException("landingPointsAlong/avoidZones 不能包含 null 或空白标识");
+        landingPointsAlong = Objects.requireNonNull(landingPointsAlong,
+                "landingPointsAlong 不能为空，无标注时请传 List.of()");
+        avoidZones = Objects.requireNonNull(avoidZones, "avoidZones 不能为空，无避让时请传 List.of()");
+        try {
+            landingPointsAlong = List.copyOf(landingPointsAlong);
+            avoidZones = List.copyOf(avoidZones);
+        } catch (NullPointerException e) {
+            throw new IllegalArgumentException("landingPointsAlong/avoidZones 不能包含 null", e);
         }
-        landingPointsAlong = List.copyOf(landingPointsAlong);
-        avoidZones = List.copyOf(avoidZones);
-        if (tauFine < 0) {
-            throw new IllegalArgumentException("精算飞行时长不能为负，实际 " + tauFine);
+        if (landingPointsAlong.stream().anyMatch(String::isBlank)
+                || avoidZones.stream().anyMatch(String::isBlank)) {
+            throw new IllegalArgumentException("landingPointsAlong/avoidZones 不能包含空白标识");
+        }
+        if (tauFine <= 0) {
+            throw new IllegalArgumentException("精算飞行时长必须为正，实际 " + tauFine);
         }
         if (!Double.isFinite(energyExact) || energyExact < 0 || energyExact > 100.0) {
             throw new IllegalArgumentException("精确能耗须为 [0,100] 内的有限数（满电百分比），实际 " + energyExact);

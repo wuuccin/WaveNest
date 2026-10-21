@@ -15,7 +15,7 @@ import java.util.Objects;
  * @param homeNestId    归属机巢标识
  * @param nestLon       归属机巢经度（6a 求解起点仍是机巢）
  * @param nestLat       归属机巢纬度
- * @param cruiseSpeedMs 机型巡航速度，m/s
+ * @param cruiseSpeedMs 机型巡航速度，m/s（须为正的有限数）
  * @param comboId       当前任务回溯的组合标识；取不到为 {@code null}（透传进返回结果）
  */
 @SuppressWarnings("MissingJavadoc")
@@ -33,7 +33,6 @@ public record DroneContext(
 
         String comboId) {
 
-    private static final double MAX_CRUISE_SPEED_MS = 100.0;
 
 
 
@@ -42,19 +41,24 @@ public record DroneContext(
     public DroneContext {
         Objects.requireNonNull(droneId, "droneId 不能为空");
         Objects.requireNonNull(homeNestId, "homeNestId 不能为空");
-        if (droneId.isBlank() || homeNestId.isBlank()) {
+        droneId = droneId.strip();
+        homeNestId = homeNestId.strip();
+        if (droneId.isEmpty() || homeNestId.isEmpty()) {
             throw new IllegalArgumentException("droneId/homeNestId 不能为空白字符串");
         }
-        if (comboId != null && comboId.isBlank()) {
-            comboId = null;
+        if (comboId != null) {
+            comboId = comboId.strip();
+            if (comboId.isEmpty()) {
+                comboId = null;
+            }
         }
         if (!Double.isFinite(nestLon) || !Double.isFinite(nestLat)
                 || nestLon < -180.0 || nestLon > 180.0 || nestLat < -90.0 || nestLat > 90.0) {
             throw new IllegalArgumentException("机巢坐标必须为有限数且经纬度在合法范围内");
         }
-        if (!Double.isFinite(cruiseSpeedMs) || !(cruiseSpeedMs > (double) 0) || cruiseSpeedMs > DroneContext.MAX_CRUISE_SPEED_MS) {
+        if (!Double.isFinite(cruiseSpeedMs) || cruiseSpeedMs <= 0.0) {
             throw new IllegalArgumentException(
-                    "机型巡航速度必须为正的有限数且在合理量级内，实际 " + cruiseSpeedMs);
+                    "机型巡航速度必须为正的有限数，实际 " + cruiseSpeedMs);
         }
     }
 }

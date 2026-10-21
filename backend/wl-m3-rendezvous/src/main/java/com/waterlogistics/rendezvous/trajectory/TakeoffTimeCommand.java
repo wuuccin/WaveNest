@@ -1,5 +1,7 @@
 package com.waterlogistics.rendezvous.trajectory;
 
+import com.waterlogistics.algo.meeting.model.EpochMillis;
+
 import java.util.Objects;
 
 
@@ -32,19 +34,21 @@ public record TakeoffTimeCommand(
 
     public TakeoffTimeCommand {
         Objects.requireNonNull(comboId, "comboId 不能为空");
-        if (comboId.isBlank()) {
+        comboId = comboId.strip();
+        if (comboId.isEmpty()) {
             throw new IllegalArgumentException("comboId 不能为空白字符串");
         }
         if (tauFineSec <= 0) {
             throw new IllegalArgumentException("精算飞行时长必须为正，实际 " + tauFineSec);
         }
-        if (timeGridMs <= 0L) {
-            throw new IllegalArgumentException("时刻精度粒度必须为正，实际 " + timeGridMs);
+        if (timeGridMs <= 0L || timeGridMs > 86_400_000L) {
+            throw new IllegalArgumentException(
+                    "时刻精度粒度须在 (0, 86400000] 毫秒内，实际 " + timeGridMs);
         }
-        if (meetMs < 1_000_000_000_000L) {
+        if (meetMs < EpochMillis.MIN_VALID_MS) {
             throw new IllegalArgumentException("会面时刻须为 Unix 毫秒值（疑似误传秒级时间戳），实际 " + meetMs);
         }
-        if (nowMs < 1_000_000_000_000L) {
+        if (nowMs < EpochMillis.MIN_VALID_MS) {
             throw new IllegalArgumentException("当前时刻须为 Unix 毫秒值（疑似误传秒级时间戳），实际 " + nowMs);
         }
     }
