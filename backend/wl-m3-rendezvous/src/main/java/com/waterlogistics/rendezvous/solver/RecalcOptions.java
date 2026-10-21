@@ -40,8 +40,10 @@ public record RecalcOptions(
         if (deadlineMs <= 0L) {
             throw new IllegalArgumentException("最晚会面时刻必须为正，实际 " + deadlineMs);
         }
-        if (meetWindowMarginSec < 0) {
-            throw new IllegalArgumentException("会面时间窗余量不能为负，实际 " + meetWindowMarginSec);
+        if (meetWindowMarginSec < 0 || meetWindowMarginSec > RendezvousSolveRequest.MAX_WINDOW_MARGIN_SEC) {
+            throw new IllegalArgumentException(
+                    "会面时间窗余量须在 [0, " + RendezvousSolveRequest.MAX_WINDOW_MARGIN_SEC
+                            + "] 秒内，实际 " + meetWindowMarginSec);
         }
         if (!Double.isFinite(convergeEpsilonSec) || !(convergeEpsilonSec > (double) 0)) {
             throw new IllegalArgumentException("收敛阈值必须为正的有限数，实际 " + convergeEpsilonSec);

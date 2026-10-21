@@ -49,7 +49,13 @@ public record HandoverCommand(
                 || plannedMeetLat < -90.0 || plannedMeetLat > 90.0) {
             throw new IllegalArgumentException("计划会面点坐标必须为有限数且经纬度在合法范围内");
         }
-        samples = List.copyOf(Objects.requireNonNull(samples, "samples 不能为空"));
+        List<HandoverSample> sampleCopy = Objects.requireNonNull(samples, "samples 不能为空");
+        for (HandoverSample sample : sampleCopy) {
+            if (sample == null) {
+                throw new IllegalArgumentException("末段样本序列不得包含 null 元素");
+            }
+        }
+        samples = List.copyOf(sampleCopy);
         if (samples.isEmpty()) {
             throw new IllegalArgumentException("末段样本序列不能为空");
         }

@@ -10,7 +10,7 @@ package com.waterlogistics.algo.meeting.model;
  * 本对象<b>不含精算量</b>（精算量见 {@code B_FlyableRoute}），两笔账不混（《81》§2.3 口径 3）。
  *
  * @param solutionId       本次求解结果标识（确定性生成，同输入同输出）
- * @param comboId          绑定的候选组合标识
+ * @param comboId          绑定的候选组合标识（重算路径取不到组合时为 null）
  * @param hasSolution      无实数解标志
  * @param noSolutionReason 无解原因（有解时为 null）
  * @param meetLon          会面点经度（无解 null）
@@ -48,6 +48,9 @@ public record B_RendezvousSolution(
 
         String snapshotVersion) {
 
+    /** 理论飞行时长上界：保证下游 int 秒 × 1000 换算毫秒时不溢出 */
+    private static final int MAX_TAU_SEC = Integer.MAX_VALUE / 1000;
+
     public B_RendezvousSolution {
         if (solutionId == null || solutionId.isBlank()) {
             throw new IllegalArgumentException("solutionId 不能为空");
@@ -67,6 +70,11 @@ public record B_RendezvousSolution(
                     || !Double.isFinite(meetLat) || meetLat < -90.0 || meetLat > 90.0) {
                 throw new IllegalArgumentException("会面点坐标必须为有限数且在合法范围内");
             }
+            if (meetTMin < EpochMillis.MIN_VALID_MS || meetTMax < EpochMillis.MIN_VALID_MS
+                    || shipArriveT < EpochMillis.MIN_VALID_MS || droneArriveT < EpochMillis.MIN_VALID_MS) {
+                throw new IllegalArgumentException("时刻字段须为 Unix 毫秒值（下界 "
+                        + EpochMillis.MIN_VALID_MS + "）");
+            }
             if (meetTMin > meetTMax) {
                 throw new IllegalArgumentException("会面时刻窗下界不得晚于上界");
             }
@@ -74,8 +82,8 @@ public record B_RendezvousSolution(
                     || droneArriveT < meetTMin || droneArriveT > meetTMax) {
                 throw new IllegalArgumentException("双方到达时刻必须落在会面时刻窗内");
             }
-            if (tauCoarse < 0 || tauCoarse > Integer.MAX_VALUE / 1000) {
-                throw new IllegalArgumentException("理论飞行时长超出可用范围，实际 " + tauCoarse);
+            if (tauCoarse < 0 || tauCoarse > MAX_TAU_SEC) {
+                throw new IllegalArgumentException("理论飞行时长须在 [0, " + MAX_TAU_SEC + "] 秒内，实际 " + tauCoarse);
             }
         } else {
             if (noSolutionReason == null) {

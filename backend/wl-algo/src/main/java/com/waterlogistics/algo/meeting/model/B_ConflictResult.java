@@ -1,7 +1,6 @@
 package com.waterlogistics.algo.meeting.model;
 
 import java.util.List;
-import java.util.Objects;
 
 /**
  * 冲突结论 ＋ 绕行航迹（{@code B_} 前缀＝算法层 B 组产出）——字段照《81-B组算法方案》
@@ -50,6 +49,9 @@ public record B_ConflictResult(
         if (!cpaAllNull && !cpaAllSet) {
             throw new IllegalArgumentException("CPA 三字段须同时存在或同时为空");
         }
+        if (cpaT != null && cpaT < 0L) {
+            throw new IllegalArgumentException("CPA 时刻须为非负的 Unix 毫秒值，实际 " + cpaT);
+        }
         if (cpaT != null && conflictSpaceTime != null
                 && (cpaT < conflictSpaceTime.tBegin() || cpaT > conflictSpaceTime.tEnd())) {
             throw new IllegalArgumentException("CPA 时刻须落在冲突区间内，实际 cpaT=" + cpaT
@@ -66,9 +68,13 @@ public record B_ConflictResult(
             if (detourRoute.isEmpty()) {
                 throw new IllegalArgumentException("绕行航迹不得为空列表");
             }
-            for (Waypoint waypoint : detourRoute) {
+            for (int i = 0; i < detourRoute.size(); i++) {
+                Waypoint waypoint = detourRoute.get(i);
                 if (waypoint == null) {
-                    throw new IllegalArgumentException("绕行航迹不得包含空航点");
+                    throw new IllegalArgumentException("绕行航迹第 " + i + " 个航点为空");
+                }
+                if (i > 0 && waypoint.t() <= detourRoute.get(i - 1).t()) {
+                    throw new IllegalArgumentException("绕行航迹须按时刻严格升序，下标 " + i + " 处不满足");
                 }
             }
             detourRoute = List.copyOf(detourRoute);

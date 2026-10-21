@@ -31,6 +31,9 @@ import java.util.Objects;
  */
 public final class TrackGenerator {
 
+    /** 航迹生成内核版本：生成规则变化时必须递增，否则同输入的 routeVersion 不会更新 */
+    private static final String ALGORITHM_VERSION = "track-gen-v1";
+
     private TrackGenerator() {
     }
 
@@ -90,8 +93,8 @@ public final class TrackGenerator {
      * 生成一段可飞航迹（起点 → 终点）。
      *
      * @param cmd 生成入参（航点数与速度等前置由 {@link GenerateRouteCommand} 构造期校验）
-     * @return 可飞航迹；{@code routeVersion} 由 routeId、起点时刻与几何指纹确定性生成，
-     * 任一有效输入变化（含同起点时刻重出）即换新版本
+     * @return 可飞航迹；{@code routeVersion} 是 routeId、起点时刻与几何内容的内容指纹，
+     * 同一输入重出得到同一版本，任一有效输入变化即换新版本
      */
     public static B_FlyableRoute generate(GenerateRouteCommand cmd) {
         Objects.requireNonNull(cmd, "cmd 不能为空");
@@ -112,7 +115,7 @@ public final class TrackGenerator {
                 cmd.comboId(),
                 waypoints,
                 tauFine,
-                Math.min(100.0, tauSec * cmd.energyRatePerSecPct()),
+                Math.min(100.0, (double) tauFine * cmd.energyRatePerSecPct()),
                 cmd.pathRisk(),
                 cmd.landingPointsAlong(),
                 cmd.avoidZones()
@@ -141,25 +144,31 @@ public final class TrackGenerator {
                 cmd.cruiseAltM(), cmd.outboundSpeedMs(), cmd.takeoffMs(),
                 cmd.waypointsPerLeg(), List.of(), List.of(), 0.0, 0.0));
 
-        long terminalStartMs = cmd.takeoffMs() + Math.round(
-                GeoApprox.distanceM(cmd.nestLon(), cmd.nestLat(), cmd.meetLon(), cmd.meetLat())
-                        / cmd.outboundSpeedMs() * 1000.0);
+        long terminalStartMs = outbound.waypoints().get(outbound.waypoints().size() - 1).t();
         B_FlyableRoute terminal = TrackGenerator.generate(new GenerateRouteCommand(
                 cmd.comboId(), cmd.routeId() + "-term",
                 cmd.meetLon(), cmd.meetLat(), cmd.handoverEndLon(), cmd.handoverEndLat(),
                 cmd.cruiseAltM(), cmd.terminalSpeedMs(), terminalStartMs,
                 cmd.waypointsPerLeg(), List.of(), List.of(), 0.0, 0.0));
 
-        long returnStartMs = terminalStartMs + Math.round(
-                GeoApprox.distanceM(cmd.meetLon(), cmd.meetLat(), cmd.handoverEndLon(), cmd.handoverEndLat())
-                        / cmd.terminalSpeedMs() * 1000.0);
+        long returnStartMs = terminal.waypoints().get(terminal.waypoints().size() - 1).t();
         B_FlyableRoute returning = TrackGenerator.generate(new GenerateRouteCommand(
                 cmd.comboId(), cmd.routeId() + "-ret",
                 cmd.handoverEndLon(), cmd.handoverEndLat(), cmd.returnTargetLon(), cmd.returnTargetLat(),
                 cmd.cruiseAltM(), cmd.returnSpeedMs(), returnStartMs,
                 cmd.waypointsPerLeg(), List.of(), List.of(), 0.0, 0.0));
 
-        // 段边界点只保留一次：末段与返程各跳过首点（与上一段末点同坐标、同时刻）
+        // 段边界点只保留一次：拼接前先确认相邻两段的边界点确实一致，防未来改动静默丢点
+        Waypoint outboundEnd = outbound.waypoints().get(outbound.waypoints().size() - 1);
+        Waypoint terminalStart = terminal.waypoints().get(0);
+        if (!sameBoundary(outboundEnd, terminalStart)) {
+            throw new IllegalStateException("段边界航点不一致：末段首点应等于去程末点");
+        }
+        Waypoint terminalEnd = terminal.waypoints().get(terminal.waypoints().size() - 1);
+        Waypoint returnStart = returning.waypoints().get(0);
+        if (!sameBoundary(terminalEnd, returnStart)) {
+            throw new IllegalStateException("段边界航点不一致：返程首点应等于末段末点");
+        }
         List<SegmentedWaypoint> points = new ArrayList<>(cmd.waypointsPerLeg() * 3 - 2);
         outbound.waypoints().forEach(w -> points.add(new SegmentedWaypoint(w, TrackSegment.OUTBOUND)));
         terminal.waypoints().subList(1, terminal.waypoints().size())
@@ -174,19 +183,50 @@ public final class TrackGenerator {
 
 
 
-    /** 生效输入指纹（SHA-256 前 16 位十六进制），保证任一输入变化即换版本 */
+    /**
+     * 生效输入指纹（SHA-256 前 16 位十六进制），保证任一输入变化即换版本
+     */
     private static String fingerprint(GenerateRouteCommand cmd) {
-        String payload = cmd.routeId() + "|" + cmd.comboId() + "|" + cmd.startMs()
-                + "|" + cmd.startLon() + "|" + cmd.startLat() + "|" + cmd.endLon() + "|" + cmd.endLat()
-                + "|" + cmd.cruiseAltM() + "|" + cmd.speedMs() + "|" + cmd.waypointCount()
-                + "|" + cmd.energyRatePerSecPct() + "|" + cmd.pathRisk()
-                + "|" + cmd.landingPointsAlong() + "|" + cmd.avoidZones();
+        StringBuilder payload = new StringBuilder(256);
+        TrackGenerator.appendField(payload, TrackGenerator.ALGORITHM_VERSION);
+        TrackGenerator.appendField(payload, cmd.routeId());
+        TrackGenerator.appendField(payload, cmd.comboId());
+        TrackGenerator.appendField(payload, Long.toString(cmd.startMs()));
+        TrackGenerator.appendField(payload, Double.toString(cmd.startLon()));
+        TrackGenerator.appendField(payload, Double.toString(cmd.startLat()));
+        TrackGenerator.appendField(payload, Double.toString(cmd.endLon()));
+        TrackGenerator.appendField(payload, Double.toString(cmd.endLat()));
+        TrackGenerator.appendField(payload, Double.toString(cmd.cruiseAltM()));
+        TrackGenerator.appendField(payload, Double.toString(cmd.speedMs()));
+        TrackGenerator.appendField(payload, Integer.toString(cmd.waypointCount()));
+        TrackGenerator.appendField(payload, Double.toString(cmd.energyRatePerSecPct()));
+        TrackGenerator.appendField(payload, Double.toString(cmd.pathRisk()));
+        TrackGenerator.appendField(payload, cmd.landingPointsAlong().toString());
+        TrackGenerator.appendField(payload, cmd.avoidZones().toString());
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] hash = digest.digest(payload.getBytes(StandardCharsets.UTF_8));
+            byte[] hash = digest.digest(payload.toString().getBytes(StandardCharsets.UTF_8));
             return HexFormat.of().formatHex(hash, 0, 8);
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("运行环境缺少 SHA-256 摘要算法", e);
         }
+    }
+
+
+
+
+
+    private static boolean sameBoundary(Waypoint left, Waypoint right) {
+        return left.t() == right.t()
+                && Double.compare(left.lon(), right.lon()) == 0
+                && Double.compare(left.lat(), right.lat()) == 0
+                && Double.compare(left.altM(), right.altM()) == 0;
+    }
+
+    /**
+     * 长度前缀写入，避免分隔符或列表文本串位导致指纹碰撞
+     */
+    private static void appendField(StringBuilder payload, String value) {
+        payload.append(value.length()).append(':').append(value).append(';');
     }
 }
