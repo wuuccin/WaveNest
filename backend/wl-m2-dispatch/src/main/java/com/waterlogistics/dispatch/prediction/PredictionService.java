@@ -15,6 +15,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 
 /**
@@ -60,6 +62,8 @@ public class PredictionService {
 
     private final RecomputeRequester recomputeRequester;
 
+    private final ApplicationEventPublisher eventPublisher;
+
     /** 每船最新快照。key = mmsi。 */
     private final Map<String, PredictionSnapshot> latestSnapshots = new ConcurrentHashMap<>();
 
@@ -72,8 +76,15 @@ public class PredictionService {
     private final Map<String, AtomicLong> versionCounters = new ConcurrentHashMap<>();
 
     public PredictionService(PredictionSettings settings, RecomputeRequester recomputeRequester) {
+        this(settings, recomputeRequester, event -> { });
+    }
+
+    @Autowired
+    public PredictionService(PredictionSettings settings, RecomputeRequester recomputeRequester,
+            ApplicationEventPublisher eventPublisher) {
         this.settings = settings;
         this.recomputeRequester = recomputeRequester;
+        this.eventPublisher = eventPublisher;
     }
 
     /**
@@ -125,6 +136,7 @@ public class PredictionService {
                 snapshot.validitySec(), snapshot.premise());
 
         maybeRequestRecompute(previous, snapshot);
+        eventPublisher.publishEvent(new PredictionUpdatedEvent(snapshot.toFrame()));
 
         return snapshot;
     }

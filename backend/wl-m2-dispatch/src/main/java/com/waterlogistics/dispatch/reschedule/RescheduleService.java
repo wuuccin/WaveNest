@@ -15,7 +15,6 @@ import com.waterlogistics.dispatch.queue.TaskQueueService;
 import com.waterlogistics.dispatch.rendezvous.RendezvousCoordinator;
 import com.waterlogistics.storage.entity.OrderTaskEntity;
 import com.waterlogistics.storage.repository.OrderTaskMapper;
-import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 import org.slf4j.Logger;
@@ -229,12 +228,8 @@ public class RescheduleService {
 
         // 第 4 步：调度中 → 派发新机
         taskQueueService.startDispatch(orderId);
-        taskQueueService.dispatch(orderId, best.droneId(), plan.takeoffTime());
-
-        // 第 5 步：会面点坐标回填（《22-界面契约》§5 会面点为组合级产物，须可回查）
-        order.setMeetLon(BigDecimal.valueOf(plan.meetLon()));
-        order.setMeetLat(BigDecimal.valueOf(plan.meetLat()));
-        orderTaskMapper.updateById(order);
+        taskQueueService.dispatch(orderId, best.droneId(), plan.takeoffTime(),
+                plan.meetLon(), plan.meetLat());
 
         log.info("重派完成：orderId={} droneId={} comboId={} 会面点={},{} 起飞={} 解={} 快照版本={}",
                 orderId, best.droneId(), best.comboId(), plan.meetLon(), plan.meetLat(),
