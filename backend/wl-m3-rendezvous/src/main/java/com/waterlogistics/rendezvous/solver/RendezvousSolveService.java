@@ -47,19 +47,13 @@ public class RendezvousSolveService {
      * @return 会面点解（有解／无解均属正常返回；追不上等无解走 {@code hasSolution=false}）
      * @throws SnapshotUnavailableException     端口查无该船快照——数据前置缺失，拒绝求解
      * @throws SnapshotVersionMismatchException 期望版本与快照实际版本不一致——拒绝求解
+     * @throws IllegalArgumentException         命令入参或快照点列非法——拒绝求解
      *                                          （《81》§2.1 硬要求 1：本轮调度多候选须共用同一版本）
      */
     public B_RendezvousSolution solve(RendezvousCommand cmd) {
         Objects.requireNonNull(cmd, "cmd 不能为空");
-        ShipTrackSnapshot snapshot = this.snapshotPort.latest(cmd.shipMmsi());
-        if (snapshot == null) {
-            throw new SnapshotUnavailableException(cmd.shipMmsi());
-        }
-        if (snapshot.version() == null
-                || !Objects.equals(cmd.snapshotVersion(), snapshot.version())) {
-            throw new SnapshotVersionMismatchException(
-                    cmd.shipMmsi(), cmd.snapshotVersion(), snapshot.version());
-        }
+        ShipTrackSnapshot snapshot = SnapshotGate.fetchVerified(
+                this.snapshotPort, cmd.shipMmsi(), cmd.snapshotVersion());
         return RendezvousSolver.solve(new RendezvousSolveRequest(
                 cmd.comboId(), cmd.nestLon(), cmd.nestLat(), cmd.cruiseSpeedMs(),
                 cmd.representativeWind(), snapshot, null /* shipState：常规求解回落快照插值 */,

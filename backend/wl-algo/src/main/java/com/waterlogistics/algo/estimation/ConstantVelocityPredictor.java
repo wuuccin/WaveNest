@@ -1,5 +1,7 @@
 package com.waterlogistics.algo.estimation;
 
+import com.waterlogistics.algo.meeting.GeoApprox;
+
 import java.util.ArrayList;
 import java.util.List;
 
@@ -24,7 +26,7 @@ import java.util.List;
 public final class ConstantVelocityPredictor {
 
     /** 1° 纬度对应的米数（WGS84 球面近似，演示期足够）。 */
-    public static final double METERS_PER_DEG_LAT = 111_320.0;
+    public static final double METERS_PER_DEG_LAT = GeoApprox.METERS_PER_DEG;
 
     /** 节 → m/s 的换算系数（1 kn = 1852 m / 3600 s）。 */
     public static final double KNOT_TO_MS = 1852.0 / 3600.0;

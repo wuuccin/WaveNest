@@ -38,7 +38,12 @@ public class FeasibilityJudge {
 
     /** 判定参数（正式路径读 sys_param，由调用方注入） */
     public record Params(
-            /** 风速上限（m/s，取最不利风况后比对） */
+            /**
+             * 风速上限（m/s）——<b>仅作缺省回落</b>：组合未登记机型抗风上限时用它兜底，
+             * 并给出「未登记、按统一上限判」的原因。
+             *
+             * <p>有登记值时必须用机型值——否则「同一风速下 A 型淘汰、B 型保留」不成立（10-20 B1）。
+             */
             double maxWindMs,
             /** 电量最低保留（%，判定通过后仍须余出的量） */
             double reserveBatteryPercent,
@@ -48,7 +53,7 @@ public class FeasibilityJudge {
             double batteryPerKgPercent) {
 
         public static Params defaults() {
-            // 演示标定：上限 10 m/s（对应 wind_safety 反向标定的简化），耗电 1.5%/km、0.2%/kg、保留 20%
+            // 演示标定：回落上限 10 m/s（对应 wind_safety 反向标定的简化），耗电 1.5%/km、0.2%/kg、保留 20%
             return new Params(10.0, 20.0, 1.5, 0.2);
         }
     }
@@ -56,7 +61,7 @@ public class FeasibilityJudge {
     /**
      * 判定一个候选组合的可行性（简化规则）。
      *
-     * @param combo        候选生成输出
+     * @param combo        候选生成输出（<b>自带机型抗风上限</b>，见 {@link CandidateGenerator.CandidateCombo#windLimitMs()}）
      * @param distKm       本次任务单程距离（km，调用方按取货点→交货点或机巢→取货点口径传入）
      * @param worstWindMs  现场最不利风速（m/s；首版实测代偿，取自 data.weather 按位置取最不利）
      * @param payloadKg    订单载荷（kg，载荷附加耗电用）
@@ -69,9 +74,22 @@ public class FeasibilityJudge {
                                    Params params) {
         List<String> reasons = new ArrayList<>();
 
-        // 1) 风况闸（首版实测代偿：本值已含"以实测代偿预报"的口径，wind_safety 误差项不在此重复计）
-        if (worstWindMs > params.maxWindMs()) {
-            reasons.add(String.format("风况超限：最不利风 %.1f m/s > 上限 %.1f m/s",
+        // 1) 风况闸：机型抗风等级 ≥ 任务区最不利风级（62 判据 windclass_match）
+        //
+        //    抗风上限取「机型」值（随组合透传），不是调用方传的统一阈值——
+        //    这是「同一风速下 A 型淘汰、B 型保留」能成立的唯一前提（10-20 B1）。
+        //    统一上限 maxWindMs 退居两用：①未登记机型时的回落；②现场整体禁飞的上界。
+        double windLimit = combo.windLimitMs();
+        boolean registered = Double.isFinite(windLimit) && windLimit > 0;
+        if (registered) {
+            if (worstWindMs > windLimit) {
+                reasons.add(String.format("机型抗风不足：最不利风 %.1f m/s > %s 机型抗风上限 %.1f m/s",
+                        worstWindMs, combo.type(), windLimit));
+            }
+        } else if (worstWindMs > params.maxWindMs()) {
+            // 未登记时不能默默放行，也不能按 0 拦死——按统一上限判，并在原因里写明是回落口径
+            reasons.add(String.format(
+                    "风况超限：最不利风 %.1f m/s > 上限 %.1f m/s（机型抗风未登记 drone.wind_limit_ms，取统一上限）",
                     worstWindMs, params.maxWindMs()));
         }
 

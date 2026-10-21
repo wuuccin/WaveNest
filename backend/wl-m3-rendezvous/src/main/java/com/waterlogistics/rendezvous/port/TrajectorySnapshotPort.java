@@ -19,6 +19,7 @@ import com.waterlogistics.algo.meeting.model.ShipTrackSnapshot;
  *
  * <p>本接口<b>纯读</b>：不落库、不改占位、无状态副作用（《81》§2.4 硬约束 1）。
  */
+@FunctionalInterface
 public interface TrajectorySnapshotPort {
 
     /**

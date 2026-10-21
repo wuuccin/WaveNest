@@ -76,3 +76,4 @@ application-local.properties
 # ---------- 本地工具会话数据（不入库）----------
 .codebuddy/
 /水上低空物流智能调度/
+/tmp/

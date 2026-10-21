@@ -5,6 +5,9 @@ import com.waterlogistics.contract.rest.GateSource;
 import com.waterlogistics.contract.rest.GateStatus;
 import com.waterlogistics.contract.state.OrderStatus;
 import com.waterlogistics.dispatch.gate.DispatchGateService;
+import com.waterlogistics.dispatch.order.OrderAdmissionService;
+import com.waterlogistics.dispatch.order.OrderSubmitRequest;
+import com.waterlogistics.dispatch.order.OrderSubmitResponse;
 import com.waterlogistics.dispatch.queue.TaskQueueService;
 import com.waterlogistics.storage.entity.OrderTaskEntity;
 import com.waterlogistics.storage.entity.TaskLogEntity;
@@ -41,6 +44,8 @@ class SmokeM6M2Test {
     private TaskQueueService taskQueueService;
     @Autowired
     private DispatchGateService dispatchGateService;
+    @Autowired
+    private OrderAdmissionService admissionService;
 
     /** 判据：sys_param 有行、关键键可读（含 M6 新增两键）；2026-10-18 改按键断言，不锁总数 */
     @Test
@@ -64,26 +69,27 @@ class SmokeM6M2Test {
         assertThat(sysParamLoader.getInt("nestCapacity", 0)).isEqualTo(4);
     }
 
-    /** 判据：实体读写 + 状态机主链三步流转 + task_log 同步留痕 */
+    /**
+     * 判据：主链自然触发 —— 下单后由 DispatchTrigger 自动推进
+     * 「待受理 → 待调度 → 调度中」，无需手动调用 accept/startDispatch。
+     * 再手动 dispatch 走到「已派发」，验证 task_log 留痕。
+     */
     @Test
     void orderStateMachineWalk() {
-        OrderTaskEntity order = new OrderTaskEntity();
-        order.setOrderId("SMOKE-001");
-        order.setShipMmsi("123456789");
-        order.setCreateTime(LocalDateTime.now());
-        order.setStatus(OrderStatus.PENDING_ACCEPT.getValue());
-        orderTaskMapper.insert(order);
+        // 下单（B0 自然触发：submit 内部发布事件，DispatchTrigger 落库 + accept + startDispatch）
+        OrderSubmitResponse resp = admissionService.submit(new OrderSubmitRequest(
+                "123456789", 5.5, "医疗物资",
+                System.currentTimeMillis() + 3_600_000L, "URGENT"));
+        assertThat(resp.accepted()).isTrue();
+        String orderId = resp.orderId();
 
-        taskQueueService.accept(order);
-        assertThat(orderTaskMapper.selectById("SMOKE-001").getStatus())
-            .isEqualTo(OrderStatus.WAIT_DISPATCH.getValue());
+        // 自然触发后订单应已到「调度中」（不再卡在待受理/待调度）
+        OrderTaskEntity afterTrigger = orderTaskMapper.selectById(orderId);
+        assertThat(afterTrigger.getStatus()).isEqualTo(OrderStatus.DISPATCHING.getValue());
 
-        taskQueueService.startDispatch("SMOKE-001");
-        assertThat(orderTaskMapper.selectById("SMOKE-001").getStatus())
-            .isEqualTo(OrderStatus.DISPATCHING.getValue());
-
-        taskQueueService.dispatch("SMOKE-001", "DRONE-SMOKE", LocalDateTime.now().plusMinutes(30));
-        OrderTaskEntity after = orderTaskMapper.selectById("SMOKE-001");
+        // 手动派发（候选/会面/派发由后续调度链异步完成，此处验证派发步）
+        taskQueueService.dispatch(orderId, "DRONE-SMOKE", LocalDateTime.now().plusMinutes(30));
+        OrderTaskEntity after = orderTaskMapper.selectById(orderId);
         assertThat(after.getStatus()).isEqualTo(OrderStatus.DISPATCHED.getValue());
         assertThat(after.getDroneId()).isEqualTo("DRONE-SMOKE");
 
@@ -91,11 +97,11 @@ class SmokeM6M2Test {
         assertThatThrownBy(() -> taskQueueService.accept(after))
             .isInstanceOf(IllegalStateException.class);
 
-        // task_log 与流转同步留痕（受理/组批调度/派发 = 3 条，中文状态词）
+        // task_log 与流转同步留痕：订单接入(OrderAdmissionService) + 受理 + 组批调度 + 派发 = 4 条
         Long logs = taskLogMapper.selectCount(
             new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<TaskLogEntity>()
-                .eq(TaskLogEntity::getOrderId, "SMOKE-001"));
-        assertThat(logs).isEqualTo(3L);
+                .eq(TaskLogEntity::getOrderId, orderId));
+        assertThat(logs).isEqualTo(4L);
     }
 
     /** 判据：闸门口径（22 §3.2）——正常放行 / 熔断回显契约 record */
@@ -114,5 +120,40 @@ class SmokeM6M2Test {
 
         dispatchGateService.clear(GateSource.MANUAL);
         assertThat(dispatchGateService.summary().gateStatus()).isEqualTo(GateStatus.NORMAL);
+    }
+
+    /**
+     * B3 判据：组批入口查闸门。熔断时新单转「已受理待唤醒」而非拒单；
+     * 闸门解除后可重入队调度。
+     */
+    @Test
+    void gateCutoff_deferredNotRejected() {
+        try {
+            // 熔断
+            dispatchGateService.trip(GateSource.AUTO);
+
+            // 下单：自然触发到 startDispatch 时闸门熔断 → 已受理待唤醒（不拒单）
+            OrderSubmitResponse resp = admissionService.submit(new OrderSubmitRequest(
+                    "223456789", 3.0, "食品",
+                    System.currentTimeMillis() + 3_600_000L, "NORMAL"));
+            assertThat(resp.accepted()).isTrue();
+            String orderId = resp.orderId();
+
+            OrderTaskEntity deferred = orderTaskMapper.selectById(orderId);
+            assertThat(deferred.getStatus())
+                .isEqualTo(OrderStatus.ACCEPTED_WAIT_WAKE.getValue());
+
+            // 解除熔断后重入队 → 待调度 → 调度中
+            dispatchGateService.clear(GateSource.AUTO);
+            taskQueueService.requeue(orderId);
+            assertThat(orderTaskMapper.selectById(orderId).getStatus())
+                .isEqualTo(OrderStatus.WAIT_DISPATCH.getValue());
+
+            taskQueueService.startDispatch(orderId);
+            assertThat(orderTaskMapper.selectById(orderId).getStatus())
+                .isEqualTo(OrderStatus.DISPATCHING.getValue());
+        } finally {
+            dispatchGateService.reset();
+        }
     }
 }

@@ -19,8 +19,8 @@ import org.junit.jupiter.api.Test;
  * <p>四个阈值与 `sys_param` 的会面键同口径：horizon 1800 s、窗口余量 120 s、收敛阈值 1 s、迭代 50。
  * 手算理想值：τ* = (10 000 + 5t) / 15 ⇒ t = 1 000 s；会面点在船起点正东 5 000 m；
  * τ_coarse = 巢到会面点 15 km ÷ 15 m/s = 1 000 s；起飞时刻 = t* − τ_coarse ≈ NOW。
- * 生产收敛阈值 ε=1 s 会在不动点附近截断（实测 t*＝+999 543 ms、起飞＝−457 ms），
- * 断言按 ε 取容差，精确基线数值见运行输出 `WIND-ZERO BASELINE` 行。
+ * 生产收敛阈值 ε=1 s 的固定点结果可能早于真实根（现按二分根取值，实测 t*＝+1 000 000 ms、
+ * 起飞＝0 ms）；断言按 ε 取容差，精确基线数值见运行输出 `WIND-ZERO BASELINE` 行。
  */
 class RendezvousWindZeroBaselineTest {
 

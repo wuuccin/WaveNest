@@ -1,6 +1,7 @@
 package com.waterlogistics.rendezvous.solver;
 
 import java.util.Objects;
+import java.util.regex.Pattern;
 
 
 
@@ -27,8 +28,9 @@ import java.util.Objects;
  * @param orderId         订单标识（追溯用，不参与求解）
  * @param triggerReason   触发原因（追溯用，不参与求解）
  * @param timestamp       请求时刻，Unix 毫秒（追溯用，不参与求解）
- * @param stateSnapshot   当前状态快照（船侧求解必需，机侧追溯用）
+ * @param stateSnapshot   当前状态快照（始终必填；船侧求解必需，机侧字段仅追溯用）
  */
+@SuppressWarnings("MissingJavadoc")
 public record RendezvousRecalcRequest(
 
         String requestId,
@@ -47,17 +49,35 @@ public record RendezvousRecalcRequest(
 
         RecalcStateSnapshot stateSnapshot) {
 
+    private static final Pattern PATTERN = Pattern.compile("\\d{9}");
+
+
+
+
+
     public RendezvousRecalcRequest {
         Objects.requireNonNull(requestId, "requestId 不能为空");
         Objects.requireNonNull(droneId, "droneId 不能为空");
         Objects.requireNonNull(snapshotVersion, "snapshotVersion 不能为空");
         Objects.requireNonNull(shipMmsi, "shipMmsi 不能为空");
         Objects.requireNonNull(stateSnapshot, "stateSnapshot 不能为空");
-        if (requestId.isBlank() || droneId.isBlank() || snapshotVersion.isBlank() || shipMmsi.isBlank()) {
-            throw new IllegalArgumentException("requestId/droneId/snapshotVersion/shipMmsi 不能为空白字符串");
+        requestId = requestId.strip();
+        droneId = droneId.strip();
+        snapshotVersion = snapshotVersion.strip();
+        shipMmsi = shipMmsi.strip();
+        orderId = orderId == null ? null : orderId.strip();
+        triggerReason = triggerReason == null ? null : triggerReason.strip();
+        if (requestId.isBlank() || droneId.isBlank() || snapshotVersion.isBlank()) {
+            throw new IllegalArgumentException("requestId/droneId/snapshotVersion 不能为空白字符串");
         }
-        if (timestamp <= 0) {
-            throw new IllegalArgumentException("请求时刻必须为正的 Unix 毫秒值，实际 " + timestamp);
+        if ((orderId != null && orderId.isBlank()) || (triggerReason != null && triggerReason.isBlank())) {
+            throw new IllegalArgumentException("orderId/triggerReason 若提供则不能为空白字符串");
+        }
+        if (!RendezvousRecalcRequest.PATTERN.matcher(shipMmsi).matches()) {
+            throw new IllegalArgumentException("shipMmsi 须为 9 位数字，实际 " + shipMmsi);
+        }
+        if (timestamp < 1_000_000_000_000L) {
+            throw new IllegalArgumentException("请求时刻须为 Unix 毫秒值（疑似误传秒级时间戳），实际 " + timestamp);
         }
     }
 }

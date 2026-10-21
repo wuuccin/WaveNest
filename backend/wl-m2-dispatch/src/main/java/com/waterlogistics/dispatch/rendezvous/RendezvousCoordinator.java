@@ -3,6 +3,7 @@ package com.waterlogistics.dispatch.rendezvous;
 import com.waterlogistics.algo.meeting.model.B_RendezvousSolution;
 import com.waterlogistics.algo.meeting.model.ShipTrackSnapshot;
 import com.waterlogistics.algo.meeting.model.Wind;
+import com.waterlogistics.dispatch.weather.WeatherSnapshotPort;
 import com.waterlogistics.rendezvous.facade.RendezvousFacade;
 import com.waterlogistics.rendezvous.port.DroneContext;
 import com.waterlogistics.rendezvous.port.DroneContextPort;
@@ -20,7 +21,8 @@ import org.springframework.stereotype.Service;
  *
  * <p><b>为什么需要这一层</b>：M3 的 {@link RendezvousFacade} 只提供算法能力，
  * 但<b>求解所需的输入有一半在 M2 手里</b>——船侧预测快照（M2 常驻层）、
- * 执行机台账（{@code drone}／{@code nest} 表）、求解阈值（{@code sys_param}）。
+ * 执行机台账（{@code drone}／{@code nest} 表）、求解阈值（{@code sys_param}）、
+ * 代表风况（{@code weather} 最新观测，见 {@link WeatherSnapshotPort}）。
  * 这些拼接逻辑若散落在调度主链各处，会重复构造命令、重复取快照，
  * 且<b>版本一致性锚（{@code snapshotVersion}）很容易被各调用点搞乱</b>。
  * 故集中到本类，调度链只调一个方法、拿一个 {@link MeetPlan}。
@@ -64,14 +66,16 @@ public class RendezvousCoordinator {
     private final DroneContextPort droneContextPort;
     private final TrajectorySnapshotPort snapshotPort;
     private final SysParamLoader sysParamLoader;
+    private final WeatherSnapshotPort weatherSnapshotPort;
 
     public RendezvousCoordinator(RendezvousFacade rendezvousFacade,
             DroneContextPort droneContextPort, TrajectorySnapshotPort snapshotPort,
-            SysParamLoader sysParamLoader) {
+            SysParamLoader sysParamLoader, WeatherSnapshotPort weatherSnapshotPort) {
         this.rendezvousFacade = rendezvousFacade;
         this.droneContextPort = droneContextPort;
         this.snapshotPort = snapshotPort;
         this.sysParamLoader = sysParamLoader;
+        this.weatherSnapshotPort = weatherSnapshotPort;
     }
 
     /**
@@ -143,11 +147,15 @@ public class RendezvousCoordinator {
     /**
      * 代表风况。
      *
-     * <p><b>口径说明</b>：风况应来自气象快照；M1 的 {@code data.weather}
-     * <b>尚无消费端</b>（见 {@code 72-阻塞缺陷修复记录} §5），此处先按缺省 0 m/s
-     * 处理，即<b>不修正有效速度</b>。气象链接通后应改为取最新风场快照。
+     * <p><b>取数口径</b>：优先取气象最新观测（风速、风向）；无观测或数据不可用时回落
+     * {@code sys_param} 的静态风况（缺省 0 m/s，即不修正有效速度）——气象链路异常
+     * 不得中断调度主链。
      */
     private Wind representativeWind() {
+        WeatherSnapshotPort.LatestWind latest = weatherSnapshotPort.latest();
+        if (latest != null) {
+            return new Wind(latest.speedMs(), latest.dirDeg(), 0.0);
+        }
         return new Wind(
                 sysParamLoader.getDouble(WIND_SPEED_KEY, 0.0),
                 sysParamLoader.getDouble(WIND_DIR_DEG_KEY, 0.0),

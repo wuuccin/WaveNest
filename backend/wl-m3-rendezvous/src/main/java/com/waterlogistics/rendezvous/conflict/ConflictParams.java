@@ -7,7 +7,7 @@ package com.waterlogistics.rendezvous.conflict;
  *
  * @param horizontalSepM 水平安全间隔，米
  * @param verticalSepM   垂直安全间隔，米
- * @param sampleStepMs   冲突时间采样步长，毫秒（正数；过大值降低检出分辨率——短于一步的冲突可能漏报，上界由调用方按最短可检冲突口径控制）
+ * @param sampleStepMs   冲突时间采样步长，毫秒（10–600000；过小造成迭代膨胀，过大降低检出分辨率）
  */
 public record ConflictParams(
 
@@ -17,14 +17,25 @@ public record ConflictParams(
 
         long sampleStepMs) {
 
+    private static final long MIN_SAMPLE_STEP_MS = 10L;
+
+    private static final long MAX_SAMPLE_STEP_MS = 600_000L;
+
+
+
+
+
+    @SuppressWarnings("MissingJavadoc")
     public ConflictParams {
-        if (!Double.isFinite(horizontalSepM) || !Double.isFinite(verticalSepM) || !(horizontalSepM > 0) || !(verticalSepM > 0)) {
-            throw new IllegalArgumentException(
-                    "安全间隔必须为正的有限数，实际 horizontalSepM=" + horizontalSepM + ", verticalSepM=" + verticalSepM
-            );
+        if (!Double.isFinite(horizontalSepM) || !(horizontalSepM > (double) 0)) {
+            throw new IllegalArgumentException("水平安全间隔必须为正的有限数，实际 " + horizontalSepM);
         }
-        if (sampleStepMs <= 0) {
-            throw new IllegalArgumentException("采样步长必须为正，实际 " + sampleStepMs);
+        if (!Double.isFinite(verticalSepM) || !(verticalSepM > (double) 0)) {
+            throw new IllegalArgumentException("垂直安全间隔必须为正的有限数，实际 " + verticalSepM);
+        }
+        if (sampleStepMs < ConflictParams.MIN_SAMPLE_STEP_MS || sampleStepMs > ConflictParams.MAX_SAMPLE_STEP_MS) {
+            throw new IllegalArgumentException("采样步长须在 [" + ConflictParams.MIN_SAMPLE_STEP_MS + ", "
+                                                       + ConflictParams.MAX_SAMPLE_STEP_MS + "] ms 内，实际 " + sampleStepMs);
         }
     }
 }

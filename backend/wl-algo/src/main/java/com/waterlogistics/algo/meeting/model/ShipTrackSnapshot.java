@@ -17,7 +17,7 @@ import java.util.List;
  * @param shipMmsi    目标船标识（对应 A 组快照字段 {@code shipMMSI}）
  * @param t0          快照生成时刻，Unix 毫秒
  * @param validitySec 预测有效期，秒
- * @param points      时间升序预测点列，点间线性插值（《81》§3.1 步骤 3）
+ * @param points      时间严格升序的预测点列（不含空元素；构造时防御拷贝；可为 null 表示无点列）
  */
 public record ShipTrackSnapshot(
 
@@ -30,4 +30,19 @@ public record ShipTrackSnapshot(
         int validitySec,
 
         List<ShipPoint> points) {
+
+    public ShipTrackSnapshot {
+        if (points != null) {
+            try {
+                points = List.copyOf(points);
+            } catch (NullPointerException e) {
+                throw new IllegalArgumentException("快照点列不能包含空元素", e);
+            }
+            for (int i = 1; i < points.size(); i++) {
+                if (points.get(i).t() <= points.get(i - 1).t()) {
+                    throw new IllegalArgumentException("快照点列时间必须严格升序");
+                }
+            }
+        }
+    }
 }

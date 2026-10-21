@@ -1,6 +1,7 @@
 package com.waterlogistics.algo.meeting.model;
 
 import java.util.List;
+import java.util.Objects;
 
 /**
  * 冲突结论 ＋ 绕行航迹（{@code B_} 前缀＝算法层 B 组产出）——字段照《81-B组算法方案》
@@ -36,4 +37,41 @@ public record B_ConflictResult(
         List<Waypoint> detourRoute,
 
         String checksumVersion) {
+
+    public B_ConflictResult {
+        if (checksumVersion == null || checksumVersion.isBlank()) {
+            throw new IllegalArgumentException("checksumVersion 不能为空");
+        }
+        if (conflictFlag != (conflictSpaceTime != null)) {
+            throw new IllegalArgumentException("冲突标志与冲突区间必须一致");
+        }
+        boolean cpaAllNull = cpaPoint == null && cpaT == null && cpaDistanceM == null;
+        boolean cpaAllSet = cpaPoint != null && cpaT != null && cpaDistanceM != null;
+        if (!cpaAllNull && !cpaAllSet) {
+            throw new IllegalArgumentException("CPA 三字段须同时存在或同时为空");
+        }
+        if (cpaT != null && conflictSpaceTime != null
+                && (cpaT < conflictSpaceTime.tBegin() || cpaT > conflictSpaceTime.tEnd())) {
+            throw new IllegalArgumentException("CPA 时刻须落在冲突区间内，实际 cpaT=" + cpaT
+                    + ", tBegin=" + conflictSpaceTime.tBegin()
+                    + ", tEnd=" + conflictSpaceTime.tEnd());
+        }
+        if (cpaDistanceM != null && (!Double.isFinite(cpaDistanceM) || cpaDistanceM < 0.0)) {
+            throw new IllegalArgumentException("CPA 距离须为非负有限数，实际 " + cpaDistanceM);
+        }
+        if (detourRoute != null) {
+            if (!conflictFlag) {
+                throw new IllegalArgumentException("无冲突时不应给出绕行航迹");
+            }
+            if (detourRoute.isEmpty()) {
+                throw new IllegalArgumentException("绕行航迹不得为空列表");
+            }
+            for (Waypoint waypoint : detourRoute) {
+                if (waypoint == null) {
+                    throw new IllegalArgumentException("绕行航迹不得包含空航点");
+                }
+            }
+            detourRoute = List.copyOf(detourRoute);
+        }
+    }
 }

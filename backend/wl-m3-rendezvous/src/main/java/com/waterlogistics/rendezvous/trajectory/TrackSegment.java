@@ -1,7 +1,7 @@
 package com.waterlogistics.rendezvous.trajectory;
 
-import java.util.HashSet;
-import java.util.Set;
+import lombok.Getter;
+
 
 
 
@@ -13,15 +13,25 @@ import java.util.Set;
  */
 public enum TrackSegment {
 
-    /** 机巢 → 会面点 */
+    /**
+     * 机巢 → 会面点
+     */
     OUTBOUND("去程"),
 
-    /** 会面点 → 交接完成位置（甲板上方控制段） */
+    /**
+     * 会面点 → 交接完成位置（甲板上方控制段）
+     */
     TERMINAL("末段交接"),
 
-    /** 交接完成位置 → 归巢落点 */
+    /**
+     * 交接完成位置 → 归巢落点
+     */
     RETURN("返程");
 
+    /**
+     * 分段着色的对端口径词（中文）
+     */
+    @Getter
     private final String value;
 
 
@@ -32,27 +42,6 @@ public enum TrackSegment {
         this.value = value;
     }
 
-
-
-
-
-    static {
-        Set<String> seen = new HashSet<>();
-        for (TrackSegment segment : TrackSegment.values()) {
-            if (!seen.add(segment.value)) {
-                throw new IllegalStateException("航迹分段口径词重复：" + segment.value);
-            }
-        }
-    }
-
-    /**
-     * 返回分段着色的对端口径词。
-     *
-     * @return 分段着色的对端口径词（中文）
-     */
-    public String getValue() {
-        return this.value;
-    }
 
 
 
@@ -69,12 +58,12 @@ public enum TrackSegment {
         if (value == null || value.isBlank()) {
             throw new IllegalArgumentException("航迹分段不能为空");
         }
-        String normalized = value.trim();
+        String normalized = value.replace('\u00A0', ' ').strip();
         for (TrackSegment segment : TrackSegment.values()) {
             if (segment.value.equals(normalized)) {
                 return segment;
             }
         }
-        throw new IllegalArgumentException("未知航迹分段：" + value);
+        throw new IllegalArgumentException("未知航迹分段：" + normalized);
     }
 }

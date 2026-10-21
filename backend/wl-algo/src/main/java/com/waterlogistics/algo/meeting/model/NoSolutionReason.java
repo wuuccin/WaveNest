@@ -44,7 +44,7 @@ public enum NoSolutionReason {
         if (value == null || value.isBlank()) {
             throw new IllegalArgumentException("无解原因不能为空");
         }
-        String normalized = value.trim();
+        String normalized = value.strip();
         for (NoSolutionReason reason : values()) {
             if (reason.value.equals(normalized)) {
                 return reason;
