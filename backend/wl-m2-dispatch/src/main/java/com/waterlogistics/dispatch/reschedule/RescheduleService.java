@@ -1,6 +1,5 @@
 package com.waterlogistics.dispatch.reschedule;
 
-import com.waterlogistics.algo.candidate.CandidateGenerator;
 import com.waterlogistics.algo.inflight.HeadingSample;
 import com.waterlogistics.algo.inflight.HeadingWindowDelta;
 import com.waterlogistics.algo.inflight.HomecomingDecision;
@@ -9,17 +8,10 @@ import com.waterlogistics.algo.inflight.HomecomingParams;
 import com.waterlogistics.algo.inflight.IntentChangeJudge;
 import com.waterlogistics.algo.inflight.IntentChangeSignal;
 import com.waterlogistics.algo.inflight.NestCandidate;
-import com.waterlogistics.dispatch.candidate.CandidateSelector;
 import com.waterlogistics.dispatch.homecoming.HomecomingService;
+import com.waterlogistics.dispatch.plan.DispatchOrchestrator;
 import com.waterlogistics.dispatch.queue.TaskQueueService;
-import com.waterlogistics.dispatch.rendezvous.RendezvousCoordinator;
-import com.waterlogistics.storage.entity.OrderTaskEntity;
-import com.waterlogistics.storage.repository.OrderTaskMapper;
-import java.math.BigDecimal;
-import java.time.LocalDateTime;
 import java.util.List;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -49,31 +41,21 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class RescheduleService {
 
-    private static final Logger log = LoggerFactory.getLogger(RescheduleService.class);
-
     /** 返航复核与三级落点判定（模块层编排，落《包结构设计》行 84） */
     private final HomecomingService homecoming;
 
-    /** 动态会面求解协调（M2 侧唯一调 M3 门面的入口，2026-10-17 接） */
-    private final RendezvousCoordinator rendezvous;
-
-    /** 重入队与派发（张睿哲归口，序 4） */
+    /** 重入队（张睿哲归口，序 4） */
     private final TaskQueueService taskQueueService;
 
-    private final CandidateSelector candidateSelector;
-
-    private final OrderTaskMapper orderTaskMapper;
+    /** 选机→会面→派发 共用编排（C0 抽出，10-21；首派与重派同一串法） */
+    private final DispatchOrchestrator dispatchOrchestrator;
 
     public RescheduleService(TaskQueueService taskQueueService,
-            CandidateSelector candidateSelector,
-            OrderTaskMapper orderTaskMapper,
             HomecomingService homecoming,
-            RendezvousCoordinator rendezvous) {
+            DispatchOrchestrator dispatchOrchestrator) {
         this.taskQueueService = taskQueueService;
-        this.candidateSelector = candidateSelector;
-        this.orderTaskMapper = orderTaskMapper;
         this.homecoming = homecoming;
-        this.rendezvous = rendezvous;
+        this.dispatchOrchestrator = dispatchOrchestrator;
     }
 
     /**
@@ -181,7 +163,7 @@ public class RescheduleService {
     }
 
     /**
-     * 重派入口（张睿哲，序 4）：重入队 → 选机 → 派发。
+     * 重派入口（张睿哲，序 4）：重入队 → 派发编排（选机 → 会面 → 派发）。
      *
      * <p>触发：吴可欣「放弃会面 → 订单重入队」事件之后。流程严格照分水岭口径
      * （《10-16》四·硬口径）：订单先重入队、再重派一架新机，<b>不是</b>让原机改派
@@ -190,56 +172,33 @@ public class RescheduleService {
      * <p>步骤：
      * <ol>
      *   <li>{@link TaskQueueService#requeue} 重入队（清原机，状态回待调度）；</li>
-     *   <li>{@link CandidateSelector#selectBest} 重新选机；</li>
-     *   <li><b>会面点求解</b>（2026-10-17 新增）：调 {@link RendezvousCoordinator#solveFor}
-     *       真实走 M3 的 {@code RendezvousFacade#solve}，产出会面点与起飞时刻；</li>
-     *   <li>{@link TaskQueueService#startDispatch} + {@link TaskQueueService#dispatch} 派发新机；
-     *       会面点坐标一并回填 {@code order_task.meet_lon/meet_lat}。</li>
+     *   <li>{@link DispatchOrchestrator#orchestrate} 共用派发编排（C0 抽出）：
+     *       组批 → 选机 → 会面求解 → 派发 → 回填会面点，
+     *       与首次派发（{@code DispatchTrigger}）同一串法。</li>
      * </ol>
-     * 无可用候选时抛异常，由调用方决定回退或转人工；
-     * <b>会面无解时同样抛异常</b>——「追不上」就不能派发，不得退回固定缓冲的假时刻。
      *
-     * <p><b>与 10-16 首版的差别（勿改回）</b>：此前起飞时刻取
-     * 「当前时间 + 5 分钟」固定缓冲（{@code TAKEOFF_BUFFER_MINUTES}），
-     * 那是<b>没有会面求解时的演示占位</b>；动态会面既已接入，
-     * 起飞时刻与会面点必须来自算法层结果，占位常量一并移除。
+     * <p><b>顺序口径变化（2026-10-21，勿改回）</b>：此前「会面求解」排在
+     * 「组批（{@code startDispatch}）」之前，理由是「无解时不得把订单推进到
+     * 『调度中』再回退」。共用段改为<b>组批在前</b>（B3 闸门检查内含于组批，
+     * 熔断时延后为空跑求解会误伤待唤醒语义）；无解／无候选抛异常后由
+     * {@link Transactional} 整体回滚，「调度中」不会残留为脏状态，
+     * 旧顺序的防回退动机由事务兜底，不再成立。
      *
      * <p><b>注意</b>：本方法走的是「已确认落巢回收」之后的路径，
      * 若尚未回收应改调 {@link #requeueOrder}（含《21》§8 的物理前置校验），
      * 二者的前置条件不同，不可混用。
      *
      * @param orderId 需重派的订单
-     * @return 新派发的 droneId
+     * @return 新派发的 droneId；<b>闸门熔断时返回 {@code null}</b>（订单转「已受理待唤醒」，
+     *         待闸门解除后重入队再编排）
+     * @throws IllegalStateException 无可用候选组合／会面求解无解／订单状态不符
      */
     @Transactional
     public String reschedule(String orderId) {
         // 第 1 步：重入队（清原机 + 状态回待调度 + task_log 留痕）
         taskQueueService.requeue(orderId);
 
-        // 第 2 步：重新选机
-        OrderTaskEntity order = orderTaskMapper.selectById(orderId);
-        CandidateGenerator.CandidateCombo best = candidateSelector.selectBest(order);
-        if (best == null) {
-            throw new IllegalStateException("订单 " + orderId + " 重派失败：无可用候选组合");
-        }
-
-        // 第 3 步：会面点求解（M3 动态会面，M2 第 3 步 · 判「追得上」）
-        // 必须先于状态流转求解：无解时不得把订单推进到「调度中」再回退。
-        RendezvousCoordinator.MeetPlan plan = rendezvous.solveFor(order, best.comboId(), best.droneId());
-
-        // 第 4 步：调度中 → 派发新机
-        taskQueueService.startDispatch(orderId);
-        taskQueueService.dispatch(orderId, best.droneId(), plan.takeoffTime());
-
-        // 第 5 步：会面点坐标回填（《22-界面契约》§5 会面点为组合级产物，须可回查）
-        order.setMeetLon(BigDecimal.valueOf(plan.meetLon()));
-        order.setMeetLat(BigDecimal.valueOf(plan.meetLat()));
-        orderTaskMapper.updateById(order);
-
-        log.info("重派完成：orderId={} droneId={} comboId={} 会面点={},{} 起飞={} 解={} 快照版本={}",
-                orderId, best.droneId(), best.comboId(), plan.meetLon(), plan.meetLat(),
-                plan.takeoffTime(), plan.solutionId(), plan.snapshotVersion());
-
-        return best.droneId();
+        // 第 2 步：共用派发编排（组批 → 选机 → 会面 → 派发 → 回填会面点）
+        return dispatchOrchestrator.orchestrate(orderId);
     }
 }

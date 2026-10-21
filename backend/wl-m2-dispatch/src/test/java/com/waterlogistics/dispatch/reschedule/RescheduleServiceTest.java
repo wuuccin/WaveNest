@@ -26,8 +26,9 @@ import org.junit.jupiter.api.Test;
  *       放过一条不该重派的单子，后果是同一票货被派给第二架机，而货物还在第一架机上。</li>
  * </ul>
  *
- * <p><b>构造器参数说明</b>：本类由吴可欣（6b）与张睿哲（重派）合并而来，
- * 构造器需五个依赖（末位 {@code rendezvous} 为 2026-10-17 接入的动态会面协调器）。
+ * <p><b>构造器参数说明</b>：本类由吴可欣（6b）与张睿哲（重派）合并而来。
+ * 2026-10-21（C0）起「选机→会面→派发」串法抽至 {@code DispatchOrchestrator}，
+ * 构造器瘦身为三个依赖（重入队、返航复核、派发编排）。
  * 只测<b>前置校验</b>的用例传 {@code null} 即可——
  * 校验在调用 {@code taskQueueService} 之前就会抛异常，不会走到空指针；
  * 只有「合法路径」用例才需要真正装配 {@link RecordingTaskQueue}。
@@ -38,7 +39,7 @@ class RescheduleServiceTest {
 
     /** 只用于前置校验类用例：校验先于落地动作执行，故依赖可为 null */
     private final RescheduleService service = new RescheduleService(
-            null, null, null, new HomecomingService(), null);
+            null, new HomecomingService(), null);
 
     private static HomecomingInput input(double batteryPercent) {
         return new HomecomingInput("EV-1", "ABORT", "TASK-1", "ORDER-1", "DRONE-1", "NEST-HOME",
@@ -77,7 +78,7 @@ class RescheduleServiceTest {
     void requeueOrder_shouldDelegateToTaskQueueWhenLandedAndRecycled() {
         RecordingTaskQueue queue = new RecordingTaskQueue();
         RescheduleService wired = new RescheduleService(
-                queue, null, null, new HomecomingService(), null);
+                queue, new HomecomingService(), null);
         OrderRequeueCommand cmd = new OrderRequeueCommand(
                 "ORDER-1", "GOODS-1", "DRONE-1", true, "NEST-A", true, false);
 
