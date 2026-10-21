@@ -167,12 +167,20 @@ class WeatherSnapshotStoreTest {
     }
 
     @Test
-    @DisplayName("参数校验：TTL / 阈值必须为正、防抖至少 1 条")
+    @DisplayName("参数校验：TTL 必为正、兜底风速不得为 0、严重阈值须高于预警、防抖至少 1 条")
     void settingsValidation_shouldRejectBadArguments() {
-        assertThrows(IllegalArgumentException.class, () -> new WeatherSettings(0L, 12.0, 5));
-        assertThrows(IllegalArgumentException.class, () -> new WeatherSettings(1_000L, 0.0, 5));
-        assertThrows(IllegalArgumentException.class, () -> new WeatherSettings(1_000L, 12.0, 0));
+        assertThrows(IllegalArgumentException.class, () -> new WeatherSettings(0L, 8.0, 12.0, 5));
+        assertThrows(IllegalArgumentException.class, () -> new WeatherSettings(1_000L, 0.0, 12.0, 5),
+                "兜底风速不得为 0（0 会被当成「无风、可飞」）");
+        assertThrows(IllegalArgumentException.class, () -> new WeatherSettings(1_000L, 8.0, 0.0, 5));
+        assertThrows(IllegalArgumentException.class, () -> new WeatherSettings(1_000L, 12.0, 8.0, 5),
+                "严重阈值必须高于预警阈值");
+        assertThrows(IllegalArgumentException.class, () -> new WeatherSettings(1_000L, 8.0, 12.0, 0));
         assertThrows(IllegalArgumentException.class, () -> new WeatherSnapshotStore(null));
+
+        // 已登记值组合（预警 8.0 < 严重 12.0）必须能构造
+        assertEquals(8.0, WeatherSettings.defaults().warningWindMs(), 1e-12);
+        assertEquals(12.0, WeatherSettings.defaults().criticalWindMs(), 1e-12);
     }
 
     @Test
