@@ -54,35 +54,46 @@ public record B_HandoverConfirmation(
         HandoverResult handoverResult) {
 
     public B_HandoverConfirmation {
-        Objects.requireNonNull(taskId, "taskId 不能为空");
-        Objects.requireNonNull(droneId, "droneId 不能为空");
+        if (taskId == null || taskId.isBlank()) {
+            throw new IllegalArgumentException("taskId 不能为空或空白");
+        }
+        if (droneId == null || droneId.isBlank()) {
+            throw new IllegalArgumentException("droneId 不能为空或空白");
+        }
         Objects.requireNonNull(handoverResult, "handoverResult 不能为空");
         if ((actualMeetLon == null) != (actualMeetLat == null)) {
             throw new IllegalArgumentException("实际会面点经度与纬度须同时存在或同时为空");
         }
         requireCoordinate(plannedMeetLon, plannedMeetLat, "planned");
+        if (plannedMeetT <= 0L) {
+            throw new IllegalArgumentException("计划会面时刻须为正的 Unix 毫秒值，实际 " + plannedMeetT);
+        }
         if (actualMeetLon != null) {
             requireCoordinate(actualMeetLon, actualMeetLat, "actual");
         }
-        if (handoverResult == HandoverResult.SUCCESS) {
-            if (handoverDoneT == null) {
-                throw new IllegalArgumentException("交接成功却缺交接完成时刻（taskId=" + taskId + "）");
+        if (handoverDoneT != null && handoverDoneT <= 0L) {
+            throw new IllegalArgumentException("交接完成时刻须为有效的 Unix 毫秒值，实际 handoverDoneT="
+                    + handoverDoneT + "（taskId=" + taskId + "）");
+        }
+        switch (handoverResult) {
+            case SUCCESS -> {
+                if (handoverDoneT == null) {
+                    throw new IllegalArgumentException("交接成功却缺交接完成时刻（taskId=" + taskId + "）");
+                }
+                if (actualMeetLon == null || actualMeetLat == null) {
+                    throw new IllegalArgumentException("交接成功却缺实际会面点（taskId=" + taskId + "）");
+                }
+                if (escortTimeCost == null || handoverTimeCost == null || energyCost == null) {
+                    throw new IllegalArgumentException("交接成功却缺开销字段（taskId=" + taskId + "）");
+                }
             }
-            if (actualMeetLon == null || actualMeetLat == null) {
-                throw new IllegalArgumentException("交接成功却缺实际会面点（taskId=" + taskId + "）");
+            case FAILED -> {
+                if (handoverDoneT != null || escortTimeCost != null
+                        || handoverTimeCost != null || energyCost != null) {
+                    throw new IllegalArgumentException("交接失败却带完成时刻或开销字段（taskId=" + taskId + "）");
+                }
             }
-            if (escortTimeCost == null || handoverTimeCost == null || energyCost == null) {
-                throw new IllegalArgumentException("交接成功却缺开销字段（taskId=" + taskId + "）");
-            }
-            if (handoverDoneT < 0L || handoverDoneT < plannedMeetT) {
-                throw new IllegalArgumentException("交接完成时刻须有效且不早于计划会面时刻，实际 plannedMeetT="
-                        + plannedMeetT + ", handoverDoneT=" + handoverDoneT + "（taskId=" + taskId + "）");
-            }
-        } else if (handoverResult == HandoverResult.FAILED) {
-            if (handoverDoneT != null || escortTimeCost != null
-                    || handoverTimeCost != null || energyCost != null) {
-                throw new IllegalArgumentException("交接失败却带完成时刻或开销字段（taskId=" + taskId + "）");
-            }
+
         }
         if (escortTimeCost != null && escortTimeCost < 0) {
             throw new IllegalArgumentException("伴飞时间开销不得为负，实际 " + escortTimeCost);

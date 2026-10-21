@@ -13,9 +13,9 @@ import com.waterlogistics.algo.meeting.model.ShipTrackSnapshot;
  * 不一致即<b>拒绝求解</b>并抛 {@link SnapshotVersionMismatchException}。
  *
  * <p>约定：查无时<b>返回 {@code null}</b>——实现<b>不得</b>抛 {@link SnapshotUnavailableException}，
- * 该异常由调用方在拿到 null 后转换抛出。返回的快照须<b>只读可共享</b>（本轮多候选共用同一
- * 实例）：实现负责保证返回内容的不可变性——点列不得再被任何持有者修改（实现侧先防御拷贝
- * 再交出），消费方一律按只读使用。
+ * 该异常由调用方在拿到 null 后转换抛出；非法入参须显式抛 {@link IllegalArgumentException}；
+ * 底层存储读取失败须包装为未检查异常（保留原因），不得伪装成「查无」。返回的快照本身由
+ * {@link ShipTrackSnapshot} 保证不可变（构造期防御拷贝），实现只需交出实例，消费方按只读使用。
  *
  * <p>本接口<b>纯读</b>：不落库、不改占位、无状态副作用（《81》§2.4 硬约束 1）。
  */
@@ -25,8 +25,11 @@ public interface TrajectorySnapshotPort {
     /**
      * 取指定船的最新预测快照。
      *
-     * @param shipMmsi 目标船标识（调用方保证非空、非空白）
+     * @param shipMmsi 目标船标识（调用方保证非空、非空白；违例时实现须显式抛
+     *                 {@link IllegalArgumentException}，不得伪装成 {@code null}）
      * @return 该船当前快照；查无此船（或尚无预测）时为 {@code null}，由调用方按「拒绝求解」处理
+     * @throws IllegalArgumentException {@code shipMmsi} 为空/空白
+     * @throws RuntimeException         底层存储读取失败（实现须包装并保留原因）
      */
     ShipTrackSnapshot latest(String shipMmsi);
 }

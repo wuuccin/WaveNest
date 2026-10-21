@@ -11,8 +11,8 @@ package com.waterlogistics.algo.meeting.model;
  * @param lon        预测位置经度
  * @param lat        预测位置纬度
  * @param cog        该段航迹方位，度（由 M2 按相邻预测点派生，非 A 组原始 COG；接受 360° 并归一为 0°）
- * @param sigmaAlong 沿航迹方向不确定度（标准差），米
- * @param sigmaCross 法向不确定度（标准差），米
+ * @param sigmaAlong 沿航迹方向不确定度（标准差），米（0 表示未知，由消费方兜底）
+ * @param sigmaCross 法向不确定度（标准差），米（0 表示未知，由消费方兜底）
  */
 public record ShipPoint(
 

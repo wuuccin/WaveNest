@@ -3,6 +3,7 @@ package com.waterlogistics.dispatch.prediction;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.waterlogistics.algo.meeting.model.ShipPoint;
@@ -84,8 +85,8 @@ class TrajectorySnapshotAdapterTest {
     @DisplayName("★ 查无快照返回 null（M3 侧据此抛 SnapshotUnavailableException）")
     void latest_shouldReturnNullWhenUnknown() {
         assertNull(adapter.latest("999999999"));
-        assertNull(adapter.latest(null));
-        assertNull(adapter.latest("   "));
+        assertThrows(IllegalArgumentException.class, () -> adapter.latest(null));
+        assertThrows(IllegalArgumentException.class, () -> adapter.latest("   "));
     }
 
     @Test

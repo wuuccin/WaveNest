@@ -86,13 +86,9 @@ class RendezvousFacadeTest {
         List<ShipPoint> points = new ArrayList<>();
         points.add(new ShipPoint(NOW, LON0, LAT0, 90.0, 0.0, 0.0));
         points.add(new ShipPoint(NOW + 10_000L, LON0, LAT0, 90.0, 0.0, 0.0));
-        StubSnapshotPort port = new StubSnapshotPort();
-        port.put(new ShipTrackSnapshot(null, MMSI, NOW, 86_400, points));
-        RendezvousFacade facade = new RendezvousFacade(port, droneId -> null);
-
-        assertThrows(SnapshotVersionMismatchException.class,
-                () -> facade.solve(command(VERSION)),
-                "快照版本缺失必须拒绝求解（fail closed）");
+        assertThrows(IllegalArgumentException.class,
+                () -> new ShipTrackSnapshot(null, MMSI, NOW, 86_400, points),
+                "快照版本缺失在模型构造期即拒绝");
         assertThrows(NullPointerException.class,
                 () -> command(null),
                 "期望版本缺失在命令构造期即拒绝");

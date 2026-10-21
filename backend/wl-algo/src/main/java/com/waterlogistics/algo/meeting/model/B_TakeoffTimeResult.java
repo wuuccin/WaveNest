@@ -14,7 +14,7 @@ import java.util.Objects;
  * 实际所用的时长</b>（首版＝精算 τ_fine）。字段命名与正文口径的出入已报收口方备案。
  *
  * @param comboId          绑定的候选组合标识
- * @param takeoffT         反推起飞时刻，Unix 毫秒（不可行时亦给算式结果，追溯用）
+ * @param takeoffT         反推起飞时刻，Unix 毫秒；不可行时仅供算术留痕，可能为负，不得当作有效时刻
  * @param feasible         是否可行
  * @param infeasibleReason 不可行原因（feasible=false 时给出，否则 null）
  * @param tauCoarseUsed    本次反推实际所用时长，秒（首版＝精算 τ_fine，见上述口径说明）
@@ -35,6 +35,10 @@ public record B_TakeoffTimeResult(
         Objects.requireNonNull(comboId, "comboId 不能为空");
         if (comboId.isBlank()) {
             throw new IllegalArgumentException("comboId 不能为空白字符串");
+        }
+        if (feasible && takeoffT < EpochMillis.MIN_VALID_MS) {
+            throw new IllegalArgumentException(
+                    "可行结果的起飞时刻须为 Unix 毫秒值（疑似误传秒级时间戳），实际 " + takeoffT);
         }
         if (tauCoarseUsed <= 0) {
             throw new IllegalArgumentException("本次反推所用时长必须为正，实际 " + tauCoarseUsed);

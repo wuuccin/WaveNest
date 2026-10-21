@@ -26,8 +26,9 @@ public record Waypoint(
         long t) {
 
     public Waypoint {
-        if (t <= 0L) {
-            throw new IllegalArgumentException("航点时刻必须为正的 Unix 毫秒值，实际 " + t);
+        if (t < EpochMillis.MIN_VALID_MS) {
+            throw new IllegalArgumentException("航点时刻须为 Unix 毫秒值（下界 "
+                    + EpochMillis.MIN_VALID_MS + "），实际 " + t);
         }
         if (!Double.isFinite(lon) || lon < -180.0 || lon > 180.0) {
             throw new IllegalArgumentException("航点经度须为 [-180,180] 内的有限数，实际 " + lon);

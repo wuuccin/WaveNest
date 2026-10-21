@@ -38,6 +38,7 @@ final class SnapshotGate {
      * @throws SnapshotVersionMismatchException 期望版本与快照实际版本不一致——拒绝求解
      */
     static ShipTrackSnapshot fetchVerified(TrajectorySnapshotPort port, String shipMmsi, String expectedVersion) {
+        Objects.requireNonNull(port, "轨迹快照端口不能为空");
         if (expectedVersion == null || expectedVersion.isBlank()) {
             throw new IllegalArgumentException("期望快照版本不能为空");
         }
@@ -49,7 +50,7 @@ final class SnapshotGate {
             throw new SnapshotUnavailableException(shipMmsi);
         }
         if (!Objects.equals(shipMmsi, snapshot.shipMmsi())) {
-            throw SnapshotUnavailableException.ownershipMismatch(shipMmsi);
+            throw SnapshotUnavailableException.ownershipMismatch(shipMmsi, snapshot.shipMmsi());
         }
         if (snapshot.version() == null || !Objects.equals(expectedVersion, snapshot.version())) {
             throw new SnapshotVersionMismatchException(shipMmsi, expectedVersion, snapshot.version());

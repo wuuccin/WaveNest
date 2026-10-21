@@ -81,14 +81,9 @@ class RendezvousRecalcTest {
         List<ShipPoint> points = new ArrayList<>();
         points.add(new ShipPoint(NOW, LON0, LAT0, 90.0, 0.0, 0.0));
         points.add(new ShipPoint(NOW + 10_000L, LON0, LAT0, 90.0, 0.0, 0.0));
-        RendezvousFacade facade = facade(
-                new ShipTrackSnapshot(null, MMSI, NOW, 86_400, points), context("combo-1", 15.0));
-
-        assertThrows(SnapshotVersionMismatchException.class,
-                () -> facade.recompute(
-                        request(VERSION, NOW + 100_000L, LON0 + 500 / mPerDegLon(LAT0), LAT0),
-                        options(new Wind(0, 0, 0), NOW + 3_600_000L)),
-                "快照版本缺失必须拒绝求解（fail closed）");
+        assertThrows(IllegalArgumentException.class,
+                () -> new ShipTrackSnapshot(null, MMSI, NOW, 86_400, points),
+                "快照版本缺失在模型构造期即拒绝");
         assertThrows(NullPointerException.class,
                 () -> request(null, NOW + 100_000L, LON0 + 500 / mPerDegLon(LAT0), LAT0),
                 "期望版本缺失在请求构造期即拒绝（《81》§2.5 求解必需）");

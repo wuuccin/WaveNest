@@ -25,11 +25,13 @@ public final class TrackInterpolator {
      * @param snapshot 船舶预测快照（构造期已校验点列不变量）
      * @param t        查询时刻，Unix 毫秒
      * @return {@code {经度, 纬度}}（经度统一回卷到 [-180, 180)）
+     * @throws NullPointerException     快照或点列为 {@code null}
+     * @throws IllegalArgumentException 点列为空
      */
     public static double[] positionAt(ShipTrackSnapshot snapshot, long t) {
         Objects.requireNonNull(snapshot, "snapshot 不能为空");
-        List<ShipPoint> points = snapshot.points();
-        if (points == null || points.isEmpty()) {
+        List<ShipPoint> points = Objects.requireNonNull(snapshot.points(), "快照点列不能为空");
+        if (points.isEmpty()) {
             throw new IllegalArgumentException("快照点列不能为空");
         }
         ShipPoint first = points.get(0);
@@ -58,7 +60,12 @@ public final class TrackInterpolator {
                 a.lat() + k * (b.lat() - a.lat())};
     }
 
-    /** 经差归一化到 [−180, 180]，跨 ±180° 走短侧 */
+    /**
+     * 经差归一化到 [−180, 180]，跨 ±180° 走短侧。
+     *
+     * <p>前置：{@code |dLon| ≤ 360}（由 {@link ShipPoint} 的经纬度域保证）；恰好 ±180°
+     * 时保留 {@code -180}，作为固定的边界取舍。
+     */
     private static double normalizeDLon(double dLon) {
         if (dLon > 180.0) {
             return dLon - 360.0;
