@@ -22,7 +22,7 @@ import org.springframework.stereotype.Service;
  * <p><b>为什么需要这一层</b>：M3 的 {@link RendezvousFacade} 只提供算法能力，
  * 但<b>求解所需的输入有一半在 M2 手里</b>——船侧预测快照（M2 常驻层）、
  * 执行机台账（{@code drone}／{@code nest} 表）、求解阈值（{@code sys_param}）、
- * 代表风况（{@code weather} 最新观测，见 {@link WeatherSnapshotPort}）。
+ * 代表风况（气象快照仓中最近的新鲜观测，见 {@link WeatherSnapshotPort}）。
  * 这些拼接逻辑若散落在调度主链各处，会重复构造命令、重复取快照，
  * 且<b>版本一致性锚（{@code snapshotVersion}）很容易被各调用点搞乱</b>。
  * 故集中到本类，调度链只调一个方法、拿一个 {@link MeetPlan}。
@@ -124,7 +124,7 @@ public class RendezvousCoordinator {
                 drone.nestLon(),
                 drone.nestLat(),
                 drone.cruiseSpeedMs(),
-                representativeWind(),
+                representativeWind(drone.nestLon(), drone.nestLat(), nowMs),
                 nowMs,
                 nowMs + sysParamLoader.getInt(HORIZON_SEC_KEY, DEFAULT_HORIZON_SEC) * 1000L,
                 sysParamLoader.getInt(WINDOW_MARGIN_SEC_KEY, DEFAULT_WINDOW_MARGIN_SEC),
@@ -147,12 +147,12 @@ public class RendezvousCoordinator {
     /**
      * 代表风况。
      *
-     * <p><b>取数口径</b>：优先取气象最新观测（风速、风向）；无观测或数据不可用时回落
-     * {@code sys_param} 的静态风况（缺省 0 m/s，即不修正有效速度）——气象链路异常
-     * 不得中断调度主链。
+     * <p><b>取数口径</b>：按机巢位置与当前时刻取气象快照仓中最近的新鲜观测（风速、风向）；
+     * 无观测、过期或数据不可用时回落 {@code sys_param} 的静态风况（缺省 0 m/s，
+     * 即不修正有效速度）。气象链路异常不得中断调度主链。
      */
-    private Wind representativeWind() {
-        WeatherSnapshotPort.LatestWind latest = weatherSnapshotPort.latest();
+    private Wind representativeWind(double lon, double lat, long nowMs) {
+        WeatherSnapshotPort.LatestWind latest = weatherSnapshotPort.latest(lon, lat, nowMs);
         if (latest != null) {
             return new Wind(latest.speedMs(), latest.dirDeg(), 0.0);
         }
