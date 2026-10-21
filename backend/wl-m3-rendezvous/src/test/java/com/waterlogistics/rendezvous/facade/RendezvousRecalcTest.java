@@ -75,6 +75,25 @@ class RendezvousRecalcTest {
                 "版本不一致必须拒绝求解");
     }
 
+    /** 版本闸门 fail-closed（重算侧）：快照版本缺失（null）仍由服务层拒绝；期望版本缺失在构造期即拒绝。 */
+    @Test
+    void recompute_shouldReject_whenVersionMissing() {
+        List<ShipPoint> points = new ArrayList<>();
+        points.add(new ShipPoint(NOW, LON0, LAT0, 90.0, 0.0, 0.0));
+        points.add(new ShipPoint(NOW + 10_000L, LON0, LAT0, 90.0, 0.0, 0.0));
+        RendezvousFacade facade = facade(
+                new ShipTrackSnapshot(null, MMSI, NOW, 86_400, points), context("combo-1", 15.0));
+
+        assertThrows(SnapshotVersionMismatchException.class,
+                () -> facade.recompute(
+                        request(VERSION, NOW + 100_000L, LON0 + 500 / mPerDegLon(LAT0), LAT0),
+                        options(new Wind(0, 0, 0), NOW + 3_600_000L)),
+                "快照版本缺失必须拒绝求解（fail closed）");
+        assertThrows(NullPointerException.class,
+                () -> request(null, NOW + 100_000L, LON0 + 500 / mPerDegLon(LAT0), LAT0),
+                "期望版本缺失在请求构造期即拒绝（《81》§2.5 求解必需）");
+    }
+
     /** 数据缺失：查无该船快照 → 拒绝求解。 */
     @Test
     void recompute_shouldReject_whenSnapshotAbsent() {
@@ -131,6 +150,26 @@ class RendezvousRecalcTest {
         assertTrue(result.solution().hasSolution(), "静悬船必可追上");
         assertNear(NOW + 666_667L, result.solution().meetTMin(), 500,
                 "定向＝正北 ⇒ 侧风 v＝15 ⇒ τ*＝10000/15≈666.7 s（若按快照回落则为 1000 s）");
+    }
+
+    /** 6a 参数敏感性：代表风况变化须让会面时刻随之变化（无风与逆风对比）。 */
+    @Test
+    void recompute_shouldShiftMeetTimeWithRepresentativeWind() {
+        RendezvousFacade facade = facade(snapshot(LON0, LAT0, 5, 90), context("combo-1", 15.0));
+        double shipLon = LON0 + 500 / mPerDegLon(LAT0);
+
+        RendezvousRecalcResult calm = facade.recompute(
+                request(VERSION, NOW + 100_000L, shipLon, LAT0),
+                options(new Wind(0, 0, 0), NOW + 3_600_000L));
+        RendezvousRecalcResult headwind = facade.recompute(
+                request(VERSION, NOW + 100_000L, shipLon, LAT0),
+                options(new Wind(3, 90, 0), NOW + 3_600_000L));
+
+        assertTrue(calm.solution().hasSolution(), "无风工况应有解");
+        assertTrue(headwind.solution().hasSolution(), "逆风工况仍应在时限内可追");
+        assertTrue(headwind.solution().meetTMin() > calm.solution().meetTMin(),
+                "逆风须推迟会面时刻：无风 " + calm.solution().meetTMin()
+                        + "，逆风 " + headwind.solution().meetTMin());
     }
 
     // ===== 夹具 =====

@@ -1,0 +1,5 @@
+.crew-form { border-top: 1px solid #2b535b; padding-top: 20px; }
+.crew-form label { display: block; margin-top: 14px; color: #8eafb1; font-size: 11px; }
+.crew-form input, .crew-form select { width: 100%; height: 38px; margin-top: 6px; padding: 0 10px; background: #15343d; border: 1px solid #31545b; border-radius: 3px; color: #eff8f4; outline: none; }
+.crew-form input:focus, .crew-form select:focus { border-color: #5dceb6; }
+.crew-form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }

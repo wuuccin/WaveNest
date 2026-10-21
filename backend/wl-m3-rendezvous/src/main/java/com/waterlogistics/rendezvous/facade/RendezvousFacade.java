@@ -22,6 +22,10 @@ import com.waterlogistics.rendezvous.trajectory.TakeoffTimeCalculator;
 import com.waterlogistics.rendezvous.trajectory.TakeoffTimeCommand;
 import com.waterlogistics.rendezvous.trajectory.TrackGenerator;
 
+import java.util.Objects;
+
+
+
 /**
  * 会面与航迹门面——M2 对 M3 的<b>唯一</b>同步入口（《42-包结构设计》§3.3 facade/、
  * 《22-接口契约》§5）；其余包（solver／trajectory／conflict／handover）不对外暴露。
@@ -33,16 +37,33 @@ import com.waterlogistics.rendezvous.trajectory.TrackGenerator;
  * <p>端口接线：{@code TrajectorySnapshotPort} 与 {@code DroneContextPort} 均由 M2 实现、
  * {@code wl-app} 装配（本类构造器接收）——M3 全程不知道 M2 存在。
  */
+@SuppressWarnings("OverlyCoupledClass")
 public class RendezvousFacade {
 
     private final RendezvousSolveService solveService;
 
     private final RendezvousRecalcService recalcService;
 
+
+
+
+
+    /**
+     * 装配门面——两个端口均由 M2 实现、{@code wl-app} 注入。
+     *
+     * @param snapshotPort     轨迹快照端口（快照自取与版本校验）
+     * @param droneContextPort 执行机台账端口（6a 重算反查机型与归属机巢）
+     */
     public RendezvousFacade(TrajectorySnapshotPort snapshotPort, DroneContextPort droneContextPort) {
+        Objects.requireNonNull(snapshotPort, "snapshotPort 不能为空");
+        Objects.requireNonNull(droneContextPort, "droneContextPort 不能为空");
         this.solveService = new RendezvousSolveService(snapshotPort);
         this.recalcService = new RendezvousRecalcService(snapshotPort, droneContextPort);
     }
+
+
+
+
 
     /**
      * 会面点求解——M2 第 3 步 · 判「追得上」（《22》§5），组合级循环调用。
@@ -51,8 +72,12 @@ public class RendezvousFacade {
      * @return 会面点解；无解走 {@code hasSolution=false}
      */
     public B_RendezvousSolution solve(RendezvousCommand cmd) {
-        return solveService.solve(cmd);
+        return this.solveService.solve(cmd);
     }
+
+
+
+
 
     /**
      * 航迹生成——M2 第 5 步（去程）与第 8 步（返程）同一能力两次调用（《33》§4.1）。
@@ -64,6 +89,10 @@ public class RendezvousFacade {
         return TrackGenerator.generate(cmd);
     }
 
+
+
+
+
     /**
      * 6a 会面点重算——同一机、同一巢重算（《32-M3-动态会面》§3.3），接收侧形态照
      * 《81-B组算法方案》§2.5；只算不落库、不改占位、<b>不触发航迹重算</b>——航迹是否
@@ -74,8 +103,12 @@ public class RendezvousFacade {
      * @return requestId ＋ 会面点解
      */
     public RendezvousRecalcResult recompute(RendezvousRecalcRequest request, RecalcOptions options) {
-        return recalcService.recompute(request, options);
+        return this.recalcService.recompute(request, options);
     }
+
+
+
+
 
     /**
      * 航迹级空域冲突二查——M2 第 5 步补做（《22-接口契约》§5），只给检测结论；
@@ -86,10 +119,14 @@ public class RendezvousFacade {
      * @param params 间隔与采样参数（调用方注入）
      * @return 冲突结论；绕行几何首版留桩为 null
      */
-    public B_ConflictResult checkConflict(B_FlyableRoute route, B_FlyableRoute other,
-            ConflictParams params) {
-        return TrackConflictChecker.check(route, other, params);
+    public B_ConflictResult detectConflict(B_FlyableRoute route, B_FlyableRoute other,
+                                           ConflictParams params) {
+        return TrackConflictChecker.detect(route, other, params);
     }
+
+
+
+
 
     /**
      * 起飞时刻回填（算式部分）——M2 第 5 步 · 航线确认与起飞时刻确定（《22-接口契约》§5）；
@@ -101,6 +138,10 @@ public class RendezvousFacade {
     public B_TakeoffTimeResult computeTakeoffTime(TakeoffTimeCommand cmd) {
         return TakeoffTimeCalculator.compute(cmd);
     }
+
+
+
+
 
     /**
      * 末段会面与交接判定——M2 第 7 步（《22-接口契约》§5）：四子阶段判据推进简化版，

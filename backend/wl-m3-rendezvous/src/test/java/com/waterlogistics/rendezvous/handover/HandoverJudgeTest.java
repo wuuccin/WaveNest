@@ -82,6 +82,33 @@ class HandoverJudgeTest {
         assertEquals(LON0 + 280 / MPL, r.actualMeetLon(), 1e-9, "已完成接近：实际会面点仍给（追溯）");
     }
 
+    /** 风超限后的重投：投放一拍风超限不整段放弃，后续样本风况转好再投 → 成功（重试简化）。 */
+    @Test
+    void judge_shouldRetryAfterWindFailure() {
+        List<HandoverSample> samples = successSequenceUpTo(15);
+        samples.add(s(16, 29, 15, true));   // 首次投放：风超限——不算成功，也不整段放弃
+        samples.add(s(17, 29, 5, true));    // 重投一拍：风况达标 → 成功
+
+        B_HandoverConfirmation r = HandoverJudge.judge(cmd(samples));
+
+        assertEquals(HandoverResult.SUCCESS, r.handoverResult(), "重投拍风况达标应判成功");
+        assertEquals(T0 + 17_000L, r.handoverDoneT(), "完成时刻＝重投拍");
+    }
+
+    /** 同拍投放：稳定窗口恰在携带投放反馈的样本上补满 → 该样本即判成功（不延后一拍）。 */
+    @Test
+    void judge_shouldAcceptDropOnStabilityCompletionSample() {
+        List<HandoverSample> samples = successSequenceUpTo(14);
+        samples.add(s(15, 29, 5, true));    // 稳定满 10 s 的同一拍携带投放反馈
+
+        B_HandoverConfirmation r = HandoverJudge.judge(cmd(samples));
+
+        assertEquals(HandoverResult.SUCCESS, r.handoverResult(), "同拍投放应被认可");
+        assertEquals(T0 + 15_000L, r.handoverDoneT(), "完成时刻＝该拍");
+        assertEquals(15, r.escortTimeCost(), "伴飞＝首样本→交接开始（15 s）");
+        assertEquals(0, r.handoverTimeCost(), "交接＝交接开始→投放完成（同拍 0 s）");
+    }
+
     /** 悬停等待超限（简化＝样本耗尽仍无投放反馈）→ 失败上报。 */
     @Test
     void judge_shouldFail_whenDropNeverConfirmed() {
@@ -156,6 +183,9 @@ class HandoverJudgeTest {
         assertEquals("匹配", HandoverPhase.MATCH.getValue());
         assertEquals("交接", HandoverPhase.TRANSFER.getValue());
         assertEquals("脱离", HandoverPhase.DEPART.getValue());
+        assertEquals(HandoverPhase.values().length,
+                java.util.Arrays.stream(HandoverPhase.values()).map(HandoverPhase::getValue).distinct().count(),
+                "末段子阶段口径词须唯一");
     }
 
     // ===== 夹具 =====

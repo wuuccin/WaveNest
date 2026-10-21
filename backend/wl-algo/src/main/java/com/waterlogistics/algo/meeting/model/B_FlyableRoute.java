@@ -1,6 +1,7 @@
 package com.waterlogistics.algo.meeting.model;
 
 import java.util.List;
+import java.util.Objects;
 
 /**
  * 可飞航迹（{@code B_} 前缀＝算法层 B 组产出）——字段照《81-B组算法方案》§2.3 第（2）项
@@ -44,4 +45,43 @@ public record B_FlyableRoute(
         List<String> landingPointsAlong,
 
         List<String> avoidZones) {
+
+    public B_FlyableRoute {
+        Objects.requireNonNull(routeId, "routeId 不能为空");
+        Objects.requireNonNull(routeVersion, "routeVersion 不能为空");
+        Objects.requireNonNull(comboId, "comboId 不能为空");
+        if (routeId.isBlank() || routeVersion.isBlank() || comboId.isBlank()) {
+            throw new IllegalArgumentException("routeId/routeVersion/comboId 不能为空白字符串");
+        }
+        if (waypoints == null || waypoints.isEmpty()) {
+            throw new IllegalArgumentException("waypoints 不能为空：C 组据其粗估航迹长度");
+        }
+        for (int i = 0; i < waypoints.size(); i++) {
+            Waypoint waypoint = waypoints.get(i);
+            if (waypoint == null) {
+                throw new IllegalArgumentException("waypoints 第 " + i + " 个元素为空");
+            }
+            if (i > 0 && waypoint.t() <= waypoints.get(i - 1).t()) {
+                throw new IllegalArgumentException("waypoints 须按时刻严格升序，下标 " + i + " 处不满足");
+            }
+        }
+        waypoints = List.copyOf(waypoints);
+        landingPointsAlong = landingPointsAlong == null ? List.of() : landingPointsAlong;
+        avoidZones = avoidZones == null ? List.of() : avoidZones;
+        if (landingPointsAlong.stream().anyMatch(id -> id == null || id.isBlank())
+                || avoidZones.stream().anyMatch(id -> id == null || id.isBlank())) {
+            throw new IllegalArgumentException("landingPointsAlong/avoidZones 不能包含 null 或空白标识");
+        }
+        landingPointsAlong = List.copyOf(landingPointsAlong);
+        avoidZones = List.copyOf(avoidZones);
+        if (tauFine < 0) {
+            throw new IllegalArgumentException("精算飞行时长不能为负，实际 " + tauFine);
+        }
+        if (!Double.isFinite(energyExact) || energyExact < 0 || energyExact > 100.0) {
+            throw new IllegalArgumentException("精确能耗须为 [0,100] 内的有限数（满电百分比），实际 " + energyExact);
+        }
+        if (!Double.isFinite(pathRisk) || pathRisk < 0.0 || pathRisk > 1.0) {
+            throw new IllegalArgumentException("路径风险须在 [0,1]，实际 " + pathRisk);
+        }
+    }
 }

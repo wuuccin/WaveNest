@@ -1,5 +1,7 @@
 package com.waterlogistics.algo.meeting.model;
 
+import java.util.Objects;
+
 /**
  * 起飞时刻算式结果 ＋ 是否不可行（{@code B_} 前缀＝算法层 B 组产出）——字段照
  * 《81-B组算法方案》§2.3 第（3）项一字不改。
@@ -28,4 +30,20 @@ public record B_TakeoffTimeResult(
         TakeoffInfeasibleReason infeasibleReason,
 
         int tauCoarseUsed) {
+
+    public B_TakeoffTimeResult {
+        Objects.requireNonNull(comboId, "comboId 不能为空");
+        if (comboId.isBlank()) {
+            throw new IllegalArgumentException("comboId 不能为空白字符串");
+        }
+        if (tauCoarseUsed <= 0) {
+            throw new IllegalArgumentException("本次反推所用时长必须为正，实际 " + tauCoarseUsed);
+        }
+        if (feasible && infeasibleReason != null) {
+            throw new IllegalArgumentException("可行结果不应携带不可行原因");
+        }
+        if (!feasible && infeasibleReason == null) {
+            throw new IllegalArgumentException("不可行结果必须给出不可行原因");
+        }
+    }
 }

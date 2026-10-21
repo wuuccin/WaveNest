@@ -39,6 +39,8 @@ CREATE TABLE IF NOT EXISTS `drone` (
     `model`             VARCHAR(64)  NULL COMMENT '机型标识',
     `max_payload`       DECIMAL(8,2) NULL COMMENT '最大载重（kg）',
     `max_endurance`     INT          NULL COMMENT '最大续航（秒）',
+    `wind_limit_ms`     DECIMAL(5,2) NULL COMMENT '机型抗风上限（m/s）：机型能力包线「抗风等级」，62 判据 windclass_match 用；同一 model 取同值，NULL＝未登记（候选链按缺失即排除）',
+    `cruise_speed_ms`   DECIMAL(5,2) NULL COMMENT '机型巡航速度（m/s）：机型能力包线「巡航速度」；NULL 时会面链回落 sys_param.droneCruiseSpeedMs',
     `battery`           DECIMAL(5,2) NULL COMMENT '当前电量（百分比 0–100）',
     `health_status`     VARCHAR(32)  NOT NULL DEFAULT '健康' COMMENT '健康状态：健康/告警',
     `status`            VARCHAR(32)  NOT NULL DEFAULT '空闲' COMMENT '状态：空闲/已预占/执行任务中/返航中/迫停/迫降/故障/维护/失联（23 §7）',

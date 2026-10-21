@@ -33,7 +33,18 @@ public class CandidateGenerator {
             /** 机巢到取货点距离（km，粗估直线） */
             double distKm,
             /** 剩余电量（%） */
-            double battery) {
+            double battery,
+            /**
+             * 机型抗风上限（m/s，随实例从 {@link CandidateInput.DroneView#windLimitMs()} 透传）。
+             *
+             * <p><b>为什么要透传到组合上</b>：抗风是<b>机型级</b>属性，不是一个全局阈值。
+             * 若可行性判定只吃一个调用方传入的统一上限，那么「同一风速下 A 型淘汰、B 型保留」
+             * 永远不可能发生——因为两架机比的是同一个数。抗风上限必须跟着组合走到判定端，
+             * 判定端才可能对不同机型得出不同结论（10-20 B1）。
+             */
+            double windLimitMs,
+            /** 机型巡航速度（m/s，同 {@link #windLimitMs()} 透传；未登记为 {@code NaN}） */
+            double cruiseSpeedMs) {
     }
 
     /** 标定参数（由调用方注入，读 sys_param，不硬编码——此处为注入默认值的载体） */
@@ -86,7 +97,9 @@ public class CandidateGenerator {
             out.add(new CandidateCombo(
                     "CMB-" + String.format("%03d", seq),
                     d.type(), d.nestId(), d.droneId(),
-                    round2(distKm), d.battery()));
+                    round2(distKm), d.battery(),
+                    // 机型能力随实例透传到组合：抗风/速度是判定端区分机型差异的唯一依据
+                    d.windLimitMs(), d.cruiseSpeedMs()));
         }
         // 按距离升序（简化排序；正式排序键 rank_key 实现顺延）
         out.sort((a, b) -> Double.compare(a.distKm(), b.distKm()));

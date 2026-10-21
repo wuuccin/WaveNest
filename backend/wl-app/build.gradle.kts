@@ -18,8 +18,18 @@ dependencies {
     // 后端唯一实时出口：WebSocket 服务端
     implementation(libs.spring.boot.starter.websocket)
 
+    // MQ 统一消息转换器装配（config/MqMessageConverterConfiguration）。原先本模块不引 amqp，
+    // RabbitTemplate 走容器默认的 SimpleMessageConverter，只认 String/byte[]/Serializable，
+    // 而契约消息（AisMessage/UavTelemetry/WeatherData）都是 record 不实现 Serializable，
+    // 导致 M1 三类消息 100% publish failed、M2/M4 全链路收不到。
+    implementation(libs.bundles.mq)
+
     // JDBC 驱动只在组装层需要，业务模块只经 wl-storage 访问数据库
     runtimeOnly(libs.mysql.connector.j)
 
     annotationProcessor(libs.spring.boot.configuration.processor)
+
+    // 冒烟/集成测试（版本由 Spring Boot BOM 提供，模块内不写版本号）
+    testImplementation("org.springframework.boot:spring-boot-starter-test")
+    testRuntimeOnly(libs.mysql.connector.j)
 }

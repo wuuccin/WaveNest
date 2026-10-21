@@ -24,4 +24,27 @@ public record Waypoint(
         double speedMs,
 
         long t) {
+
+    public Waypoint {
+        if (t <= 0L) {
+            throw new IllegalArgumentException("航点时刻必须为正的 Unix 毫秒值，实际 " + t);
+        }
+        if (!Double.isFinite(lon) || lon < -180.0 || lon > 180.0) {
+            throw new IllegalArgumentException("航点经度须为 [-180,180] 内的有限数，实际 " + lon);
+        }
+        if (!Double.isFinite(lat) || lat < -90.0 || lat > 90.0) {
+            throw new IllegalArgumentException("航点纬度须为 [-90,90] 内的有限数，实际 " + lat);
+        }
+        if (!Double.isFinite(altM) || altM < 0.0) {
+            throw new IllegalArgumentException("航点高度须为非负有限数，实际 " + altM);
+        }
+        if (!Double.isFinite(speedMs) || speedMs < 0.0) {
+            throw new IllegalArgumentException("航点速度须为非负有限数，实际 " + speedMs);
+        }
+        // 归一化：-0.0 → 0.0（保证 record 等值语义一致，同 Wind）
+        lon += 0.0;
+        lat += 0.0;
+        altM += 0.0;
+        speedMs += 0.0;
+    }
 }

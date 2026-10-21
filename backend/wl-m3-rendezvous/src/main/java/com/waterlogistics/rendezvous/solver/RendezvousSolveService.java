@@ -7,7 +7,10 @@ import com.waterlogistics.algo.meeting.model.ShipTrackSnapshot;
 import com.waterlogistics.rendezvous.port.SnapshotUnavailableException;
 import com.waterlogistics.rendezvous.port.SnapshotVersionMismatchException;
 import com.waterlogistics.rendezvous.port.TrajectorySnapshotPort;
+
 import java.util.Objects;
+
+
 
 /**
  * 会面求解在模块层的编排——取快照 → 校验版本 → 调 {@code algo.meeting}
@@ -20,9 +23,22 @@ public class RendezvousSolveService {
 
     private final TrajectorySnapshotPort snapshotPort;
 
+
+
+
+
+    /**
+     * 装配求解服务——快照端口由 {@code wl-app} 注入。
+     *
+     * @param snapshotPort 轨迹快照端口（求解时自取快照并校验版本）
+     */
     public RendezvousSolveService(TrajectorySnapshotPort snapshotPort) {
         this.snapshotPort = Objects.requireNonNull(snapshotPort, "snapshotPort 不能为空");
     }
+
+
+
+
 
     /**
      * 求解一个候选组合的会面点。
@@ -31,20 +47,16 @@ public class RendezvousSolveService {
      * @return 会面点解（有解／无解均属正常返回；追不上等无解走 {@code hasSolution=false}）
      * @throws SnapshotUnavailableException     端口查无该船快照——数据前置缺失，拒绝求解
      * @throws SnapshotVersionMismatchException 期望版本与快照实际版本不一致——拒绝求解
+     * @throws IllegalArgumentException         命令入参或快照点列非法——拒绝求解
      *                                          （《81》§2.1 硬要求 1：本轮调度多候选须共用同一版本）
      */
     public B_RendezvousSolution solve(RendezvousCommand cmd) {
-        ShipTrackSnapshot snapshot = snapshotPort.latest(cmd.shipMmsi());
-        if (snapshot == null) {
-            throw new SnapshotUnavailableException(cmd.shipMmsi());
-        }
-        if (!Objects.equals(cmd.snapshotVersion(), snapshot.version())) {
-            throw new SnapshotVersionMismatchException(
-                    cmd.shipMmsi(), cmd.snapshotVersion(), snapshot.version());
-        }
+        Objects.requireNonNull(cmd, "cmd 不能为空");
+        ShipTrackSnapshot snapshot = SnapshotGate.fetchVerified(
+                this.snapshotPort, cmd.shipMmsi(), cmd.snapshotVersion());
         return RendezvousSolver.solve(new RendezvousSolveRequest(
                 cmd.comboId(), cmd.nestLon(), cmd.nestLat(), cmd.cruiseSpeedMs(),
-                cmd.representativeWind(), snapshot, null,
+                cmd.representativeWind(), snapshot, null /* shipState：常规求解回落快照插值 */,
                 cmd.nowMs(), cmd.deadlineMs(), cmd.meetWindowMarginSec(),
                 cmd.convergeEpsilonSec(), cmd.maxIterations()));
     }

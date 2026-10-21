@@ -3,8 +3,16 @@ package com.waterlogistics.rendezvous.trajectory;
 import com.waterlogistics.algo.meeting.GeoApprox;
 import com.waterlogistics.algo.meeting.model.B_FlyableRoute;
 import com.waterlogistics.algo.meeting.model.Waypoint;
+
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.List;
+import java.util.Objects;
+
+
 
 /**
  * 航迹生成——「给定起点与终点，生成一条满足水域约束的可飞航迹」的<b>首版简化实现</b>
@@ -17,89 +25,168 @@ import java.util.List;
  * <p>「一项能力，两次调用」（《33》§4.1）：去程与返程走同一实现，只换起点、终点与
  * 风况取值；{@link #generateMissionTrack} 把三段（去程／末段交接／返程）拼成一份带
  * 分段标签的演示航迹，供大屏分段着色。
+ *
+ * <p>已知局限（首版注明）：时长按大圆距离计算、航点按经纬度<b>线性内插</b>——短航段
+ * 两者差异可忽略；跨 ±180° 经线的航段按短侧归一化铺点（与距离口径一致）。
  */
 public final class TrackGenerator {
 
     private TrackGenerator() {
     }
 
+
+
+
+
+    /**
+     * 经度回卷到 [-180, 180)，保证跨 ±180° 铺点仍落在合法范围
+     */
+    private static double wrapLon(double lon) {
+        double wrapped = (lon + 180.0) % 360.0;
+        if (wrapped < 0.0) {
+            wrapped += 360.0;
+        }
+        return wrapped - 180.0;
+    }
+
+
+
+
+
+    /**
+     * 直线插值铺点——经差同距离口径归一化（跨 ±180° 走短侧），经度回卷到 [-180, 180)。
+     *
+     * @param cmd     生成入参（航点数、起终点与速度已由 {@link GenerateRouteCommand} 构造期校验）
+     * @param tauFine 精算飞行时长（秒，至少 1），航点时刻按此比例铺点
+     * @return 均匀铺点后的航点序列（首点为起点、末点为终点）
+     */
+    @SuppressWarnings("ObjectAllocationInLoop")
+    private static List<Waypoint> buildWaypoints(GenerateRouteCommand cmd, int tauFine) {
+        double dLon = cmd.endLon() - cmd.startLon();
+        if (dLon > 180.0) {
+            dLon -= 360.0;
+        } else if (dLon < -180.0) {
+            dLon += 360.0;
+        }
+        List<Waypoint> waypoints = new ArrayList<>(cmd.waypointCount());
+        int waypointCount = cmd.waypointCount();
+        for (int i = 0; i < waypointCount; i++) {
+            double frac = (double) i / (double) (waypointCount - 1);
+            waypoints.add(new Waypoint(
+                    TrackGenerator.wrapLon(cmd.startLon() + frac * dLon),
+                    cmd.startLat() + frac * (cmd.endLat() - cmd.startLat()),
+                    cmd.cruiseAltM(),
+                    cmd.speedMs(),
+                    cmd.startMs() + Math.round(frac * (double) tauFine * 1000.0)));
+        }
+        return waypoints;
+    }
+
+
+
+
+
     /**
      * 生成一段可飞航迹（起点 → 终点）。
      *
-     * @param cmd 生成入参（阈值与参数由调用方注入，不硬编码）
-     * @return 可飞航迹；{@code routeVersion} 由 routeId 与起点时刻确定性生成，
-     *         重算（6a 会面点重算、D 功能 7 定案后重出）换起点时刻即换新版本
-     * @throws IllegalArgumentException 航点数不足 2 或速度非正
+     * @param cmd 生成入参（航点数与速度等前置由 {@link GenerateRouteCommand} 构造期校验）
+     * @return 可飞航迹；{@code routeVersion} 由 routeId、起点时刻与几何指纹确定性生成，
+     * 任一有效输入变化（含同起点时刻重出）即换新版本
      */
     public static B_FlyableRoute generate(GenerateRouteCommand cmd) {
-        if (cmd.waypointCount() < 2) {
-            throw new IllegalArgumentException("航点数至少为 2，实际 " + cmd.waypointCount());
-        }
-        if (cmd.speedMs() <= 0) {
-            throw new IllegalArgumentException("沿航迹速度必须为正，实际 " + cmd.speedMs());
-        }
+        Objects.requireNonNull(cmd, "cmd 不能为空");
 
-        double distanceM = GeoApprox.distanceM(
-                cmd.startLon(), cmd.startLat(), cmd.endLon(), cmd.endLat());
-        int tauFine = (int) Math.round(distanceM / cmd.speedMs());
-
-        List<Waypoint> waypoints = new ArrayList<>(cmd.waypointCount());
-        for (int i = 0; i < cmd.waypointCount(); i++) {
-            double k = (double) i / (cmd.waypointCount() - 1);
-            waypoints.add(new Waypoint(
-                    cmd.startLon() + k * (cmd.endLon() - cmd.startLon()),
-                    cmd.startLat() + k * (cmd.endLat() - cmd.startLat()),
-                    cmd.cruiseAltM(),
-                    cmd.speedMs(),
-                    cmd.startMs() + Math.round(k * tauFine * 1000.0)));
+        double distanceM = GeoApprox.distanceM(cmd.startLon(), cmd.startLat(), cmd.endLon(), cmd.endLat());
+        double tauSec = distanceM / cmd.speedMs();
+        long tauRounded = Math.round(tauSec);
+        if (tauRounded > (long) Integer.MAX_VALUE) {
+            throw new IllegalArgumentException("航段精算时长超出可表示范围（" + tauSec + " s），请检查速度与几何输入");
         }
+        int tauFine = (int) Math.max(1L, tauRounded);
+
+        List<Waypoint> waypoints = TrackGenerator.buildWaypoints(cmd, tauFine);
 
         return new B_FlyableRoute(
                 cmd.routeId(),
-                "RV-" + cmd.routeId() + "-" + cmd.startMs(),
+                "RV-" + cmd.routeId() + "-" + cmd.startMs() + "-" + TrackGenerator.fingerprint(cmd),
                 cmd.comboId(),
                 waypoints,
                 tauFine,
-                tauFine * cmd.energyRatePerSecPct(),
+                Math.min(100.0, tauSec * cmd.energyRatePerSecPct()),
                 cmd.pathRisk(),
                 cmd.landingPointsAlong(),
-                cmd.avoidZones());
+                cmd.avoidZones()
+        );
     }
+
+
+
+
 
     /**
      * 生成三段任务航迹（去程／末段交接／返程）并打分段标签——供大屏分段着色
      * （《43》§6.3）。三段分别走 {@link #generate} 同一项能力，时间自起飞时刻顺延。
      *
+     * <p>返回的分段航迹<b>只含航点与分段标签</b>：能耗／风险／迫降点／避让区等元数据
+     * 不随本结构输出（分段着色的需要仅为点序、时刻与标签）。
+     *
      * @param cmd 三段几何与参数
      * @return 分段任务航迹（去程 → 末段交接 → 返程 顺序）
      */
     public static SegmentedTrack generateMissionTrack(MissionTrackCommand cmd) {
-        B_FlyableRoute outbound = generate(new GenerateRouteCommand(
+        Objects.requireNonNull(cmd, "cmd 不能为空");
+        B_FlyableRoute outbound = TrackGenerator.generate(new GenerateRouteCommand(
                 cmd.comboId(), cmd.routeId() + "-out",
                 cmd.nestLon(), cmd.nestLat(), cmd.meetLon(), cmd.meetLat(),
                 cmd.cruiseAltM(), cmd.outboundSpeedMs(), cmd.takeoffMs(),
                 cmd.waypointsPerLeg(), List.of(), List.of(), 0.0, 0.0));
 
-        long terminalStartMs = outbound.waypoints().get(outbound.waypoints().size() - 1).t();
-        B_FlyableRoute terminal = generate(new GenerateRouteCommand(
+        long terminalStartMs = cmd.takeoffMs() + Math.round(
+                GeoApprox.distanceM(cmd.nestLon(), cmd.nestLat(), cmd.meetLon(), cmd.meetLat())
+                        / cmd.outboundSpeedMs() * 1000.0);
+        B_FlyableRoute terminal = TrackGenerator.generate(new GenerateRouteCommand(
                 cmd.comboId(), cmd.routeId() + "-term",
                 cmd.meetLon(), cmd.meetLat(), cmd.handoverEndLon(), cmd.handoverEndLat(),
                 cmd.cruiseAltM(), cmd.terminalSpeedMs(), terminalStartMs,
                 cmd.waypointsPerLeg(), List.of(), List.of(), 0.0, 0.0));
 
-        long returnStartMs = terminal.waypoints().get(terminal.waypoints().size() - 1).t();
-        B_FlyableRoute returning = generate(new GenerateRouteCommand(
+        long returnStartMs = terminalStartMs + Math.round(
+                GeoApprox.distanceM(cmd.meetLon(), cmd.meetLat(), cmd.handoverEndLon(), cmd.handoverEndLat())
+                        / cmd.terminalSpeedMs() * 1000.0);
+        B_FlyableRoute returning = TrackGenerator.generate(new GenerateRouteCommand(
                 cmd.comboId(), cmd.routeId() + "-ret",
                 cmd.handoverEndLon(), cmd.handoverEndLat(), cmd.returnTargetLon(), cmd.returnTargetLat(),
                 cmd.cruiseAltM(), cmd.returnSpeedMs(), returnStartMs,
                 cmd.waypointsPerLeg(), List.of(), List.of(), 0.0, 0.0));
 
-        List<SegmentedWaypoint> points = new ArrayList<>(
-                cmd.waypointsPerLeg() * 3);
+        // 段边界点只保留一次：末段与返程各跳过首点（与上一段末点同坐标、同时刻）
+        List<SegmentedWaypoint> points = new ArrayList<>(cmd.waypointsPerLeg() * 3 - 2);
         outbound.waypoints().forEach(w -> points.add(new SegmentedWaypoint(w, TrackSegment.OUTBOUND)));
-        terminal.waypoints().forEach(w -> points.add(new SegmentedWaypoint(w, TrackSegment.TERMINAL)));
-        returning.waypoints().forEach(w -> points.add(new SegmentedWaypoint(w, TrackSegment.RETURN)));
+        terminal.waypoints().subList(1, terminal.waypoints().size())
+                .forEach(w -> points.add(new SegmentedWaypoint(w, TrackSegment.TERMINAL)));
+        returning.waypoints().subList(1, returning.waypoints().size())
+                .forEach(w -> points.add(new SegmentedWaypoint(w, TrackSegment.RETURN)));
 
         return new SegmentedTrack(points);
+    }
+
+
+
+
+
+    /** 生效输入指纹（SHA-256 前 16 位十六进制），保证任一输入变化即换版本 */
+    private static String fingerprint(GenerateRouteCommand cmd) {
+        String payload = cmd.routeId() + "|" + cmd.comboId() + "|" + cmd.startMs()
+                + "|" + cmd.startLon() + "|" + cmd.startLat() + "|" + cmd.endLon() + "|" + cmd.endLat()
+                + "|" + cmd.cruiseAltM() + "|" + cmd.speedMs() + "|" + cmd.waypointCount()
+                + "|" + cmd.energyRatePerSecPct() + "|" + cmd.pathRisk()
+                + "|" + cmd.landingPointsAlong() + "|" + cmd.avoidZones();
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(payload.getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(hash, 0, 8);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("运行环境缺少 SHA-256 摘要算法", e);
+        }
     }
 }

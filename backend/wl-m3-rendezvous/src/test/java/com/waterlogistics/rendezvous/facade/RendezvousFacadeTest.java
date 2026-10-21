@@ -80,6 +80,24 @@ class RendezvousFacadeTest {
                 "异常信息带期望与实际两个版本：" + ex.getMessage());
     }
 
+    /** 版本闸门 fail-closed：期望版本缺失在命令构造期即拒绝；快照版本缺失由服务层拒绝。 */
+    @Test
+    void solve_shouldReject_whenVersionMissing() {
+        List<ShipPoint> points = new ArrayList<>();
+        points.add(new ShipPoint(NOW, LON0, LAT0, 90.0, 0.0, 0.0));
+        points.add(new ShipPoint(NOW + 10_000L, LON0, LAT0, 90.0, 0.0, 0.0));
+        StubSnapshotPort port = new StubSnapshotPort();
+        port.put(new ShipTrackSnapshot(null, MMSI, NOW, 86_400, points));
+        RendezvousFacade facade = new RendezvousFacade(port, droneId -> null);
+
+        assertThrows(SnapshotVersionMismatchException.class,
+                () -> facade.solve(command(VERSION)),
+                "快照版本缺失必须拒绝求解（fail closed）");
+        assertThrows(NullPointerException.class,
+                () -> command(null),
+                "期望版本缺失在命令构造期即拒绝");
+    }
+
     /** 数据缺失：端口查无该船快照 → 拒绝求解（与「算法无解」区分），异常信息带船号。 */
     @Test
     void solve_shouldReject_whenSnapshotAbsent() {
@@ -103,7 +121,7 @@ class RendezvousFacadeTest {
                 60.0, 15.0, NOW, 5, List.of(), List.of(), 0.05, 0.2));
 
         assertEquals(200, route.tauFine(), "航迹经门面同一能力：3000/15＝200 s");
-        assertEquals("RV-RT-1-" + NOW, route.routeVersion(), "版本按起点时刻生成");
+        assertTrue(route.routeVersion().startsWith("RV-RT-1-" + NOW), "版本按起点时刻与几何指纹生成");
     }
 
     /** 门面冲突二查透传：空间远离由包围盒粗筛短路。 */
@@ -119,7 +137,7 @@ class RendezvousFacadeTest {
                         new Waypoint(122.1, 30.0, 60.0, 15.0, NOW + 600_000L)),
                 600, 0.0, 0.0, List.of(), List.of());
 
-        B_ConflictResult res = facade.checkConflict(a, b, new ConflictParams(100, 25, 1_000));
+        B_ConflictResult res = facade.detectConflict(a, b, new ConflictParams(100, 25, 1_000));
 
         assertFalse(res.conflictFlag(), "空间远离：包围盒粗筛短路");
         assertEquals("RV-A", res.checksumVersion(), "checksumVersion 取被查航迹版本");

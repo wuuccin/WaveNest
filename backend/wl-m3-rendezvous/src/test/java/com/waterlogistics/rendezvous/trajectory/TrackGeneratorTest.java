@@ -62,7 +62,7 @@ class TrackGeneratorTest {
         assertEquals(0.2, route.pathRisk(), 1e-9, "路径风险照注入值");
         assertEquals(List.of("LP-1", "LP-2"), route.landingPointsAlong(), "迫降点标注透传");
         assertEquals(List.of("AZ-7"), route.avoidZones(), "避让标识透传");
-        assertEquals("RV-RT-1-" + T0, route.routeVersion(), "版本＝routeId＋起点时刻确定性生成");
+        assertTrue(route.routeVersion().startsWith("RV-RT-1-" + T0), "版本＝routeId＋起点时刻＋几何指纹确定性生成");
         assertEquals("combo-1", route.comboId());
     }
 
@@ -79,11 +79,35 @@ class TrackGeneratorTest {
                 "速度非正应拒绝");
     }
 
+    /** 短腿钳制：距离小于 speed/2 时 Math.round 会塌缩 0——时长须钳到 ≥1 s（时间仍严格递增）。 */
+    @Test
+    void generate_shouldClampTinyLegToOneSecond() {
+        B_FlyableRoute route = TrackGenerator.generate(new GenerateRouteCommand(
+                "combo-1", "RT-tiny", lonAt(0), LAT0, lonAt(0.5), LAT0,
+                60.0, 15.0, T0, 5, List.of(), List.of(), 0.05, 0.0));
+
+        assertEquals(1, route.tauFine(), "0.033 s 四舍五入到 0 → 钳到 1 s");
+        assertEquals(T0, route.waypoints().get(0).t(), "首点＝起点时刻");
+        assertEquals(T0 + 1_000L, route.waypoints().get(4).t(), "末点＝起点＋1 s");
+        for (int i = 1; i < route.waypoints().size(); i++) {
+            assertTrue(route.waypoints().get(i).t() > route.waypoints().get(i - 1).t(), "时间仍严格递增");
+        }
+        assertEquals(0.5 / 15.0 * 0.05, route.energyExact(), 1e-6, "能耗按未舍入时长计（0.5 m ÷ 15 m/s）");
+    }
+
+    /** 分段口径词唯一：fromValue 首个匹配即返回，重复会导致解析错段。 */
+    @Test
+    void segments_shouldHaveUniqueWireValues() {
+        assertEquals(TrackSegment.values().length,
+                java.util.Arrays.stream(TrackSegment.values()).map(TrackSegment::getValue).distinct().count(),
+                "分段口径词须唯一");
+    }
+
     // ===== 三段任务航迹 =====
 
     /**
      * 三段拼接：去程 3000 m@15＝200 s、末段 300 m@3＝100 s、返程 3300 m@15＝220 s；
-     * 9 点、标签 3×3、时间自起飞时刻顺延、端点与分段边界逐一对位。
+     * 7 点（段边界去重）、标签 3／2／2、时间自起飞时刻顺延、端点与分段边界逐一对位。
      */
     @Test
     void generateMissionTrack_shouldStitchThreeSegmentsWithLabels() {
@@ -96,13 +120,15 @@ class TrackGeneratorTest {
                 60.0, 15.0, 3.0, 15.0,
                 T0, 3));
 
-        assertEquals(9, track.points().size(), "3 段 × 3 点");
+        assertEquals(7, track.points().size(), "3 段拼接去重边界：3×3−2");
 
-        // 分段标签：前 3 去程、中 3 末段交接、后 3 返程
+        // 分段标签：去程 3 点；末段交接与返程各 2 点（首点与上一段末点重复，已去重）
         for (int i = 0; i < 3; i++) {
             assertEquals(TrackSegment.OUTBOUND, track.points().get(i).segment());
+        }
+        for (int i = 0; i < 2; i++) {
             assertEquals(TrackSegment.TERMINAL, track.points().get(3 + i).segment());
-            assertEquals(TrackSegment.RETURN, track.points().get(6 + i).segment());
+            assertEquals(TrackSegment.RETURN, track.points().get(5 + i).segment());
         }
         assertEquals("去程", TrackSegment.OUTBOUND.getValue(), "分段词（《43》三段表述）");
         assertEquals("末段交接", TrackSegment.TERMINAL.getValue());
@@ -111,14 +137,16 @@ class TrackGeneratorTest {
         // 端点与边界：巢 → 会面点 → 交接完成位置 → 巢
         assertEquals(lonAt(0), track.points().get(0).waypoint().lon(), 1e-9, "首点＝机巢");
         assertEquals(lonAt(3_000), track.points().get(2).waypoint().lon(), 1e-9, "去程终点＝会面点");
-        assertEquals(lonAt(3_300), track.points().get(5).waypoint().lon(), 1e-9, "末段终点＝交接完成位置");
-        assertEquals(lonAt(0), track.points().get(8).waypoint().lon(), 1e-9, "返程终点＝归巢落点");
+        assertEquals(lonAt(3_300), track.points().get(4).waypoint().lon(), 1e-9, "末段终点＝交接完成位置");
+        assertEquals(lonAt(0), track.points().get(6).waypoint().lon(), 1e-9, "返程终点＝归巢落点");
 
         // 时间顺延：段时长 200 s → 100 s → 220 s
         assertEquals(T0, track.points().get(0).waypoint().t(), "第一点＝起飞时刻");
-        assertEquals(T0 + 200_000L, track.points().get(3).waypoint().t(), "末段起＝去程 200 s 后");
-        assertEquals(T0 + 300_000L, track.points().get(6).waypoint().t(), "返程起＝再 100 s 后");
-        assertEquals(T0 + 520_000L, track.points().get(8).waypoint().t(), "收官＝再 220 s 后");
+        assertEquals(T0 + 200_000L, track.points().get(2).waypoint().t(), "去程末点＝200 s");
+        assertEquals(T0 + 250_000L, track.points().get(3).waypoint().t(), "末段次点＝250 s");
+        assertEquals(T0 + 300_000L, track.points().get(4).waypoint().t(), "末段末点＝300 s");
+        assertEquals(T0 + 410_000L, track.points().get(5).waypoint().t(), "返程次点＝410 s");
+        assertEquals(T0 + 520_000L, track.points().get(6).waypoint().t(), "收官＝520 s");
 
         for (int i = 1; i < track.points().size(); i++) {
             assertTrue(track.points().get(i).waypoint().t() >= track.points().get(i - 1).waypoint().t(),

@@ -3,6 +3,9 @@ package com.waterlogistics.algo.meeting.model;
 /**
  * 起飞时刻不可行原因——取值只列文档已见两支（《81-B组算法方案》§3.3、
  * 《22-接口契约》§2.1.2），不自行扩表；如需补值随会签补全。
+ *
+ * <p>透传口径：落库与传输一律使用 {@link #getValue()}（中文本词）。本类处在纯计算层
+ * （不引 Jackson），序列化转换由装配层/消息层负责；{@link #toString()} 同取对外口径词。
  */
 public enum TakeoffInfeasibleReason {
 
@@ -23,10 +26,23 @@ public enum TakeoffInfeasibleReason {
         return value;
     }
 
-    /** 按对外口径词解析枚举 */
+    @Override
+    public String toString() {
+        return value;
+    }
+
+    /**
+     * 按对外口径词解析枚举。
+     *
+     * @throws IllegalArgumentException 入参为空/空白或无匹配口径词
+     */
     public static TakeoffInfeasibleReason fromValue(String value) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException("起飞不可行原因不能为空");
+        }
+        String normalized = value.strip();
         for (TakeoffInfeasibleReason reason : values()) {
-            if (reason.value.equals(value)) {
+            if (reason.value.equals(normalized)) {
                 return reason;
             }
         }

@@ -2,6 +2,7 @@
 .gradle/
 build/
 out/
+backend/**/bin/
 !gradle/wrapper/gradle-wrapper.jar
 !gradle/wrapper/gradle-wrapper.properties
 !**/src/main/**/build/
@@ -15,7 +16,8 @@ replay_pid*
 *.jfr
 
 # ---------- IntelliJ IDEA ----------
-.idea/
+.idea/*
+!.idea/inspectionProfiles/
 *.iml
 *.ipr
 *.iws
@@ -74,3 +76,4 @@ application-local.properties
 # ---------- 本地工具会话数据（不入库）----------
 .codebuddy/
 /水上低空物流智能调度/
+/tmp/

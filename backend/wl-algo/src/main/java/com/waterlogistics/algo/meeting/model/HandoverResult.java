@@ -22,10 +22,23 @@ public enum HandoverResult {
         return value;
     }
 
-    /** 按对外口径词解析枚举 */
+    @Override
+    public String toString() {
+        return value;
+    }
+
+    /**
+     * 按对外口径词解析枚举。
+     *
+     * @throws IllegalArgumentException 入参为空/空白或无匹配口径词
+     */
     public static HandoverResult fromValue(String value) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException("交接结果不能为空");
+        }
+        String normalized = value.strip();
         for (HandoverResult result : values()) {
-            if (result.value.equals(value)) {
+            if (result.value.equals(normalized)) {
                 return result;
             }
         }

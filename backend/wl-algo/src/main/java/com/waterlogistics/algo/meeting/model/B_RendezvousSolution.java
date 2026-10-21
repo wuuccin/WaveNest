@@ -1,5 +1,7 @@
 package com.waterlogistics.algo.meeting.model;
 
+
+
 /**
  * 会面点解（{@code B_} 前缀＝算法层 B 组产出）——字段照《81-B组算法方案》§2.3 第（1）项
  * 一字不改；{@code hasSolution=false} 时会面字段一律为 {@code null}，由工厂方法钉死该不变量。
@@ -45,6 +47,49 @@ public record B_RendezvousSolution(
         Integer tauCoarse,
 
         String snapshotVersion) {
+
+    public B_RendezvousSolution {
+        if (solutionId == null || solutionId.isBlank()) {
+            throw new IllegalArgumentException("solutionId 不能为空");
+        }
+        if (snapshotVersion == null || snapshotVersion.isBlank()) {
+            throw new IllegalArgumentException("snapshotVersion 不能为空");
+        }
+        if (hasSolution) {
+            if (noSolutionReason != null) {
+                throw new IllegalArgumentException("有解时 noSolutionReason 必须为空");
+            }
+            if (meetLon == null || meetLat == null || meetTMin == null || meetTMax == null
+                    || shipArriveT == null || droneArriveT == null || tauCoarse == null) {
+                throw new IllegalArgumentException("有解时会面字段不能为空");
+            }
+            if (!Double.isFinite(meetLon) || meetLon < -180.0 || meetLon > 180.0
+                    || !Double.isFinite(meetLat) || meetLat < -90.0 || meetLat > 90.0) {
+                throw new IllegalArgumentException("会面点坐标必须为有限数且在合法范围内");
+            }
+            if (meetTMin > meetTMax) {
+                throw new IllegalArgumentException("会面时刻窗下界不得晚于上界");
+            }
+            if (shipArriveT < meetTMin || shipArriveT > meetTMax
+                    || droneArriveT < meetTMin || droneArriveT > meetTMax) {
+                throw new IllegalArgumentException("双方到达时刻必须落在会面时刻窗内");
+            }
+            if (tauCoarse < 0 || tauCoarse > Integer.MAX_VALUE / 1000) {
+                throw new IllegalArgumentException("理论飞行时长超出可用范围，实际 " + tauCoarse);
+            }
+        } else {
+            if (noSolutionReason == null) {
+                throw new IllegalArgumentException("无解时 noSolutionReason 不能为空");
+            }
+            if (meetLon != null || meetLat != null || meetTMin != null || meetTMax != null
+                    || shipArriveT != null || droneArriveT != null || tauCoarse != null) {
+                throw new IllegalArgumentException("无解时会面字段必须为 null");
+            }
+        }
+        if (comboId != null && comboId.isBlank()) {
+            throw new IllegalArgumentException("comboId 只能为 null 或非空白字符串");
+        }
+    }
 
     /**
      * 有解构造：窗口＝[t*, t*＋余量]（调用方算好上下界），双方到达时刻＝最早相遇时刻。

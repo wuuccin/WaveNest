@@ -3,6 +3,7 @@ package com.waterlogistics.algo.meeting;
 import com.waterlogistics.algo.meeting.model.ShipPoint;
 import com.waterlogistics.algo.meeting.model.ShipTrackSnapshot;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * 预测点列时间插值——点间线性插值求位置（《81-B组算法方案》§3.1 步骤 3）。
@@ -18,30 +19,62 @@ public final class TrackInterpolator {
     /**
      * 求快照点列在时刻 {@code t} 的插值位置。
      *
-     * @param snapshot 船舶预测快照（点列时间升序、至少一点；空点列属入参退化，由调用方拦截）
+     * <p>点列非空、无空元素与严格升序由 {@link ShipTrackSnapshot} 构造期钉死，本类不再重复
+     * 校验（该函数在求解内层循环里高频调用）；这里只防守空点列的退化入参。
+     *
+     * @param snapshot 船舶预测快照（构造期已校验点列不变量）
      * @param t        查询时刻，Unix 毫秒
-     * @return {@code {经度, 纬度}}
+     * @return {@code {经度, 纬度}}（经度统一回卷到 [-180, 180)）
      */
     public static double[] positionAt(ShipTrackSnapshot snapshot, long t) {
+        Objects.requireNonNull(snapshot, "snapshot 不能为空");
         List<ShipPoint> points = snapshot.points();
+        if (points == null || points.isEmpty()) {
+            throw new IllegalArgumentException("快照点列不能为空");
+        }
         ShipPoint first = points.get(0);
         ShipPoint last = points.get(points.size() - 1);
         if (t <= first.t()) {
-            return new double[] {first.lon(), first.lat()};
+            return new double[] {TrackInterpolator.wrapLon(first.lon()), first.lat()};
         }
         if (t >= last.t()) {
-            return new double[] {last.lon(), last.lat()};
+            return new double[] {TrackInterpolator.wrapLon(last.lon()), last.lat()};
         }
-        for (int i = 1; i < points.size(); i++) {
-            ShipPoint b = points.get(i);
-            if (t <= b.t()) {
-                ShipPoint a = points.get(i - 1);
-                double k = (double) (t - a.t()) / (b.t() - a.t());
-                return new double[] {
-                        a.lon() + k * (b.lon() - a.lon()),
-                        a.lat() + k * (b.lat() - a.lat())};
+        int lo = 1;
+        int hi = points.size() - 1;
+        while (lo < hi) {
+            int mid = (lo + hi) >>> 1;
+            if (t <= points.get(mid).t()) {
+                hi = mid;
+            } else {
+                lo = mid + 1;
             }
         }
-        return new double[] {last.lon(), last.lat()};
+        ShipPoint b = points.get(lo);
+        ShipPoint a = points.get(lo - 1);
+        double k = (double) (t - a.t()) / (b.t() - a.t());
+        return new double[] {
+                TrackInterpolator.wrapLon(a.lon() + k * TrackInterpolator.normalizeDLon(b.lon() - a.lon())),
+                a.lat() + k * (b.lat() - a.lat())};
+    }
+
+    /** 经差归一化到 [−180, 180]，跨 ±180° 走短侧 */
+    private static double normalizeDLon(double dLon) {
+        if (dLon > 180.0) {
+            return dLon - 360.0;
+        }
+        if (dLon < -180.0) {
+            return dLon + 360.0;
+        }
+        return dLon;
+    }
+
+    /** 经度回卷到 [−180, 180) */
+    private static double wrapLon(double lon) {
+        double wrapped = (lon + 180.0) % 360.0;
+        if (wrapped < 0.0) {
+            wrapped += 360.0;
+        }
+        return wrapped - 180.0;
     }
 }
