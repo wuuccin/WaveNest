@@ -2,14 +2,17 @@ package com.waterlogistics.dispatch.plan;
 
 import com.waterlogistics.algo.candidate.CandidateGenerator;
 import com.waterlogistics.contract.state.OrderStatus;
+import com.waterlogistics.contract.ws.RendezvousFrame;
 import com.waterlogistics.dispatch.candidate.CandidateSelector;
 import com.waterlogistics.dispatch.queue.TaskQueueService;
 import com.waterlogistics.dispatch.rendezvous.RendezvousCoordinator;
+import com.waterlogistics.dispatch.rendezvous.RendezvousPlanCommittedEvent;
 import com.waterlogistics.storage.entity.OrderTaskEntity;
 import com.waterlogistics.storage.repository.OrderTaskMapper;
 import java.math.BigDecimal;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -56,15 +59,18 @@ public class DispatchOrchestrator {
     private final CandidateSelector candidateSelector;
     private final RendezvousCoordinator rendezvous;
     private final OrderTaskMapper orderTaskMapper;
+    private final ApplicationEventPublisher eventPublisher;
 
     public DispatchOrchestrator(TaskQueueService taskQueueService,
             CandidateSelector candidateSelector,
             RendezvousCoordinator rendezvous,
-            OrderTaskMapper orderTaskMapper) {
+            OrderTaskMapper orderTaskMapper,
+            ApplicationEventPublisher eventPublisher) {
         this.taskQueueService = taskQueueService;
         this.candidateSelector = candidateSelector;
         this.rendezvous = rendezvous;
         this.orderTaskMapper = orderTaskMapper;
+        this.eventPublisher = eventPublisher;
     }
 
     /**
@@ -103,6 +109,9 @@ public class DispatchOrchestrator {
         order.setMeetLon(BigDecimal.valueOf(plan.meetLon()));
         order.setMeetLat(BigDecimal.valueOf(plan.meetLat()));
         orderTaskMapper.updateById(order);
+        // C3：完整方案已持久化后发布投影，app 层在事务提交后转成 WebSocket 帧。
+        eventPublisher.publishEvent(new RendezvousPlanCommittedEvent(
+                new RendezvousFrame(orderId, plan.meetLon(), plan.meetLat(), true)));
 
         log.info("派发编排完成：orderId={} droneId={} comboId={} 会面点={},{} 起飞={} 解={} 快照版本={}",
                 orderId, best.droneId(), best.comboId(), plan.meetLon(), plan.meetLat(),

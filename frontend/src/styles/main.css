@@ -45,7 +45,7 @@ h1, h2, p { margin: 0; }
 .button-secondary:hover:enabled { border-color: var(--teal); background: #d7ebe6; }
 .button-quiet { border: 1px solid var(--line-strong); color: #526a73; background: #fff; }
 .button-quiet:hover:enabled { border-color: #9db8b9; background: #f6f9f8; }
-.event-panel, .timeline-panel { border: 1px solid var(--line); border-radius: 8px; background: var(--paper); box-shadow: var(--shadow); }
+.event-panel, .timeline-panel, .realtime-panel { border: 1px solid var(--line); border-radius: 8px; background: var(--paper); box-shadow: var(--shadow); }
 .map-view { min-width: 0; }
 .map-guide { display: flex; align-items: center; flex-wrap: wrap; gap: 9px 17px; padding: 12px 18px; border-top: 1px solid var(--line); background: #f7fbfa; color: #385763; font-size: 12px; font-weight: 650; }
 .map-guide > span { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
@@ -68,6 +68,17 @@ h1, h2, p { margin: 0; }
 .leaflet-control-zoom a { color: #355866 !important; background: #fff !important; border-bottom-color: #e0e9e9 !important; }
 
 .event-panel, .timeline-panel { padding: 0 16px 13px; }
+.realtime-panel { padding: 0 14px 14px; }
+.realtime-cards { display: grid; gap: 8px; }
+.realtime-cards article { position: relative; padding: 11px 10px; overflow: hidden; border: 1px solid #e1eaea; border-radius: 7px; background: #f8fbfb; }
+.realtime-cards strong, .realtime-cards p, .realtime-cards small { display: block; padding-right: 80px; }
+.realtime-cards strong { color: var(--ink); font-size: 12px; }
+.realtime-cards p { margin-top: 5px; overflow: hidden; color: #36545e; font-size: 11px; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
+.realtime-cards small { margin-top: 4px; color: var(--muted); font-size: 10px; }
+.frame-tag { position: absolute; top: 10px; right: 9px; padding: 3px 6px; border-radius: 10px; color: #fff; background: var(--teal); font-size: 9px; font-weight: 750; }
+.frame-tag.drone { background: var(--blue); }
+.frame-tag.meeting { background: var(--orange); }
+.frame-tag.alarm { background: var(--red); }
 .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 15px 0 11px; color: var(--ink); font-size: 14px; font-weight: 750; }
 .section-heading .eyebrow { color: var(--subtle); font-size: 10px; font-weight: 600; letter-spacing: .8px; }
 .event-list { max-height: 230px; margin: 0; padding: 0; overflow: auto; list-style: none; }

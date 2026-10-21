@@ -1,7 +1,12 @@
 package com.waterlogistics.dispatch.queue;
 
+import com.waterlogistics.contract.order.OrderView;
+import com.waterlogistics.contract.rest.WaitReason;
 import com.waterlogistics.contract.state.OrderStatus;
+import com.waterlogistics.contract.ws.RendezvousFrame;
 import com.waterlogistics.dispatch.gate.DispatchGateService;
+import com.waterlogistics.dispatch.order.OrderStateChangedEvent;
+import com.waterlogistics.dispatch.rendezvous.RendezvousPlanCommittedEvent;
 import com.waterlogistics.storage.entity.OrderTaskEntity;
 import com.waterlogistics.storage.entity.TaskLogEntity;
 import com.waterlogistics.storage.repository.OrderTaskMapper;
@@ -9,7 +14,14 @@ import com.waterlogistics.storage.repository.TaskLogMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationEventPublisher;
 
 /**
  * 任务队列与状态管理（模块二 功能 8，算法见 83 §6）。
@@ -22,15 +34,26 @@ import java.time.LocalDateTime;
 @Service
 public class TaskQueueService {
 
+    private static final ZoneId DB_ZONE = ZoneId.of("Asia/Shanghai");
+
     private final OrderTaskMapper orderTaskMapper;
     private final TaskLogMapper taskLogMapper;
     private final DispatchGateService dispatchGateService;
+    private final ApplicationEventPublisher eventPublisher;
+    private final Map<String, AtomicLong> fallbackVersions = new ConcurrentHashMap<>();
 
     public TaskQueueService(OrderTaskMapper orderTaskMapper, TaskLogMapper taskLogMapper,
             DispatchGateService dispatchGateService) {
+        this(orderTaskMapper, taskLogMapper, dispatchGateService, event -> { });
+    }
+
+    @Autowired
+    public TaskQueueService(OrderTaskMapper orderTaskMapper, TaskLogMapper taskLogMapper,
+            DispatchGateService dispatchGateService, ApplicationEventPublisher eventPublisher) {
         this.orderTaskMapper = orderTaskMapper;
         this.taskLogMapper = taskLogMapper;
         this.dispatchGateService = dispatchGateService;
+        this.eventPublisher = eventPublisher;
     }
 
     /**
@@ -69,12 +92,27 @@ public class TaskQueueService {
     /** 派发：调度中 → 已派发（第 4 步定案 + 第 5 步回填，关联无人机与起飞时刻） */
     @Transactional
     public void dispatch(String orderId, String droneId, LocalDateTime meetTime) {
+        dispatch(orderId, droneId, meetTime, null, null);
+    }
+
+    /** 派发并回填 M2 已求得的组合会面方案。 */
+    @Transactional
+    public void dispatch(String orderId, String droneId, LocalDateTime meetTime,
+            Double meetLon, Double meetLat) {
         OrderTaskEntity order = orderTaskMapper.selectById(orderId);
         requireStatus(order, OrderStatus.DISPATCHING);
         order.setDroneId(droneId);
         order.setMeetTime(meetTime);
+        if (meetLon != null && meetLat != null) {
+            order.setMeetLon(java.math.BigDecimal.valueOf(meetLon));
+            order.setMeetLat(java.math.BigDecimal.valueOf(meetLat));
+        }
         orderTaskMapper.updateById(order);
         transition(order, OrderStatus.DISPATCHING, OrderStatus.DISPATCHED, "派发");
+        if (meetLon != null && meetLat != null) {
+            eventPublisher.publishEvent(new RendezvousPlanCommittedEvent(
+                    new RendezvousFrame(orderId, meetLon, meetLat, true)));
+        }
     }
 
     /**
@@ -102,6 +140,7 @@ public class TaskQueueService {
 
     /** 状态流转：更新订单状态 + 写 task_log（同事务）；落库用中文状态词 */
     private void transition(OrderTaskEntity order, OrderStatus from, OrderStatus to, String opType) {
+        long eventTs = System.currentTimeMillis();
         order.setStatus(to.getValue());
         orderTaskMapper.updateById(order);
 
@@ -110,8 +149,24 @@ public class TaskQueueService {
         log.setOpType(opType);
         log.setFromStatus(from.getValue());
         log.setToStatus(to.getValue());
-        log.setTs(LocalDateTime.now());
+        log.setTs(LocalDateTime.ofInstant(Instant.ofEpochMilli(eventTs), DB_ZONE));
         taskLogMapper.insert(log);
+
+        long version = stateVersion(order.getOrderId(), log.getLogId());
+        WaitReason waitReason = to == OrderStatus.ACCEPTED_WAIT_WAKE
+                ? WaitReason.GATE_OR_DATA : null;
+        OrderView view = new OrderView(order.getOrderId(), to, eventTs, version,
+                waitReason, null, null, null);
+        eventPublisher.publishEvent(new OrderStateChangedEvent(view));
+    }
+
+    private long stateVersion(String orderId, Long logId) {
+        if (logId != null) {
+            // 版本 1 留给建单帧；自增日志主键保证跨进程重启后仍严格递增。
+            return Math.max(2L, logId + 1L);
+        }
+        return fallbackVersions.computeIfAbsent(orderId, ignored -> new AtomicLong(1L))
+                .incrementAndGet();
     }
 
     private void requireStatus(OrderTaskEntity order, OrderStatus expected) {

@@ -13,6 +13,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.event.TransactionPhase;
+import org.springframework.transaction.event.TransactionalEventListener;
 
 /**
  * 订单接入与基本校验（M2 · 卢肄文 · 模块二功能 1）。
@@ -90,6 +92,9 @@ public class OrderAdmissionService {
                 orderId, request.shipMmsi(), request.goodsWeight(),
                 OrderPriority.fromCode(request.priority()), OrderStatus.PENDING_ACCEPT.getValue());
 
+        // 先发布版本 1，保证实时端按「待受理 → 后续状态」的顺序看到完整时间线。
+        eventPublisher.publishEvent(new OrderStateChangedEvent(view));
+
         // B0：发布「订单已受理」事件，由 DispatchTrigger 驱动落库 → 受理 → 组批调度
         eventPublisher.publishEvent(new OrderSubmittedEvent(
                 orderId, request.shipMmsi(), request.goodsWeight(), request.goodsType(),
@@ -108,6 +113,17 @@ public class OrderAdmissionService {
     /** 已受理订单数。 */
     public int orderCount() {
         return orders.size();
+    }
+
+    /**
+     * 状态事务提交后更新 REST 快照，使 GET /api/orders 与 order_state 共用同一版本。
+     * fallbackExecution=true 兼容无事务发布（建单版本 1）与模块单测。
+     */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
+    public void onOrderStateChanged(OrderStateChangedEvent event) {
+        OrderView next = event.view();
+        orders.compute(next.orderId(), (orderId, current) ->
+                current == null || next.stateVersion() > current.stateVersion() ? next : current);
     }
 
     /**
