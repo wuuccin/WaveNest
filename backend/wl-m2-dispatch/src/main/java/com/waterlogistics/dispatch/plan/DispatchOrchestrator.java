@@ -4,6 +4,7 @@ import com.waterlogistics.algo.candidate.CandidateGenerator;
 import com.waterlogistics.contract.state.OrderStatus;
 import com.waterlogistics.contract.ws.RendezvousFrame;
 import com.waterlogistics.dispatch.candidate.CandidateSelector;
+import com.waterlogistics.dispatch.feasibility.CandidateFeasibilityPlanner;
 import com.waterlogistics.dispatch.queue.TaskQueueService;
 import com.waterlogistics.dispatch.rendezvous.RendezvousCoordinator;
 import com.waterlogistics.dispatch.rendezvous.RendezvousPlanCommittedEvent;
@@ -36,8 +37,9 @@ import org.springframework.transaction.annotation.Transactional;
  *       <b>B3 闸门检查内含</b>——熔断时转「已受理待唤醒」，本编排就此结束（返回 {@code null}），
  *       不选机、不求解（熔断期间做无用功事小，无快照环境下空跑求解会把
  *       「延后」误变成「失败」）；</li>
- *   <li>{@link CandidateSelector#selectBest} 选机（<b>只选不判</b>；
- *       可行性判定 {@code CandidateService.judge} 由 C1（卢肄文）在本段接入）；</li>
+ *   <li>{@link CandidateFeasibilityPlanner#selectFeasible} 选机（<b>C1 已接入 10-21</b>：
+ *       生成 → 逐个判可行性 → 取最近的可飞候选；原为「只选不判」的
+ *       {@code CandidateSelector#selectBest}）；</li>
  *   <li>{@link RendezvousCoordinator#solveFor} 会面求解，判「追得上」；</li>
  *   <li>{@link TaskQueueService#dispatch} 派发：调度中 → 已派发（回填 {@code droneId}/{@code meetTime}）；</li>
  *   <li>会面点坐标回填 {@code order_task.meet_lon/meet_lat}（《22-界面契约》§5 组合级产物，须可回查）。</li>
@@ -61,15 +63,25 @@ public class DispatchOrchestrator {
     private final OrderTaskMapper orderTaskMapper;
     private final ApplicationEventPublisher eventPublisher;
 
+    /**
+     * C1：选机段的可行性择优（卢肄文）。生成 → 逐个判可行性 → 取最近的可飞候选。
+     *
+     * <p>取代原先单点调用 {@code candidateSelector.selectBest}（只选不判）——
+     * 见本类第 2 步与 {@link CandidateFeasibilityPlanner} 的类注释。
+     */
+    private final CandidateFeasibilityPlanner candidateFeasibilityPlanner;
+
     public DispatchOrchestrator(TaskQueueService taskQueueService,
             CandidateSelector candidateSelector,
             RendezvousCoordinator rendezvous,
             OrderTaskMapper orderTaskMapper,
+            CandidateFeasibilityPlanner candidateFeasibilityPlanner,
             ApplicationEventPublisher eventPublisher) {
         this.taskQueueService = taskQueueService;
         this.candidateSelector = candidateSelector;
         this.rendezvous = rendezvous;
         this.orderTaskMapper = orderTaskMapper;
+        this.candidateFeasibilityPlanner = candidateFeasibilityPlanner;
         this.eventPublisher = eventPublisher;
     }
 
@@ -93,8 +105,8 @@ public class DispatchOrchestrator {
             return null;
         }
 
-        // 第 2 步：选机（只选不判——可行性判定由 C1 接入本段）
-        CandidateGenerator.CandidateCombo best = candidateSelector.selectBest(order);
+        // 第 2 步：选机（C1 已接入：生成 → 逐个判可行性 → 取最近的可飞候选）
+        CandidateGenerator.CandidateCombo best = candidateFeasibilityPlanner.selectFeasible(order);
         if (best == null) {
             throw new IllegalStateException("订单 " + orderId + " 派发失败：无可用候选组合");
         }
