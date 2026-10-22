@@ -23,6 +23,10 @@ public final class WsPushEndpoint extends TextWebSocketHandler {
     public WsPushEndpoint(ObjectMapper json) { this.json = json; }
     @Override public void afterConnectionEstablished(WebSocketSession session) { sessions.add(session); }
     @Override public void afterConnectionClosed(WebSocketSession session, org.springframework.web.socket.CloseStatus status) { sessions.remove(session); }
+    public void publish(WsFrameType type, Object data) {
+        if (type == null) throw new IllegalArgumentException("WS type is required");
+        publish(type.getType(), data);
+    }
     public void publish(String type, Object data) {
         if (!TYPES.contains(type)) throw new IllegalArgumentException("Unknown WS type: " + type);
         try {
