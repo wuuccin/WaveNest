@@ -27,6 +27,9 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class WeatherConfig {
 
+    /** 风速预警阈值（m/s）—— <b>无新鲜风况时的兜底风速</b>（C1 选机判定用，不得为 0）。 */
+    static final String KEY_WIND_WARNING_MS = "weatherWindWarningThreshold";
+
     /** 风速严重阈值（m/s）—— 超过即气象熔断。 */
     static final String KEY_WIND_CRITICAL_MS = "weatherWindCriticalThreshold";
 
@@ -47,6 +50,7 @@ public class WeatherConfig {
             @Value("${wavenest.m2.weather.ttl-ms:120000}") long ttlMs) {
         return new WeatherSettings(
                 ttlMs > 0L ? ttlMs : DEFAULT_TTL_MS,
+                sysParamLoader.getDouble(KEY_WIND_WARNING_MS, 8.0),
                 sysParamLoader.getDouble(KEY_WIND_CRITICAL_MS, 12.0),
                 sysParamLoader.getInt(KEY_CLEAR_DEBOUNCE, 5));
     }
