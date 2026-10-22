@@ -26,6 +26,9 @@ public final class ApiPath {
     /** 时间轴回放取历史帧（GET），需替换 {@code {taskId}} */
     public static final String REPLAY_TEMPLATE = "/api/replay/{taskId}";
 
+    /** 飞行记录统计（GET）；与调度侧 {@code /api/monitor/statistics} 分开。 */
+    public static final String REPLAY_STATISTICS = "/api/replay/statistics";
+
     private ApiPath() {
         // 常量容器，禁止实例化
     }
