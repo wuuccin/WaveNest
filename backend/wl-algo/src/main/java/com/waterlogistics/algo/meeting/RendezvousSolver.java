@@ -47,16 +47,9 @@ public final class RendezvousSolver {
         Objects.requireNonNull(request.snapshot(), "snapshot 不能为空");
         Objects.requireNonNull(request.representativeWind(), "representativeWind 不能为空");
         String snapshotVersion = request.snapshot().version();
-        if (snapshotVersion == null || snapshotVersion.isBlank()) {
-            throw new IllegalArgumentException("快照版本不能为空");
-        }
         String solutionId = "RS-" + request.comboId() + "-" + snapshotVersion + "-" + request.nowMs();
 
         List<ShipPoint> points = request.snapshot().points();
-        if (points == null || points.isEmpty()) {
-            return B_RendezvousSolution.unsolvable(solutionId, request.comboId(),
-                    NoSolutionReason.OTHER, snapshotVersion);
-        }
 
         long tLo = request.nowMs();
         long tHi = Math.min(request.deadlineMs(), points.get(points.size() - 1).t());
@@ -86,7 +79,7 @@ public final class RendezvousSolver {
 
         double t;
         if (tLo == tHi) {
-            // 零时长窗口：船已在可及范围内则即刻会面，否则判追不上
+            // 零时长窗口：仅当船此刻恰在巢位（d==0）才即刻会面；近似重合不在此分支
             if (gapMeters(request, tLo, tLo, v) > 0) {
                 return B_RendezvousSolution.unsolvable(solutionId, request.comboId(),
                         NoSolutionReason.CANNOT_CATCH, snapshotVersion);
@@ -100,8 +93,9 @@ public final class RendezvousSolver {
                 t = Double.NaN;
             }
             double tBisection = solveByBisection(request, tLo, tHi, v);
-            // 固定点结果须先验会面条件已满足，否则可能早于真实根
-            if (!Double.isNaN(t) && gapMeters(request, Math.round(t), tLo, v) > 0) {
+            // 固定点结果须先验会面条件已满足；容差按毫秒取整与收敛阈值折算为米
+            double toleranceM = v * (request.convergeEpsilonSec() + 0.001);
+            if (!Double.isNaN(t) && gapMeters(request, Math.round(t), tLo, v) > toleranceM) {
                 t = Double.NaN;
             }
             if (!Double.isNaN(tBisection)) {
@@ -150,18 +144,21 @@ public final class RendezvousSolver {
             return tLo;
         }
         long span = tHi - tLo;
+        long upper = tHi;
+        double earliest = Double.NaN;
         for (int steps : COARSE_SCAN_STEPS) {
             long step = Math.max(1L, span / steps);
-            double root = scanFirstCrossing(request, tLo, tHi, v, step);
+            double root = scanFirstCrossing(request, tLo, upper, v, step);
             if (!Double.isNaN(root)) {
-                return root;
+                earliest = root;
+                upper = Math.min(upper, (long) Math.ceil(root));
             }
             if (step == 1L) {
                 // 已达毫秒分辨率，再加密不会产生新的探测点
-                return Double.NaN;
+                break;
             }
         }
-        return Double.NaN;
+        return earliest;
     }
 
     /** 按给定步长扫描首个「g(t) ≤ 0」的区间并细化；未命中返回 {@code NaN} */

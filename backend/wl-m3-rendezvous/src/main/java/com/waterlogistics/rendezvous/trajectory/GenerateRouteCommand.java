@@ -1,5 +1,7 @@
 package com.waterlogistics.rendezvous.trajectory;
 
+import com.waterlogistics.algo.meeting.GeoApprox;
+
 import java.util.List;
 import java.util.Objects;
 
@@ -60,6 +62,11 @@ public record GenerateRouteCommand(
 
     static final int MAX_WAYPOINT_COUNT = 512;
 
+    private static final int MAX_ANNOTATION_IDS = 512;
+
+    /** 起点时刻上界：2100-01-01T00:00:00Z，为防止后续时刻加法溢出 */
+    private static final long MAX_START_MS = 4_102_444_800_000L;
+
 
 
 
@@ -72,16 +79,30 @@ public record GenerateRouteCommand(
         }
         Objects.requireNonNull(landingPointsAlong, "landingPointsAlong 不能为空");
         Objects.requireNonNull(avoidZones, "avoidZones 不能为空");
-        if (landingPointsAlong.stream().anyMatch(id -> id == null || id.isBlank())
-                || avoidZones.stream().anyMatch(id -> id == null || id.isBlank())) {
-            throw new IllegalArgumentException("landingPointsAlong/avoidZones 不能包含 null 或空白标识");
+        for (String annotationId : landingPointsAlong) {
+            if (annotationId == null) {
+                throw new IllegalArgumentException("landingPointsAlong/avoidZones 不能包含 null");
+            }
+        }
+        for (String annotationId : avoidZones) {
+            if (annotationId == null) {
+                throw new IllegalArgumentException("landingPointsAlong/avoidZones 不能包含 null");
+            }
+        }
+        landingPointsAlong = List.copyOf(landingPointsAlong);
+        avoidZones = List.copyOf(avoidZones);
+        if (landingPointsAlong.size() > GenerateRouteCommand.MAX_ANNOTATION_IDS
+                || avoidZones.size() > GenerateRouteCommand.MAX_ANNOTATION_IDS) {
+            throw new IllegalArgumentException("landingPointsAlong/avoidZones 不得超过 " + GenerateRouteCommand.MAX_ANNOTATION_IDS + " 项");
+        }
+        if (landingPointsAlong.stream().anyMatch(String::isBlank)
+                || avoidZones.stream().anyMatch(String::isBlank)) {
+            throw new IllegalArgumentException("landingPointsAlong/avoidZones 不能包含空白标识");
         }
         if (landingPointsAlong.stream().distinct().count() != (long) landingPointsAlong.size()
                 || avoidZones.stream().distinct().count() != (long) avoidZones.size()) {
             throw new IllegalArgumentException("landingPointsAlong/avoidZones 不得包含重复标识");
         }
-        landingPointsAlong = List.copyOf(landingPointsAlong);
-        avoidZones = List.copyOf(avoidZones);
         if (!Double.isFinite(startLon) || !Double.isFinite(startLat) || !Double.isFinite(endLon) || !Double.isFinite(endLat)) {
             throw new IllegalArgumentException("起终点坐标必须为有限数");
         }
@@ -89,21 +110,15 @@ public record GenerateRouteCommand(
                 || endLon < -180.0 || endLon > 180.0 || endLat < -90.0 || endLat > 90.0) {
             throw new IllegalArgumentException("起终点经纬度超出地理范围");
         }
-        double lonDelta = endLon - startLon;
-        if (lonDelta > 180.0) {
-            lonDelta -= 360.0;
-        } else if (lonDelta < -180.0) {
-            lonDelta += 360.0;
-        }
-        if (Math.abs(lonDelta) < 1e-9 && Math.abs(endLat - startLat) < 1e-9) {
+        if (GeoApprox.distanceM(startLon, startLat, endLon, endLat) < 1e-6) {
             throw new IllegalArgumentException("起终点不能重合（零长度航迹）");
         }
         if (waypointCount < 2 || waypointCount > GenerateRouteCommand.MAX_WAYPOINT_COUNT) {
             throw new IllegalArgumentException(
                     "航点数须在 [2, " + GenerateRouteCommand.MAX_WAYPOINT_COUNT + "]，实际 " + waypointCount);
         }
-        if (startMs <= 0L) {
-            throw new IllegalArgumentException("起点时刻必须为正，实际 " + startMs);
+        if (startMs <= 0L || startMs > GenerateRouteCommand.MAX_START_MS) {
+            throw new IllegalArgumentException("起点时刻须为正且不晚于 2100-01-01T00:00:00Z，实际 " + startMs);
         }
         if (!Double.isFinite(speedMs) || !(speedMs > (double) 0)) {
             throw new IllegalArgumentException("速度必须为正的有限数，实际 " + speedMs);

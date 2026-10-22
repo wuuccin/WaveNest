@@ -103,7 +103,10 @@ public final class HandoverJudge {
                     actualMeetLon = Double.valueOf(sample.droneLon());
                     actualMeetLat = Double.valueOf(sample.droneLat());
                 }
-                // 进入 MATCH 的过渡拍只记实际会面点，不接受投放（投放须在后续拍复核稳定后判定）
+                // 进入 MATCH 的过渡拍只记实际会面点、不接受投放，但稳定窗口须从该拍起算
+                if (stable) {
+                    stableSince = Long.valueOf(sample.t());
+                }
                 continue;
             }
 

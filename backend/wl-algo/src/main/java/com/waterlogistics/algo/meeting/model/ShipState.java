@@ -11,9 +11,9 @@ package com.waterlogistics.algo.meeting.model;
  *
  * @param lon    船位经度，十进制度（项目基准坐标系）
  * @param lat    船位纬度，十进制度（项目基准坐标系）
- * @param cogDeg 航向，度
- * @param sogMs  航速，m/s
- * @param t      状态时刻，Unix 毫秒（审计用：求解起点由重算请求的 nowMs 决定，本字段不参与求解）
+ * @param cogDeg 航向，度（航速为正时须为 [0,360) 的有限数；停船时可不可用）
+ * @param sogMs  航速，m/s（0 至 {@link #MAX_SOG_MS}）
+ * @param t      状态时刻，Unix 毫秒（6a 中与求解起点 nowMs 同值，两者须保持一致）
  */
 public record ShipState(
 
@@ -27,28 +27,33 @@ public record ShipState(
 
         long t) {
 
+    /** 船速的统一上界，m/s（演示护栏；与请求侧共用，防量纲误传） */
+    public static final double MAX_SOG_MS = 100.0;
+
     public ShipState {
         if (!Double.isFinite(lon) || !Double.isFinite(lat)
                 || lon < -180.0 || lon > 180.0 || lat < -90.0 || lat > 90.0) {
             throw new IllegalArgumentException("船位非法：lon=" + lon + ", lat=" + lat);
         }
-        if (!Double.isFinite(cogDeg) || cogDeg < 0.0 || cogDeg >= 360.0) {
-            throw new IllegalArgumentException("航向非法：cogDeg=" + cogDeg);
+        if (!Double.isFinite(sogMs) || sogMs < 0.0 || sogMs > MAX_SOG_MS) {
+            throw new IllegalArgumentException("航速须在 [0, " + MAX_SOG_MS + "] m/s，实际 " + sogMs);
         }
-        if (!Double.isFinite(sogMs) || sogMs < 0.0) {
-            throw new IllegalArgumentException("航速非法：sogMs=" + sogMs);
+        sogMs += 0.0;
+        if (sogMs > 0.0) {
+            if (!Double.isFinite(cogDeg) || cogDeg < 0.0 || cogDeg >= 360.0) {
+                throw new IllegalArgumentException("航向非法：cogDeg=" + cogDeg);
+            }
+            cogDeg = ((cogDeg % 360.0) + 360.0) % 360.0 + 0.0;
+        } else {
+            // 停船：航向不可用时统一记为 NaN，避免 NaN／±Infinity 多种哨兵并存
+            cogDeg = Double.isFinite(cogDeg)
+                    ? ((cogDeg % 360.0) + 360.0) % 360.0 + 0.0
+                    : Double.NaN;
         }
-        if (t <= 0) {
-            throw new IllegalArgumentException("状态时刻必须为正，实际 " + t);
+        if (t < EpochMillis.MIN_VALID_MS) {
+            throw new IllegalArgumentException("状态时刻须为 Unix 毫秒值（下界 "
+                    + EpochMillis.MIN_VALID_MS + "），实际 " + t);
         }
     }
 
-    /**
-     * 航向是否具方向语义（航速为 0 时无方向，下游不得据此定向）。
-     *
-     * @return {@code true}＝航速为正，{@code cogDeg} 可作方向使用
-     */
-    public boolean headingUsable() {
-        return this.sogMs > 0.0;
-    }
 }

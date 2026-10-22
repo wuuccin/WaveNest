@@ -13,11 +13,11 @@ import java.util.List;
  * 即拒绝求解（《81-B组算法方案》§2.1 硬要求 1、《32-M3-动态会面》§4.2）；
  * 判新旧一律看 {@code version} 字段，不靠时间戳推测。
  *
- * @param version     快照版本号（一致性锚）
- * @param shipMmsi    目标船标识（对应 A 组快照字段 {@code shipMMSI}）
- * @param t0          快照生成时刻，Unix 毫秒
- * @param validitySec 预测有效期，秒
- * @param points      时间严格升序的预测点列（不含空元素；构造时防御拷贝；可为 null 表示无点列）
+ * @param version     快照版本号（一致性锚，非空白）
+ * @param shipMmsi    目标船标识（对应 A 组快照字段 {@code shipMMSI}，非空白）
+ * @param t0          快照生成时刻，Unix 毫秒（为正）
+ * @param validitySec 预测有效期，秒（为正）
+ * @param points      时间严格升序的预测点列（非空、不含空元素；构造时防御拷贝）
  */
 public record ShipTrackSnapshot(
 
@@ -32,16 +32,29 @@ public record ShipTrackSnapshot(
         List<ShipPoint> points) {
 
     public ShipTrackSnapshot {
-        if (points != null) {
-            try {
-                points = List.copyOf(points);
-            } catch (NullPointerException e) {
-                throw new IllegalArgumentException("快照点列不能包含空元素", e);
-            }
-            for (int i = 1; i < points.size(); i++) {
-                if (points.get(i).t() <= points.get(i - 1).t()) {
-                    throw new IllegalArgumentException("快照点列时间必须严格升序");
-                }
+        if (version == null || version.isBlank()) {
+            throw new IllegalArgumentException("快照版本不能为空或空白");
+        }
+        if (shipMmsi == null || shipMmsi.isBlank()) {
+            throw new IllegalArgumentException("目标船标识不能为空或空白");
+        }
+        if (t0 <= 0L) {
+            throw new IllegalArgumentException("快照生成时刻必须为正的 Unix 毫秒值，实际 " + t0);
+        }
+        if (validitySec <= 0) {
+            throw new IllegalArgumentException("预测有效期必须为正，实际 " + validitySec);
+        }
+        try {
+            points = List.copyOf(points);
+        } catch (NullPointerException e) {
+            throw new IllegalArgumentException("快照点列不能为空或包含空元素", e);
+        }
+        if (points.isEmpty()) {
+            throw new IllegalArgumentException("快照点列不能为空");
+        }
+        for (int i = 1; i < points.size(); i++) {
+            if (points.get(i).t() <= points.get(i - 1).t()) {
+                throw new IllegalArgumentException("快照点列时间必须严格升序");
             }
         }
     }

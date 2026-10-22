@@ -26,6 +26,18 @@ public class SnapshotUnavailableException extends RuntimeException {
     @Getter
     private final String shipMmsi;
 
+    /**
+     * 是否为「快照归属与目标船不符」；{@code false} 表示查无快照。
+     */
+    @Getter
+    private final boolean ownershipMismatch;
+
+    /**
+     * 快照实际归属船号（仅归属不符时有值）。
+     */
+    @Getter
+    private final String actualShipMmsi;
+
 
 
 
@@ -34,16 +46,19 @@ public class SnapshotUnavailableException extends RuntimeException {
      * @param shipMmsi 目标船标识
      */
     public SnapshotUnavailableException(String shipMmsi) {
-        this(shipMmsi, "查无预测快照，拒绝求解");
+        this(shipMmsi, "查无预测快照，拒绝求解", false, null);
     }
 
 
 
 
 
-    private SnapshotUnavailableException(String shipMmsi, String reason) {
+    private SnapshotUnavailableException(String shipMmsi, String reason, boolean ownershipMismatch,
+            String actualShipMmsi) {
         super(reason + "：船 " + (shipMmsi == null || shipMmsi.isBlank() ? "<unknown>" : shipMmsi));
         this.shipMmsi = shipMmsi;
+        this.ownershipMismatch = ownershipMismatch;
+        this.actualShipMmsi = actualShipMmsi;
     }
 
 
@@ -56,7 +71,9 @@ public class SnapshotUnavailableException extends RuntimeException {
      * @param shipMmsi 目标船标识
      * @return 归属不符异常（与「查无快照」区分，避免误导排障）
      */
-    public static SnapshotUnavailableException ownershipMismatch(String shipMmsi) {
-        return new SnapshotUnavailableException(shipMmsi, "快照归属与目标船不符，拒绝求解");
+    public static SnapshotUnavailableException ownershipMismatch(String shipMmsi, String actualShipMmsi) {
+        String actual = actualShipMmsi == null || actualShipMmsi.isBlank() ? "<unknown>" : actualShipMmsi;
+        return new SnapshotUnavailableException(shipMmsi,
+                "快照归属与目标船不符（实际归属 " + actual + "），拒绝求解", true, actualShipMmsi);
     }
 }

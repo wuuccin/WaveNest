@@ -77,13 +77,11 @@ public class RendezvousRecalcService {
                                                                );
 
         RecalcStateSnapshot state = request.stateSnapshot();
-        if (snapshot.points() == null || snapshot.points().isEmpty()) {
-            throw new IllegalArgumentException("快照点列不能为空，拒绝重算");
-        }
+        long snapshotStartT = snapshot.points().get(0).t();
         long snapshotEndT = snapshot.points().get(snapshot.points().size() - 1).t();
-        if (state.shipStateT() > snapshotEndT) {
+        if (state.shipStateT() < snapshotStartT || state.shipStateT() > snapshotEndT) {
             throw new IllegalArgumentException("船状态时刻超出快照覆盖范围，实际 shipStateT="
-                                                       + state.shipStateT() + ", 快照末点=" + snapshotEndT);
+                    + state.shipStateT() + ", 快照区间=[" + snapshotStartT + ", " + snapshotEndT + "]");
         }
         if (options.deadlineMs() < state.shipStateT()) {
             throw new IllegalArgumentException("最晚会面时刻不得早于船状态时刻，实际 deadlineMs="

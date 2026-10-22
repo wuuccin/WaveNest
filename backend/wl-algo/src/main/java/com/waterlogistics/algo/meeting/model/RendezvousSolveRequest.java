@@ -63,6 +63,12 @@ public record RendezvousSolveRequest(
         if (snapshot.points() == null || snapshot.points().isEmpty()) {
             throw new IllegalArgumentException("快照点列不能为空");
         }
+        ShipPoint firstPoint = snapshot.points().get(0);
+        ShipPoint lastPoint = snapshot.points().get(snapshot.points().size() - 1);
+        if (nowMs < firstPoint.t() || nowMs > lastPoint.t()) {
+            throw new IllegalArgumentException("求解起点须落在快照点列时间范围内，实际 nowMs=" + nowMs
+                    + "，快照范围 [" + firstPoint.t() + ", " + lastPoint.t() + "]");
+        }
         Objects.requireNonNull(representativeWind, "representativeWind 不能为空");
         if (maxIterations <= 0 || maxIterations > MAX_ITERATIONS) {
             throw new IllegalArgumentException(
