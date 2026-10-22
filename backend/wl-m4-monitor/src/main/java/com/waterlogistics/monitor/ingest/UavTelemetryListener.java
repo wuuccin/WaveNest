@@ -3,6 +3,7 @@ package com.waterlogistics.monitor.ingest;
 import com.waterlogistics.algo.measurement.TelemetryCleaner;
 import com.waterlogistics.monitor.detect.DetectionOrchestrator;
 import com.waterlogistics.monitor.detect.DetectionSample;
+import com.waterlogistics.monitor.store.FlightRecordStore;
 import com.waterlogistics.contract.mq.TopicName;
 import com.waterlogistics.contract.mq.UavTelemetry;
 import org.slf4j.Logger;
@@ -43,11 +44,14 @@ public class UavTelemetryListener {
 
     private final TelemetryService telemetryService;
     private final DetectionOrchestrator detectionOrchestrator;
+    private final FlightRecordStore flightRecordStore;
 
     public UavTelemetryListener(TelemetryService telemetryService,
-                                DetectionOrchestrator detectionOrchestrator) {
+                                DetectionOrchestrator detectionOrchestrator,
+                                FlightRecordStore flightRecordStore) {
         this.telemetryService = telemetryService;
         this.detectionOrchestrator = detectionOrchestrator;
+        this.flightRecordStore = flightRecordStore;
     }
 
     /**
@@ -73,7 +77,10 @@ public class UavTelemetryListener {
             // 1. 清洗（M4 ingest 侧职责）
             var state = telemetryService.acceptState(message);
 
-            // 2. 组装检测样本（missionActive 暂由遥测存在即视为在飞，
+            // 2. D0 飞行记录入库：只保存清洗后的状态，按 uavId/flightId 归集。
+            flightRecordStore.append(state);
+
+            // 3. 组装检测样本（missionActive 暂由遥测存在即视为在飞，
             //    后续与 C0 派发状态对齐后由任务状态机供值）
             DetectionSample sample = new DetectionSample(
                     message.uavId(),
@@ -84,7 +91,7 @@ public class UavTelemetryListener {
                     true                     // missionActive：遥测存在即视为在飞
             );
 
-            // 3. 驱动检测链
+            // 4. 驱动检测链
             detectionOrchestrator.onSample(sample);
 
         } catch (Exception e) {

@@ -5,6 +5,8 @@ import com.waterlogistics.contract.mq.UavTelemetry;
 import com.waterlogistics.monitor.alert.AlertEventPublisher;
 import com.waterlogistics.monitor.alert.AlertRecorder;
 import com.waterlogistics.monitor.detect.DetectionOrchestrator;
+import com.waterlogistics.monitor.query.FlightQueryService;
+import com.waterlogistics.monitor.store.FlightRecordStore;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -38,7 +40,8 @@ class UavTelemetryListenerTest {
         TelemetryService telemetryService = new TelemetryService(
                 new com.waterlogistics.algo.measurement.TelemetryCleaner.Limits(
                         50, 5000, 15, 20, 30, 1000), 4.5);
-        UavTelemetryListener listener = new UavTelemetryListener(telemetryService, orchestrator);
+        FlightRecordStore store = new FlightRecordStore();
+        UavTelemetryListener listener = new UavTelemetryListener(telemetryService, orchestrator, store);
 
         long t0 = 1_700_000_000_000L;
 
@@ -77,6 +80,11 @@ class UavTelemetryListenerTest {
 
         // 验证：MQ 发送
         assertEquals(2, publisher.sent.size(), "警告→严重升级应发 2 次 MQ");
+
+        // D0：三条记录均为清洗后的 TelemetryState，并按 uavId 形成可查询飞行任务。
+        FlightQueryService query = new FlightQueryService(store);
+        assertEquals(List.of("uav-c5-01"), query.tasks());
+        assertEquals(3, query.replay("uav-c5-01").size());
     }
 
     @Test
@@ -88,7 +96,8 @@ class UavTelemetryListenerTest {
         TelemetryService telemetryService = new TelemetryService(
                 new com.waterlogistics.algo.measurement.TelemetryCleaner.Limits(
                         50, 5000, 15, 20, 30, 1000), 4.5);
-        UavTelemetryListener listener = new UavTelemetryListener(telemetryService, orchestrator);
+        UavTelemetryListener listener = new UavTelemetryListener(
+                telemetryService, orchestrator, new FlightRecordStore());
 
         long t0 = 1_700_000_000_000L;
 
@@ -110,7 +119,8 @@ class UavTelemetryListenerTest {
         TelemetryService telemetryService = new TelemetryService(
                 new com.waterlogistics.algo.measurement.TelemetryCleaner.Limits(
                         50, 5000, 15, 20, 30, 1000), 4.5);
-        UavTelemetryListener listener = new UavTelemetryListener(telemetryService, orchestrator);
+        UavTelemetryListener listener = new UavTelemetryListener(
+                telemetryService, orchestrator, new FlightRecordStore());
 
         // 空消息
         listener.onTelemetryMessage(null);
