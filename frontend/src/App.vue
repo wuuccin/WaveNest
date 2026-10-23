@@ -9,12 +9,13 @@ import CrewOrderForm from './components/CrewOrderForm.vue'
 import { createRealtime } from './realtime'
 import { normalizeFrame } from './api/adapter'
 import { SCENES } from './realtime/mock'
+import { buildReplaySteps, droneIdForOrder, normalizeReplayTasks } from './replay/model'
 import { api } from './api/client'
 import { useOrderStore, useShipStore, useDroneStore, useAlertStore, useEventStore } from './stores'
 
 const route=ref(location.hash.slice(1)||'dashboard'), sceneIndex=ref(0), replayIndex=ref(0), busy=ref(false), feedback=ref('')
 const source=ref(import.meta.env.VITE_DATA_SOURCE === 'mock' ? 'mock' : 'live')
-const replaySteps=ref([]), taskList=ref([]), selectedTask=ref(''), recordCount=ref(0)
+const replaySteps=ref([]), taskList=ref([]), selectedTask=ref(''), recordCount=ref(0), replayMessage=ref('')
 const realtime=createRealtime(), orders=useOrderStore(), ship=useShipStore(), drone=useDroneStore(), alerts=useAlertStore(), events=useEventStore()
 const connection=realtime.status
 const view= computed(()=>['dashboard','console','replay','crew'].includes(route.value)?route.value:'dashboard')
@@ -31,7 +32,7 @@ onMounted(()=>{window.addEventListener('hashchange',onHash);clockTimer=setInterv
 onUnmounted(()=>{window.removeEventListener('hashchange',onHash);clearInterval(clockTimer);realtime.close()})
 function selectSource(next){
   source.value=next;localStorage.setItem('wavenest-source',next);feedback.value='';sceneIndex.value=0
-  replaySteps.value=[];taskList.value=[];selectedTask.value='';recordCount.value=0
+  replaySteps.value=[];taskList.value=[];selectedTask.value='';recordCount.value=0;replayMessage.value=''
   orders.reset();alerts.clear();events.clear();ship.apply(null);drone.apply(null)
   next==='live'?realtime.connect():realtime.resetMock()
 }
@@ -70,23 +71,29 @@ function exitReplay(){
   location.hash='#dashboard'
 }
 async function loadReplay(){
-  feedback.value=''
+  feedback.value='';replayMessage.value='';recordCount.value=0;replaySteps.value=[]
   try {
-    const id=selectedTask.value
-    if(!id)throw new Error('暂无可回放任务，请等待后端生成任务与历史数据')
-    const history=await api.replay(id)
-    if(!Array.isArray(history.frames)||!history.frames.length)throw new Error('该任务暂无回放帧')
-    replaySteps.value=history.frames.map(frame=>{const d=normalizeFrame(frame.type,frame.data);return {title:frame.type==='order_state'?d.orderStatus:frame.type==='alarm'?'告警事件':frame.type==='rendezvous'?'会面点更新':frame.type==='drone_state'?'无人机状态':'船舶轨迹',frames:[[frame.type,d]]}})
-    const records=await api.records(id);recordCount.value=records.records?.length || 0
+    const orderId=selectedTask.value
+    if(!orderId){replayMessage.value='暂无可回放任务';return}
+    const droneId=droneIdForOrder(taskList.value,orderId)
+    if(!droneId){replayMessage.value='该订单尚未分配无人机';return}
+    const history=await api.replay(droneId)
+    const frames=Array.isArray(history?.frames)?history.frames:[]
+    recordCount.value=frames.length
+    replaySteps.value=buildReplaySteps(frames)
+    if(!replaySteps.value.length){replayMessage.value='暂无飞行记录';return}
     showReplay(0)
-  }catch(e){feedback.value=`回放读取失败：${e.message}`;replaySteps.value=[]}
+  }catch(e){
+    if(e.status===404)replayMessage.value='暂无飞行记录'
+    else feedback.value=`回放读取失败：${e.message}`
+  }
 }
 async function enterReplay(){
   if(orders.replaying)resumeCurrentSource()
-  taskList.value=[];selectedTask.value='';recordCount.value=0;replaySteps.value=[]
+  taskList.value=[];selectedTask.value='';recordCount.value=0;replaySteps.value=[];replayMessage.value=''
   if(source.value==='mock'){replaySteps.value=SCENES;showReplay(0)}
   else {
-    try{const result=await api.tasks();taskList.value=result.tasks||[];selectedTask.value=taskList.value.find(t=>t.orderId===current.value?.orderId)?.taskId || taskList.value[0]?.taskId || ''}
+    try{const result=await api.tasks();taskList.value=normalizeReplayTasks(result);selectedTask.value=taskList.value.find(t=>t.orderId===current.value?.orderId)?.orderId || taskList.value[0]?.orderId || ''}
     catch(e){feedback.value=`任务列表读取失败：${e.message}`}
     await loadReplay()
   }
@@ -127,6 +134,6 @@ async function importRecording(event){
     </template>
     <template v-else-if="view==='console'"><div class="console-grid"><section class="console-main"><div class="section-heading"><span>任务队列</span><span class="eyebrow">DISPATCH QUEUE</span></div><div class="table-wrap"><table><thead><tr><th>订单号</th><th>状态</th><th>等待原因</th><th>预计唤醒</th><th>更新时间</th></tr></thead><tbody><tr v-for="item in orders.orders" :key="item.orderId"><td>{{ item.orderId }}</td><td><span class="table-state">{{ item.orderStatus }}</span></td><td>{{ item.orderStatus==='已受理待唤醒' ? (item.waitReason===null?'等待原因暂不可用':({WAIT_SHIP:'等船',WAIT_CARGO:'等货',GATE_OR_DATA:'闸门熔断或数据不足'}[item.waitReason]||'字段异常')):'--' }}</td><td>{{ item.wakeEtaTs ? new Date(item.wakeEtaTs).toLocaleString() : '--' }}</td><td>{{ new Date(item.eventTs).toLocaleTimeString('zh-CN',{hour12:false}) }}</td></tr></tbody></table></div><div v-if="!orders.orders.length" class="empty-state">暂无任务</div><div class="section-heading subheading">人工干预 <span class="eyebrow">MANUAL CONTROL</span></div><div class="gate-line"><span>派单闸门</span><strong :class="{alarm:orders.gate.gateStatus==='熔断中'}">{{ orders.gate.gateStatus }}</strong><span>{{ orders.gate.gateSources?.join(' / ')||'无冻结来源' }}</span></div><div class="action-grid"><button v-for="action in actions" :key="action" :disabled="busy||source==='mock'||(needsOrder(action)&&!current)" @click="intervene(action)">{{ action }}</button><button :disabled="busy||source==='mock'" @click="intervene('解除冻结')">解除人工冻结</button></div><p class="action-help">操作对象：{{ current?.orderId||'暂无订单' }}。人工操作以服务端确认结果为准。离线模式只演示态势；具体可用操作以服务端实现为准。</p><p v-if="feedback" class="action-feedback" role="status">{{ feedback }}</p></section><aside class="console-side"><RealtimeStatusPanel/><OrderTimeline/><EventStream/></aside></div></template>
     <template v-else-if="view==='crew'"><div class="crew-layout"><div class="crew-phone"><div class="crew-title"><small>我的配送</small><strong>{{ ship.current?.shipName||'本船订单' }}</strong></div><div class="crew-order"><span>当前订单 <b>{{ current?.orderId||'--' }}</b></span><strong>{{ current?.orderStatus||'暂无订单' }}</strong><p v-if="current?.orderStatus==='已受理待唤醒'">{{ current.waitReason===null?'等待原因暂不可用':'请等待调度更新' }}</p><p v-if="current?.orderStatus==='失败'">已迫降，待人工回收</p><p v-if="current?.orderStatus==='异常终止'">任务异常终止，请查看告警及处理记录</p></div><OrderTimeline/><CrewOrderForm :source="source" @created="onOrderCreated"/></div><div class="crew-map"><MapView/></div></div></template>
-    <template v-else><div class="replay-layout"><div class="replay-map"><MapView/></div><aside><div class="section-heading">回放控制 <span class="eyebrow">PLAYBACK</span></div><select v-if="source==='live' && taskList.length" v-model="selectedTask" @change="loadReplay" aria-label="回放任务"><option v-for="task in taskList" :key="task.taskId" :value="task.taskId">{{ task.taskId }} · {{ task.droneId }}</option></select><p v-if="source==='live'">实际飞行记录 {{ recordCount }} 条</p><strong class="replay-title">{{ replaySteps[replayIndex]?.title }}</strong><input type="range" min="0" :max="Math.max(0,replaySteps.length-1)" :disabled="!replaySteps.length" step="1" :value="replayIndex" @input="showReplay($event.target.value)" aria-label="回放进度"/><div class="replay-ticks"><span>开始</span><span>拖动查看历史</span><span>最新记录</span></div><p>按历史帧回放轨迹、会面点、告警及订单状态；回放期间暂停接收实时帧。</p><button class="button-primary" @click="exitReplay">退出回放</button><OrderTimeline/></aside></div></template>
+    <template v-else><div class="replay-layout"><div class="replay-map"><MapView/></div><aside><div class="section-heading">回放控制 <span class="eyebrow">PLAYBACK</span></div><select v-if="source==='live' && taskList.length" v-model="selectedTask" @change="loadReplay" aria-label="回放任务"><option v-for="task in taskList" :key="task.orderId" :value="task.orderId">{{ task.orderId }} · {{ task.droneId || '未派机' }}</option></select><p v-if="source==='live'">实际飞行记录 {{ recordCount }} 条</p><div v-if="replayMessage" class="empty-state" role="status">{{ replayMessage }}</div><strong v-if="replaySteps.length" class="replay-title">{{ replaySteps[replayIndex]?.title }}</strong><input type="range" min="0" :max="Math.max(0,replaySteps.length-1)" :disabled="!replaySteps.length" step="1" :value="replayIndex" @input="showReplay($event.target.value)" aria-label="回放进度"/><div class="replay-ticks"><span>开始</span><span>拖动查看历史</span><span>最新记录</span></div><p>按机号回放，含该机全部历史。回放期间暂停接收实时帧。</p><button class="button-primary" @click="exitReplay">退出回放</button><OrderTimeline/></aside></div></template>
   </main><footer>WaveNest · 沿江智能配送 <span>本地航道示意 / {{ source==='live'?'后端实时数据':'离线演示数据' }}</span></footer>
 </div></template>
