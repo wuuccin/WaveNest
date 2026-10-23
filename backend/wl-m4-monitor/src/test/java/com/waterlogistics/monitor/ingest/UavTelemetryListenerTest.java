@@ -1,6 +1,7 @@
 package com.waterlogistics.monitor.ingest;
 
 import com.waterlogistics.algo.detection.SysParamProvider;
+import com.waterlogistics.contract.mq.AlertEventMessage;
 import com.waterlogistics.contract.mq.UavTelemetry;
 import com.waterlogistics.monitor.alert.AlertEventPublisher;
 import com.waterlogistics.monitor.alert.AlertRecorder;
@@ -25,9 +26,9 @@ class UavTelemetryListenerTest {
 
     /** MQ 发送替身：覆盖 publish 记录已发事件，不碰 RabbitTemplate。 */
     private static final class RecordingPublisher extends AlertEventPublisher {
-        final List<AlertRecorder.AlertEvent> sent = new ArrayList<>();
+        final List<AlertEventMessage> sent = new ArrayList<>();
         RecordingPublisher() { super(null); }
-        @Override public void publish(AlertRecorder.AlertEvent event) { sent.add(event); }
+        @Override public void publish(AlertEventMessage event) { sent.add(event); }
     }
 
     @Test
@@ -61,17 +62,17 @@ class UavTelemetryListenerTest {
         listener.onTelemetryMessage(criticalFrame);
 
         // 验证：告警记录
-        List<AlertRecorder.AlertEvent> events = recorder.eventLog();
+        List<AlertEventMessage> events = recorder.eventLog();
         assertEquals(2, events.size(), "警告→严重升级应产生 2 条事件");
 
-        AlertRecorder.AlertEvent warnEvent = events.get(0);
+        AlertEventMessage warnEvent = events.get(0);
         assertEquals("低电量", warnEvent.alertType());
         assertEquals("警告", warnEvent.level());
         assertEquals(t0, warnEvent.timestamp());
         assertEquals(18.0, warnEvent.currentValue());
         assertEquals(20.0, warnEvent.thresholdValue());
 
-        AlertRecorder.AlertEvent critEvent = events.get(1);
+        AlertEventMessage critEvent = events.get(1);
         assertEquals("低电量", critEvent.alertType());
         assertEquals("严重", critEvent.level());
         assertEquals(t0, critEvent.timestamp(), "升级不重置首次触发时刻");

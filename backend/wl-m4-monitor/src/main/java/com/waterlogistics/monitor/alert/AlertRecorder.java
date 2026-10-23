@@ -1,6 +1,7 @@
 package com.waterlogistics.monitor.alert;
 
 import com.waterlogistics.algo.detection.DetectionResult;
+import com.waterlogistics.contract.mq.AlertEventMessage;
 import com.waterlogistics.contract.state.AlertLevel;
 import com.waterlogistics.contract.state.AlertType;
 import com.waterlogistics.storage.entity.AlertEntity;
@@ -59,24 +60,11 @@ public class AlertRecorder {
     /** 告警时间落库时区（与 DB serverTimezone=Asia/Shanghai 一致） */
     private static final ZoneId DB_ZONE = ZoneId.of("Asia/Shanghai");
 
-    /** alert.event 消息对象（G-2 权威 9 字段） */
-    public record AlertEvent(
-            String eventId,       // UUID，同一告警贯穿始终；解除后重新触发才换新 id
-            String alertType,     // 偏航/低电量/失联/气象超限（契约 AlertType 中文取值）
-            String level,         // 警告/严重（契约 AlertLevel 中文取值；G-01 不产“提示”）
-            int duration,         // 持续时长（秒）
-            String droneId,
-            String orderId,
-            long timestamp,       // 告警首次触发时刻（检测层 triggeredAtMs，Unix 毫秒）
-            Double currentValue,  // 偏航距离m/电量%/风速m/s；失联为 null
-            Double thresholdValue
-    ) {}
-
     /** 一条活跃告警的身份：事件 id ＋ 当前级别 ＋ 首次触发时刻。 */
     private record ActiveAlert(String eventId, AlertLevel level, long triggeredAtMs) {}
 
     /** 已产生的 alert.event 列表（内存留痕，供查询/测试；正式查询走 alert 表） */
-    private final List<AlertEvent> eventLog = new CopyOnWriteArrayList<>();
+    private final List<AlertEventMessage> eventLog = new CopyOnWriteArrayList<>();
 
     /** 活跃告警去重：key = 无人机|告警类型，value = 活跃告警身份；级别变化/灭失强制发复用 eventId */
     private final Map<String, ActiveAlert> activeAlerts = new ConcurrentHashMap<>();
@@ -108,9 +96,9 @@ public class AlertRecorder {
      * @param result  检测结果（级别/类型为契约枚举，相位见 {@link DetectionResult.Phase}）
      * @param droneId 无人机标识
      * @param orderId 订单标识（可空，如失联早于订单绑定）
-     * @return 新产生的 AlertEvent；无告警、同级持续（去重）时返回 null
+     * @return 新产生的 AlertEventMessage；无告警、同级持续（去重）时返回 null
      */
-    public AlertEvent record(DetectionResult result, String droneId, String orderId) {
+    public AlertEventMessage record(DetectionResult result, String droneId, String orderId) {
         if (!result.hasAlert()) return null;
 
         String key = activeKey(droneId, result.alertType());
@@ -124,7 +112,7 @@ public class AlertRecorder {
         String eventId = previous == null ? UUID.randomUUID().toString() : previous.eventId();
         activeAlerts.put(key, new ActiveAlert(eventId, result.level(), result.triggeredAtMs()));
 
-        AlertEvent event = new AlertEvent(
+        AlertEventMessage event = new AlertEventMessage(
                 eventId,
                 result.alertType().getValue(),
                 result.level().getValue(),
@@ -150,10 +138,10 @@ public class AlertRecorder {
     }
 
     /** 获取告警事件流水（当前阶段用，替代 alert 表查询）。 */
-    public List<AlertEvent> eventLog() { return Collections.unmodifiableList(eventLog); }
+    public List<AlertEventMessage> eventLog() { return Collections.unmodifiableList(eventLog); }
 
     /** RAISED 落库 insert；LEVEL_CHANGED/灭失补发按 eventId update（灭失同级时值不变，跳过）。 */
-    private void persist(ActiveAlert previous, AlertEvent event) {
+    private void persist(ActiveAlert previous, AlertEventMessage event) {
         if (alertMapper == null) return;
         try {
             if (previous == null) {
