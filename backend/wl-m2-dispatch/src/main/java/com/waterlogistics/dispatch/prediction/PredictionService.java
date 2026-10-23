@@ -68,6 +68,15 @@ public class PredictionService {
     private final Map<String, PredictionSnapshot> latestSnapshots = new ConcurrentHashMap<>();
 
     /**
+     * 每船<b>最近一条观测</b>（不落库、不进快照），供重算时复用。
+     *
+     * <p>重算信号只带 {@code mmsi}＋方位差，不带观测；没有本表，重算就无从下手。
+     * 只存最新一条：重算的意义是「按当前最新船位重建一版」，历史观测由算法层滤波器
+     * 自己维护（F4 接通后 {@code AisObservationFilter} 会吃全序列）。
+     */
+    private final Map<String, AisMessage> lastObservations = new ConcurrentHashMap<>();
+
+    /**
      * 每船版本号计数器。
      *
      * <p>契约把 {@code version} 定为 {@code long} 且「判新旧用版本字段、不靠时间戳推测」，
@@ -100,6 +109,38 @@ public class PredictionService {
      *         抛出时<b>不写快照、不递增版本</b>，本条观测视为未发生）
      */
     public PredictionSnapshot refresh(AisMessage message) {
+        return computeSnapshot(message, true);
+    }
+
+    /**
+     * 响应一次重算请求：用该船<b>最新一条观测</b>重算一版快照（版本号 +1，广播更新事件）。
+     *
+     * <p><b>这是 F3「重算链接通」的落地点</b>（10-23 任务清单 §三 卢肄文段）：重算请求器收到
+     * 信号后不再只打日志，而是回到本类真算一版，让下游（M3 端口、大屏 {@code ship_traj}、
+     * E 组判据）确实看到新版本，闭环前一半才算接上。
+     *
+     * <p><b>为什么不再回发重算信号</b>：本次重算用的就是触发它的那条观测，主轴方位必然与
+     * 当前版一致（方位差为 0），若仍走信号判定，就只是把「同一件事」再判一遍；显式关掉
+     * 回发，是为了让链路无自激可能，而不是依赖「算出来一定相等」这个巧合。
+     *
+     * @param mmsi 目标船标识
+     * @return 重算后的快照；该船从无观测时为空（调用方无需处理）
+     */
+    public Optional<PredictionSnapshot> recompute(String mmsi) {
+        AisMessage observation = lastObservations.get(mmsi);
+        if (observation == null) {
+            return Optional.empty();
+        }
+        return Optional.of(computeSnapshot(observation, false));
+    }
+
+    /**
+     * 算一版快照并登记（refresh 与 recompute 的唯一共干）。
+     *
+     * @param signalOnPremiseChange 是否顺带判定「预测前提已实质改变」并回发重算信号；
+     *                             只有入端 {@link #refresh} 为 {@code true}
+     */
+    private PredictionSnapshot computeSnapshot(AisMessage message, boolean signalOnPremiseChange) {
         // 单位归一：AisMessage 保持源单位（节），算法层统一 SI（m/s）
         double sogMs = ConstantVelocityPredictor.knotsToMs(message.sog());
 
@@ -130,13 +171,17 @@ public class PredictionService {
                 null, null, null, null, null);
 
         PredictionSnapshot previous = latestSnapshots.put(message.mmsi(), snapshot);
+        lastObservations.put(message.mmsi(), message);
 
         log.debug("预测刷新：mmsi={} version={} points={} 有效期={}s 前提={}",
                 snapshot.mmsi(), snapshot.version(), snapshot.points().size(),
                 snapshot.validitySec(), snapshot.premise());
 
-        maybeRequestRecompute(previous, snapshot);
+        // 先广播本版，再判前提：重算若被触发会产出更高版本，顺序反了会让下游先收到旧版
         eventPublisher.publishEvent(new PredictionUpdatedEvent(snapshot.toFrame()));
+        if (signalOnPremiseChange) {
+            maybeRequestRecompute(previous, snapshot);
+        }
 
         return snapshot;
     }
