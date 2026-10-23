@@ -1,6 +1,9 @@
 package com.waterlogistics.dispatch.prediction;
 
 import com.waterlogistics.storage.param.SysParamLoader;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -30,6 +33,15 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class PredictionConfig {
 
+    private static final Logger log = LoggerFactory.getLogger(PredictionConfig.class);
+
+    /**
+     * 实现开关（10-23 F4）：{@code precise}（缺省）或 {@code constant}。
+     *
+     * <p><b>回退口径</b>：改这一行 → 重启后端，即回到匀速版；预估一分钟内可完成，
+     * 满足清单「五分钟内切回」的硬要求。
+     */
+    static final String KEY_MODE = "wavenest.m2.prediction.mode";
     /** 沿航道 σ 初值（AIS 位置误差）。 */
     static final String KEY_SIGMA_POS_M = "sigmaPosM";
 
@@ -67,5 +79,84 @@ public class PredictionConfig {
                 sysParamLoader.getInt(KEY_HORIZON_SEC, 1800),
                 DEFAULT_STEP_SEC,
                 DEFAULT_VALIDITY_SEC);
+    }
+
+    /**
+     * 输出区间断言网（F4 第 1 步）。
+     *
+     * <p>缺省框取「仿真域 ∪ 赣江航段」（{@link PredictionAssurance.Bounds#demoArea()}）：
+     * M1 仿真器发 {@code 114.30E／30.60N}，赣江在 {@code 115.5–116.5E／28.3–29.1N}，
+     * 只框赣江会让联调每帧被拦。正式部署按航段收窄时改属性即可：
+     * {@code wavenest.m2.prediction.bbox.min-lon/min-lat/max-lon/max-lat}。
+     *
+     * @param minLon 西界
+     * @param minLat 南界
+     * @param maxLon 东界
+     * @param maxLat 北界
+     * @return 断言网
+     */
+    @Bean
+    public PredictionAssurance predictionAssurance(
+            @Value("${wavenest.m2.prediction.bbox.min-lon:114.00}") double minLon,
+            @Value("${wavenest.m2.prediction.bbox.min-lat:28.30}") double minLat,
+            @Value("${wavenest.m2.prediction.bbox.max-lon:116.50}") double maxLon,
+            @Value("${wavenest.m2.prediction.bbox.max-lat:30.90}") double maxLat) {
+        return new PredictionAssurance(
+                new PredictionAssurance.Bounds(minLon, maxLon, minLat, maxLat));
+    }
+
+    /**
+     * 预测实现画像（模式 ＋ 断言网 ＋ 精算引擎），F4 的装配落点。
+     *
+     * <p>引擎的两个滤波器参数（{@code q}、{@code thetaMaxDeg} 等）在 {@code sys_param} 中
+     * <b>均未登记</b>，按纪律<b>不臆造键名</b>，一律用可覆盖属性承载，缺省取
+     * {@code 80} 附录 B 的建议初值；登记后把对应行改成 {@code sysParamLoader.getDouble(...)} 即可，
+     * 只改本方法一处。
+     *
+     * @param settings 预测参数（σ 初值／α／时域／步长，已读 {@code sys_param}）
+     * @param assurance 断言网
+     * @param modeCode 实现开关取值
+     * @param laneHalfWidthM 航道半宽，m
+     * @param lTolM 纵向容忍上限，m
+     * @param wTolM 横向容忍上限，m
+     * @param refColdStartSec 冷启动参考窗，s
+     * @param q 过程噪声谱密度
+     * @param thetaMaxDeg 观测夹角截断，度
+     * @param vMaxCraftMs 船速限幅，m/s
+     * @param initialVelocityStdMs 初始化纵向速度标准差，m/s
+     * @param tauESec 横向回复时间常数，s
+     * @return 画像
+     */
+    @Bean
+    public PredictionProfile predictionProfile(PredictionSettings settings,
+            PredictionAssurance assurance,
+            @Value("${wavenest.m2.prediction.mode:precise}") String modeCode,
+            @Value("${wavenest.m2.prediction.lane-half-width-m:50}") double laneHalfWidthM,
+            @Value("${wavenest.m2.prediction.l-tol-m:180}") double lTolM,
+            @Value("${wavenest.m2.prediction.w-tol-m:40}") double wTolM,
+            @Value("${wavenest.m2.prediction.ref-cold-start-sec:300}") double refColdStartSec,
+            @Value("${wavenest.m2.prediction.q:1.0e-6}") double q,
+            @Value("${wavenest.m2.prediction.theta-max-deg:75}") double thetaMaxDeg,
+            @Value("${wavenest.m2.prediction.v-max-craft-ms:6}") double vMaxCraftMs,
+            @Value("${wavenest.m2.prediction.initial-velocity-std-ms:0.5}") double initialVelocityStdMs,
+            @Value("${wavenest.m2.prediction.tau-e-sec:120}") double tauESec) {
+
+        PredictionMode mode = PredictionMode.fromCode(modeCode);
+        if (!mode.code().equalsIgnoreCase(String.valueOf(modeCode).trim())) {
+            log.warn("预测实现开关取值无法识别（{}），已回落匀速版；合法取值：precise／constant", modeCode);
+        }
+
+        PrecisePredictionEngine.Params params = new PrecisePredictionEngine.Params(
+                laneHalfWidthM, lTolM, wTolM, refColdStartSec, q, thetaMaxDeg,
+                vMaxCraftMs, initialVelocityStdMs, tauESec);
+
+        if (mode == PredictionMode.CONSTANT) {
+            log.warn("预测层运行在匀速版（回退姿态）：{} = constant", KEY_MODE);
+            return new PredictionProfile(PredictionMode.CONSTANT, assurance, null);
+        }
+
+        log.info("预测层运行在精算版：观测滤波 ＋ 曲线坐标 ＋ 协方差传播 ＋ 横向 OU（{} = {}）",
+                KEY_MODE, mode.code());
+        return PredictionProfile.precise(settings, assurance, params);
     }
 }
