@@ -1,5 +1,6 @@
 package com.waterlogistics.monitor.alert;
 
+import com.waterlogistics.contract.mq.AlertEventMessage;
 import com.waterlogistics.contract.mq.TopicName;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -33,7 +34,7 @@ public class AlertEventPublisher {
      *
      * @param event 告警事件（G-2 九字段）
      */
-    public void publish(AlertRecorder.AlertEvent event) {
+    public void publish(AlertEventMessage event) {
         try {
             rabbit.convertAndSend(exchange, TopicName.ALERT_EVENT, event);
         } catch (Exception e) {
