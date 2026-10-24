@@ -15,7 +15,7 @@ function ellipsePoints(lon, lat, along, cross, course) {
 export function drawShip(map, group, state) {
   group.clearLayers()
   if (!state || !Number.isFinite(state.lon) || !Number.isFinite(state.lat)) return
-  const points = state.points || []
+  const points = (state.points || []).filter(p => Number.isFinite(p?.lon) && Number.isFinite(p?.lat))
   if (points.length) {
     L.polyline(points.map(p => [p.lat, p.lon]), { color: '#087f71', weight: 5, opacity: .95 }).addTo(group)
     const p = points.at(-1), cov = state.cov
