@@ -1,5 +1,6 @@
 package com.waterlogistics.app.push;
 
+import com.waterlogistics.contract.mq.AlertEventMessage;
 import com.waterlogistics.contract.mq.TopicName;
 import com.waterlogistics.contract.mq.UavTelemetry;
 import com.waterlogistics.contract.state.AlertLevel;
@@ -10,7 +11,6 @@ import com.waterlogistics.contract.ws.WsFrameType;
 import com.waterlogistics.dispatch.order.OrderStateChangedEvent;
 import com.waterlogistics.dispatch.prediction.PredictionUpdatedEvent;
 import com.waterlogistics.dispatch.rendezvous.RendezvousPlanCommittedEvent;
-import com.waterlogistics.monitor.alert.AlertRecorder;
 import org.springframework.amqp.core.ExchangeTypes;
 import org.springframework.amqp.rabbit.annotation.Exchange;
 import org.springframework.amqp.rabbit.annotation.Queue;
@@ -80,7 +80,7 @@ public final class RealtimeEventBridge {
                     type = ExchangeTypes.TOPIC,
                     durable = "true"),
             key = TopicName.ALERT_EVENT))
-    public void onAlertEvent(AlertRecorder.AlertEvent event) {
+    public void onAlertEvent(AlertEventMessage event) {
         endpoint.publish(WsFrameType.ALARM, new AlarmFrame(
                 AlertType.fromValue(event.alertType()),
                 AlertLevel.fromValue(event.level()),
@@ -88,7 +88,7 @@ public final class RealtimeEventBridge {
                 alertMessage(event)));
     }
 
-    private static String alertMessage(AlertRecorder.AlertEvent event) {
+    private static String alertMessage(AlertEventMessage event) {
         StringBuilder text = new StringBuilder("无人机 ")
                 .append(event.droneId()).append("：").append(event.alertType());
         if (event.currentValue() != null) {
