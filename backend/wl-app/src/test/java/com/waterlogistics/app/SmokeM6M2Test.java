@@ -1,6 +1,7 @@
 package com.waterlogistics.app;
 
 import com.waterlogistics.contract.mq.AisMessage;
+import com.waterlogistics.contract.order.OrderView;
 import com.waterlogistics.contract.rest.DispatchGate;
 import com.waterlogistics.contract.rest.GateSource;
 import com.waterlogistics.contract.rest.GateStatus;
@@ -10,7 +11,10 @@ import com.waterlogistics.dispatch.order.OrderAdmissionService;
 import com.waterlogistics.dispatch.order.OrderSubmitRequest;
 import com.waterlogistics.dispatch.order.OrderSubmitResponse;
 import com.waterlogistics.dispatch.prediction.PredictionService;
+import com.waterlogistics.dispatch.order.OrderStateChangedEvent;
 import com.waterlogistics.dispatch.queue.TaskQueueService;
+import com.waterlogistics.dispatch.taskstate.FlightPhaseAdvancer;
+import com.waterlogistics.dispatch.taskstate.FlightPhaseChangedEvent;
 import com.waterlogistics.storage.entity.OrderTaskEntity;
 import com.waterlogistics.storage.entity.TaskLogEntity;
 import com.waterlogistics.storage.param.SysParamLoader;
@@ -19,8 +23,14 @@ import com.waterlogistics.storage.repository.TaskLogMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.event.ApplicationEvents;
+import org.springframework.test.context.event.RecordApplicationEvents;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
 
@@ -32,7 +42,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * ① SysParamLoader 能读到阈值（宋冰鑫 detect/ 依赖）；② 实体能跑通一次读写；
  * ③ 订单走通「待受理 → 待调度 → 调度中 → 已派发」。测试事务回滚，不污染演示库。
  */
-@SpringBootTest
+@SpringBootTest(properties = "wavenest.m2.flight-advance-enabled=false")
+@RecordApplicationEvents
 @Transactional
 class SmokeM6M2Test {
 
@@ -50,6 +61,10 @@ class SmokeM6M2Test {
     private OrderAdmissionService admissionService;
     @Autowired
     private PredictionService predictionService;
+    @Autowired
+    private FlightPhaseAdvancer flightPhaseAdvancer;
+    @Autowired
+    private ApplicationEvents applicationEvents;
 
     /** 判据：sys_param 有行、关键键可读（含 M6 新增两键）；2026-10-18 改按键断言，不锁总数 */
     @Test
@@ -114,6 +129,70 @@ class SmokeM6M2Test {
                 .eq(TaskLogEntity::getOrderId, orderId));
         assertThat(logs).hasSize(4);
         assertThat(logs).noneMatch(entry -> "重入队".equals(entry.getOpType()));
+
+        // F2 飞行阶段推进：把会面时刻回拨到已过时刻，模拟一次完整飞行；
+        // 飞行态只追加 task_log，订单态仍停在「已派发」。
+        after.setMeetTime(LocalDateTime.ofInstant(
+                Instant.ofEpochMilli(System.currentTimeMillis() - 3_600_000L),
+                ZoneId.of("Asia/Shanghai")));
+        orderTaskMapper.updateById(after);
+        flightPhaseAdvancer.tick();
+
+        List<TaskLogEntity> flightLogs = taskLogMapper.selectList(
+            new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<TaskLogEntity>()
+                .eq(TaskLogEntity::getOrderId, orderId)
+                .in(TaskLogEntity::getToStatus, "去程中", "末段交接中", "返航中", "已完成")
+                .orderByAsc(TaskLogEntity::getLogId));
+        assertThat(flightLogs).hasSize(4);
+        assertThat(flightLogs).extracting(TaskLogEntity::getToStatus)
+                .containsExactly("去程中", "末段交接中", "返航中", "已完成");
+        assertThat(flightLogs).extracting(TaskLogEntity::getOpType)
+                .containsExactly("起飞确认", "进入末段交接", "交接完成", "落巢完成");
+        assertThat(logs).hasSize(4);
+        assertThat(orderTaskMapper.selectById(orderId).getStatus())
+                .isEqualTo(OrderStatus.DISPATCHED.getValue());
+        assertThat(applicationEvents.stream(OrderStateChangedEvent.class)
+                .filter(event -> event.view().orderId().equals(orderId))
+                .map(event -> event.view().orderStatus()))
+                .containsExactly(OrderStatus.PENDING_ACCEPT, OrderStatus.WAIT_DISPATCH,
+                        OrderStatus.DISPATCHING, OrderStatus.DISPATCHED);
+        assertThat(applicationEvents.stream(FlightPhaseChangedEvent.class)
+                .filter(event -> event.view().orderId().equals(orderId))
+                .map(event -> event.view().orderStatus()))
+                .containsExactly(OrderStatus.OUTBOUND, OrderStatus.HANDOVER,
+                        OrderStatus.RETURNING, OrderStatus.FINISHED);
+        OrderView snapshot = admissionService.listOrders().stream()
+                .filter(view -> view.orderId().equals(orderId))
+                .findFirst().orElseThrow();
+        assertThat(snapshot.orderStatus()).isEqualTo(OrderStatus.FINISHED);
+        assertThat(snapshot.stateVersion()).isEqualTo(flightLogs.get(3).getLogId() + 1L);
+
+        // 重派复用同一 orderId：上一周期的飞行日志不得让新周期直接判完成。
+        String droneId = after.getDroneId();
+        BigDecimal meetLon = after.getMeetLon();
+        BigDecimal meetLat = after.getMeetLat();
+        taskQueueService.requeue(orderId);
+        taskQueueService.startDispatch(orderId);
+        taskQueueService.dispatch(orderId, droneId,
+                LocalDateTime.ofInstant(Instant.ofEpochMilli(System.currentTimeMillis() - 7_200_000L),
+                        ZoneId.of("Asia/Shanghai")),
+                meetLon.doubleValue(), meetLat.doubleValue());
+        flightPhaseAdvancer.tick();
+
+        List<TaskLogEntity> secondFlightLogs = taskLogMapper.selectList(
+            new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<TaskLogEntity>()
+                .eq(TaskLogEntity::getOrderId, orderId)
+                .in(TaskLogEntity::getToStatus, "去程中", "末段交接中", "返航中", "已完成")
+                .orderByAsc(TaskLogEntity::getLogId));
+        assertThat(secondFlightLogs).hasSize(8);
+        assertThat(secondFlightLogs.subList(4, 8)).extracting(TaskLogEntity::getToStatus)
+                .containsExactly("去程中", "末段交接中", "返航中", "已完成");
+        OrderView redispatched = admissionService.listOrders().stream()
+                .filter(view -> view.orderId().equals(orderId))
+                .findFirst().orElseThrow();
+        assertThat(redispatched.orderStatus()).isEqualTo(OrderStatus.FINISHED);
+        assertThat(orderTaskMapper.selectById(orderId).getStatus())
+                .isEqualTo(OrderStatus.DISPATCHED.getValue());
     }
 
     /** 判据：闸门口径（22 §3.2）——正常放行 / 熔断回显契约 record */

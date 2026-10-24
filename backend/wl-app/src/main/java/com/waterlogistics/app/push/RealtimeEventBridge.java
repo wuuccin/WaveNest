@@ -11,6 +11,7 @@ import com.waterlogistics.contract.ws.WsFrameType;
 import com.waterlogistics.dispatch.order.OrderStateChangedEvent;
 import com.waterlogistics.dispatch.prediction.PredictionUpdatedEvent;
 import com.waterlogistics.dispatch.rendezvous.RendezvousPlanCommittedEvent;
+import com.waterlogistics.dispatch.taskstate.FlightPhaseChangedEvent;
 import org.springframework.amqp.core.ExchangeTypes;
 import org.springframework.amqp.rabbit.annotation.Exchange;
 import org.springframework.amqp.rabbit.annotation.Queue;
@@ -39,6 +40,12 @@ public final class RealtimeEventBridge {
     /** 等状态事务提交后再发送已确认的订单视图；本层只转发。 */
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
     public void onOrderStateChanged(OrderStateChangedEvent event) {
+        endpoint.publish(WsFrameType.ORDER_STATE, event.view());
+    }
+
+    /** M2 飞行阶段推进已写 task_log，本层只把飞行态视图转成订单状态帧。 */
+    @EventListener
+    public void onFlightPhaseChanged(FlightPhaseChangedEvent event) {
         endpoint.publish(WsFrameType.ORDER_STATE, event.view());
     }
 
