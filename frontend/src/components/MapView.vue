@@ -2,6 +2,7 @@
 import { onMounted, onUnmounted, watch } from 'vue'
 import L from 'leaflet'
 import { useShipStore, useDroneStore, useOrderStore, useAlertStore } from '../stores'
+import { finitePoint } from '../api/adapter'
 import { drawShip } from '../layers/shipLayer'
 import { drawMeeting } from '../layers/meetingLayer'
 import { drawDrone } from '../layers/droneTrackLayer'
@@ -9,7 +10,6 @@ import { drawAlerts } from '../layers/alertLayer'
 
 const ship = useShipStore(), drone = useDroneStore(), order = useOrderStore(), alert = useAlertStore()
 let map, shipGroup, meetingGroup, droneGroup, alertGroup, lastBoundsKey = ''
-const valid = point => point && Number.isFinite(point.lat) && Number.isFinite(point.lon)
 const update = () => {
   if (!map) return
   drawShip(map, shipGroup, ship.current)
@@ -17,7 +17,7 @@ const update = () => {
   drawDrone(map, droneGroup, drone.current)
   drawAlerts(map, alertGroup, alert.items, order.orders, drone.current, ship.current)
   const points = [ship.current, ...(ship.current?.points || []), drone.current,
-    ...(drone.current?.segments || []).flatMap(segment => segment.points || []), order.rendezvous].filter(valid)
+    ...(drone.current?.segments || []).flatMap(segment => segment.points || []), order.rendezvous].filter(finitePoint)
   if (!points.length) return
   const bounds = L.latLngBounds(points.map(point => [point.lat, point.lon]))
   const key = `${bounds.getSouthWest().lat.toFixed(5)},${bounds.getSouthWest().lng.toFixed(5)}:${bounds.getNorthEast().lat.toFixed(5)},${bounds.getNorthEast().lng.toFixed(5)}`

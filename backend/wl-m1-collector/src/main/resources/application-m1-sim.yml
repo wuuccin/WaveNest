@@ -19,7 +19,12 @@ wavenest:
       center-lon: 114.305000
       center-lat: 30.605000
       radius-deg: 0.0030
-      phase-step: 0.35
+      # 相位步进须与 speed-ms 自洽：半径约 310 m 时，弧长速度 ≈ radius × step。
+      # 原值 0.35 → 实际位移约 108 m/s，而上报 speed-ms 只有 12，
+      # M4 清洗按「位置差／时间差」反算会判 POSITION_JUMP、清空经纬度，
+      # 导致回放帧坐标变成 NaN（实测 76 帧中 63 帧失效）。
+      # 0.04 × 310 m ≈ 12.4 m/s，与上报速度一致。
+      phase-step: 0.04
       speed-ms: 12.0
       noise: 0.00002
     weather:

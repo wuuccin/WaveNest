@@ -16,7 +16,9 @@ import com.waterlogistics.storage.repository.NestMapper;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -85,6 +87,52 @@ public class CandidateFeasibilityPlanner {
     }
 
     /**
+     * 单个候选的判定透出（E3）：组合标识＋机型/机巢/无人机＋结论＋逐条中文原因。
+     *
+     * <p>原因文案沿用 {@link FeasibilityJudge} 原文（机型抗风不足、电量不足等），<b>未改一字</b>；
+     * 机型单独成列是为了让「落选机型」能直接被看到——原因句里有机型，但结构化字段更稳。
+     */
+    public record CandidateVerdict(
+            String comboId,
+            String model,
+            String nestId,
+            String droneId,
+            FeasibilityJudge.Verdict verdict,
+            List<String> reasons) {
+
+        public CandidateVerdict {
+            reasons = List.copyOf(reasons);
+        }
+
+        public boolean feasible() {
+            return verdict == FeasibilityJudge.Verdict.FEASIBLE;
+        }
+    }
+
+    /**
+     * 选机结果＋全部候选的判定与原因（E3 新返回结构）。
+     *
+     * @param chosen     被选中的候选；没有可行候选时为 {@code null}
+     * @param candidates 全部候选的判定（顺序与生成端一致，供逐机型透出原因）
+     */
+    public record FeasibleSelection(
+            CandidateGenerator.CandidateCombo chosen,
+            List<CandidateVerdict> candidates) {
+
+        public FeasibleSelection {
+            candidates = List.copyOf(candidates);
+        }
+
+        public boolean found() {
+            return chosen != null;
+        }
+
+        public int rejectedCount() {
+            return (int) candidates.stream().filter(v -> !v.feasible()).count();
+        }
+    }
+
+    /**
      * 选出<b>最近的可飞候选</b>。
      *
      * @param order 订单（取货点与载荷从订单取）
@@ -95,6 +143,80 @@ public class CandidateFeasibilityPlanner {
         if (order == null) {
             throw new IllegalArgumentException("订单不得为 null");
         }
+        Evaluated evaluated = evaluate(order);
+
+        FeasibleCandidatePicker.Selection selection = evaluated.selection();
+        if (!selection.found()) {
+            throw new IllegalStateException(String.format(
+                    "订单 %s 无可飞候选：最不利风 %.1f m/s，候选 %d 个全部被淘汰——%s",
+                    order.getOrderId(), evaluated.worstWindMs(), selection.evaluated().size(),
+                    selection.rejectionSummary()));
+        }
+        if (selection.rejectedCount() > 0) {
+            log.info("订单 {} 选机淘汰 {} 个不可飞候选（最不利风 {} m/s）：{}",
+                    order.getOrderId(), selection.rejectedCount(), evaluated.worstWindMs(),
+                    selection.rejectionSummary());
+        }
+        return selection.chosen();
+    }
+
+    /**
+     * 选出<b>最近的可飞候选</b>，并<b>随结果带出每个候选的判定与淘汰原因</b>
+     * （E3 · 10-23 任务清单：候选淘汰原因透出）。
+     *
+     * <p>此前 {@link #selectFeasible} 只返回胜出的一个组合，判定端已生成的中文原因
+     * （机型抗风不足、电量不足等）只进了日志/异常消息，调用方与前端拿不到
+     * 「每个落选机型为什么落选」。本方法把判定结果原样透出——
+     * <b>不改判定逻辑、不改阈值取值、不改原因文案</b>，只做结构搬运。
+     *
+     * <p>与 {@link #selectFeasible} 的差异：全部候选被淘汰时<b>不抛异常</b>，
+     * 而是 {@code found() == false} ＋ 逐候选原因——编排层（组长改
+     * {@code DispatchOrchestrator} 那处调用时）可自行决定拒单口径。
+     *
+     * @param order 订单（取货点与载荷从订单取）
+     * @return 选机结果；{@link FeasibleSelection#candidates()} 与入参候选顺序一致，
+     *         每条含机型与逐条中文原因（文案沿用 {@link FeasibilityJudge}，未改）
+     */
+    public FeasibleSelection selectFeasibleWithReasons(OrderTaskEntity order) {
+        if (order == null) {
+            throw new IllegalArgumentException("订单不得为 null");
+        }
+        Evaluated evaluated = evaluate(order);
+
+        // comboId → 组合：判定结果里只有 comboId，机型/机巢/无人机要从组合上取
+        Map<String, CandidateGenerator.CandidateCombo> comboById = new HashMap<>();
+        for (CandidateGenerator.CandidateCombo combo : evaluated.combos()) {
+            comboById.put(combo.comboId(), combo);
+        }
+
+        List<CandidateVerdict> verdicts = new ArrayList<>(evaluated.selection().evaluated().size());
+        for (FeasibilityJudge.FeasibilityResult result : evaluated.selection().evaluated()) {
+            CandidateGenerator.CandidateCombo combo = comboById.get(result.comboId());
+            verdicts.add(new CandidateVerdict(
+                    result.comboId(),
+                    combo != null ? combo.type() : null,
+                    combo != null ? combo.nestId() : null,
+                    combo != null ? combo.droneId() : null,
+                    result.verdict(),
+                    result.reasons()));
+        }
+        return new FeasibleSelection(evaluated.selection().chosen(), List.copyOf(verdicts));
+    }
+
+    // ───────────── 公共管线（selectFeasible 与 selectFeasibleWithReasons 共用） ─────────────
+
+    /** 一次完整评估的内部产物：逐候选判定结果 ＋ 候选原列表 ＋ 本次用的最不利风。 */
+    private record Evaluated(
+            FeasibleCandidatePicker.Selection selection,
+            List<CandidateGenerator.CandidateCombo> combos,
+            double worstWindMs) {
+    }
+
+    /**
+     * 「生成候选 → 取风况 → 逐个判定 → 择优」公共管线。
+     * 两个对外方法只在此基础上各做各的收尾（抛异常 / 透出原因），判定口径完全一致。
+     */
+    private Evaluated evaluate(OrderTaskEntity order) {
         List<CandidateGenerator.CandidateCombo> combos = candidateService.generate(
                 buildInput(order), generatorParams());
 
@@ -112,19 +234,7 @@ public class CandidateFeasibilityPlanner {
 
         FeasibleCandidatePicker.Selection selection =
                 FeasibleCandidatePicker.pick(combos, worstWindMs, payloadKg, judgeParams());
-
-        if (!selection.found()) {
-            throw new IllegalStateException(String.format(
-                    "订单 %s 无可飞候选：最不利风 %.1f m/s，候选 %d 个全部被淘汰——%s",
-                    order.getOrderId(), worstWindMs, selection.evaluated().size(),
-                    selection.rejectionSummary()));
-        }
-        if (selection.rejectedCount() > 0) {
-            log.info("订单 {} 选机淘汰 {} 个不可飞候选（最不利风 {} m/s）：{}",
-                    order.getOrderId(), selection.rejectedCount(), worstWindMs,
-                    selection.rejectionSummary());
-        }
-        return selection.chosen();
+        return new Evaluated(selection, combos, worstWindMs);
     }
 
     // ───────────── 参数与台账 ─────────────

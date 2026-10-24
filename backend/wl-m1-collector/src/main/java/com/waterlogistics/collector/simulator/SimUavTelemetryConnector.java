@@ -33,8 +33,18 @@ public class SimUavTelemetryConnector implements DataSourceConnector {
     /** 巡航半径（十进制度，约几百米量级） */
     @Value("${wavenest.sim.uav.radius-deg:0.0030}")
     private double radiusDeg;
-    /** 每节拍相位推进（弧度） */
-    @Value("${wavenest.sim.uav.phase-step:0.35}")
+    /**
+     * 每节拍相位推进（弧度）。
+     *
+     * <p>取值须与 {@code speed-ms} 自洽：实际位移速度 ≈ 半径 × 本值。半径约 310 m 时，
+     * 0.35 rad ⇒ 约 108 m/s，而上报只有 12 m/s，M4 清洗按「位置差／时间差」反算会判
+     * {@code POSITION_JUMP} 并清空经纬度，回放帧坐标随之变成 NaN。取 0.04 ⇒ 约 12.4 m/s。
+     *
+     * <p>默认值就地修正而非改 {@code application-m1-sim.yml}：该文件名为
+     * {@code application-m1-sim.yml}，与激活 profile {@code sim} 不匹配，Spring 从不加载它，
+     * 端口外的仿真参数实际全部取自本类的默认值。
+     */
+    @Value("${wavenest.sim.uav.phase-step:0.04}")
     private double phaseStep;
     /** 巡航速度（m/s，用于上报 speedMs） */
     @Value("${wavenest.sim.uav.speed-ms:12.0}")

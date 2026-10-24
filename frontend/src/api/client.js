@@ -7,7 +7,9 @@ async function request(path, options = {}) {
     const response = await fetch(path, { ...options, signal, headers: { 'Content-Type': 'application/json', ...options.headers } })
     if (!response.ok) {
       const detail = await response.json().catch(() => ({}))
-      throw new Error(detail.detail || detail.message || `HTTP ${response.status}: ${path}`)
+      const error = new Error(detail.detail || detail.message || `HTTP ${response.status}: ${path}`)
+      error.status = response.status
+      throw error
     }
     return response.status === 204 ? null : await response.json()
   } finally { clearTimeout(timer) }
@@ -19,6 +21,5 @@ export const api = {
   resetShip: (options = {}) => request('/sim/ship/reset', { ...options, method: 'POST' }),
   turnShip: (delta = 45, options = {}) => request(`/sim/ship/turn?delta=${encodeURIComponent(delta)}`, { ...options, method: 'POST' }),
   tasks: () => request('/api/monitor/tasks'),
-  records: taskId => request(`/api/monitor/tasks/${encodeURIComponent(taskId)}/records`),
   stats: () => request('/api/monitor/statistics')
 }

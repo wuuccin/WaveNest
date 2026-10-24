@@ -7,7 +7,8 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 5173",
     "build": "vite build",
-    "preview": "vite preview --host 127.0.0.1 --port 4173"
+    "preview": "vite preview --host 127.0.0.1 --port 4173",
+    "test:replay": "node tests/replay-model.mjs && node tests/replay-browser.mjs"
   },
   "dependencies": {
     "echarts": "6.1.0",

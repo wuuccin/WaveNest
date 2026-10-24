@@ -1,6 +1,7 @@
 import { api } from '../api/client'
 import { reactive } from 'vue'
-import { normalizeOrders, normalizeFrame } from '../api/adapter'
+import { normalizeOrders, normalizeFrame, isRenderableFrame } from '../api/adapter'
+import { droneIdForOrder, normalizeReplayTasks } from '../replay/model'
 import { SCENES } from './mock'
 import { useShipStore, useDroneStore, useAlertStore, useEventStore, useOrderStore } from '../stores'
 
@@ -14,6 +15,7 @@ export function createRealtime() {
     if (priming && !replay) { buffered.push({ type, data }); return }
     if (orders.replaying && !replay) return
     data = normalizeFrame(type, data)
+    if (!isRenderableFrame(type, data)) return
     if (type === 'ship_traj') ship.apply(data)
     else if (type === 'drone_state') drone.apply(data)
     else if (type === 'rendezvous') orders.rendezvous = data
@@ -32,11 +34,11 @@ export function createRealtime() {
     try {
       const data = await snapshot()
       const orderId = data.orders?.at(-1)?.orderId
-      const tasks = orderId ? await api.tasks().catch(() => ({ tasks: [] })) : { tasks: [] }
-      const taskId = tasks.tasks?.find(task => task.orderId === orderId)?.taskId
-      if (taskId) {
+      const taskResult = orderId ? await api.tasks().catch(() => ({ tasks: [] })) : { tasks: [] }
+      const droneId = droneIdForOrder(normalizeReplayTasks(taskResult), orderId)
+      if (droneId) {
         try {
-          const history = await api.replay(taskId)
+          const history = await api.replay(droneId)
           const latest = new Map()
           for (const frame of history.frames || []) {
             if (['ship_traj', 'drone_state', 'rendezvous', 'alarm'].includes(frame.type)) latest.set(frame.type, frame)

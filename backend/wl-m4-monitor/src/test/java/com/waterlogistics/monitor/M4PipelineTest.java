@@ -6,6 +6,7 @@ import com.waterlogistics.algo.detection.OfftrackDetector;
 import com.waterlogistics.algo.detection.SysParamProvider;
 import com.waterlogistics.algo.measurement.Geo;
 import com.waterlogistics.algo.measurement.RouteMeasurement;
+import com.waterlogistics.contract.mq.AlertEventMessage;
 import com.waterlogistics.monitor.alert.AlertEventPublisher;
 import com.waterlogistics.monitor.alert.AlertRecorder;
 import org.junit.jupiter.api.Test;
@@ -29,12 +30,12 @@ class M4PipelineTest {
 
     /** MQ 发送替身：覆盖 publish 记录已发事件，不碰 RabbitTemplate（不引第三方 mock 框架）。 */
     private static final class RecordingPublisher extends AlertEventPublisher {
-        final List<AlertRecorder.AlertEvent> sent = new ArrayList<>();
+        final List<AlertEventMessage> sent = new ArrayList<>();
         RecordingPublisher() {
             super(null);
         }
         @Override
-        public void publish(AlertRecorder.AlertEvent event) {
+        public void publish(AlertEventMessage event) {
             sent.add(event);
         }
     }
@@ -87,13 +88,13 @@ class M4PipelineTest {
         assertTrue(sawOfftrack, "偏航链未触发：约 72m 越严重阈值");
         assertTrue(sawOfftrackCritical, "偏航链未达到严重级");
 
-        List<AlertRecorder.AlertEvent> events = recorder.eventLog();
+        List<AlertEventMessage> events = recorder.eventLog();
         assertFalse(events.isEmpty(), "alert 事件队列为空：判级后未组装");
         // 同一次告警：sec7 触发严重，sec8/9 同级持续 → 去重后只允许 1 条事件（不得每帧一条）
         assertEquals(1, events.size(),
                 "同一次偏航告警只应产生 1 条事件（持续期去重），实际 " + events.size());
         // G-2 契约 9 字段口径（组装的最后一步）
-        AlertRecorder.AlertEvent first = events.get(0);
+        AlertEventMessage first = events.get(0);
         assertTrue(first.eventId() != null && !first.eventId().isBlank(), "eventId 缺省");
         assertEquals("偏航", first.alertType(), "alertType 应为偏航（机侧 G 组 §1）");
         assertTrue(List.of("警告", "严重").contains(first.level()), "level 应为警告/严重");
@@ -145,17 +146,17 @@ class M4PipelineTest {
 
         assertTrue(sawLowBattery, "低电量链未触发");
 
-        List<AlertRecorder.AlertEvent> events = recorder.eventLog();
+        List<AlertEventMessage> events = recorder.eventLog();
         assertEquals(2, events.size(), "警告→严重升级应产生 2 条事件");
 
-        AlertRecorder.AlertEvent warnEvent = events.get(0);
+        AlertEventMessage warnEvent = events.get(0);
         assertEquals("低电量", warnEvent.alertType());
         assertEquals("警告", warnEvent.level());
         assertEquals(t0, warnEvent.timestamp());
         assertEquals(18.0, warnEvent.currentValue());
         assertEquals(20.0, warnEvent.thresholdValue());
 
-        AlertRecorder.AlertEvent critEvent = events.get(1);
+        AlertEventMessage critEvent = events.get(1);
         assertEquals("低电量", critEvent.alertType());
         assertEquals("严重", critEvent.level());
         assertEquals(t0, critEvent.timestamp(), "升级不重置首次触发时刻");
