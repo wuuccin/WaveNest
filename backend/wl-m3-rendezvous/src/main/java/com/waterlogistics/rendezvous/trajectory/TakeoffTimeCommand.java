@@ -38,18 +38,18 @@ public record TakeoffTimeCommand(
         if (comboId.isEmpty()) {
             throw new IllegalArgumentException("comboId 不能为空白字符串");
         }
-        if (tauFineSec <= 0) {
-            throw new IllegalArgumentException("精算飞行时长必须为正，实际 " + tauFineSec);
+        if (tauFineSec <= 0 || tauFineSec > 2_592_000) {
+            throw new IllegalArgumentException("精算飞行时长须在 [1, 2592000] 秒内，实际 " + tauFineSec);
         }
         if (timeGridMs <= 0L || timeGridMs > 86_400_000L) {
             throw new IllegalArgumentException(
                     "时刻精度粒度须在 (0, 86400000] 毫秒内，实际 " + timeGridMs);
         }
-        if (meetMs < EpochMillis.MIN_VALID_MS) {
-            throw new IllegalArgumentException("会面时刻须为 Unix 毫秒值（疑似误传秒级时间戳），实际 " + meetMs);
+        if (!EpochMillis.isValid(meetMs)) {
+            throw new IllegalArgumentException("会面时刻须为 Unix 毫秒值，实际 " + meetMs);
         }
-        if (nowMs < EpochMillis.MIN_VALID_MS) {
-            throw new IllegalArgumentException("当前时刻须为 Unix 毫秒值（疑似误传秒级时间戳），实际 " + nowMs);
+        if (!EpochMillis.isValid(nowMs)) {
+            throw new IllegalArgumentException("当前时刻须为 Unix 毫秒值，实际 " + nowMs);
         }
     }
 }

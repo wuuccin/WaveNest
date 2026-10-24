@@ -44,7 +44,11 @@ public final class TakeoffTimeCalculator {
         // 下游不得直接当作合法 epoch 时刻使用（该分支必为不可行）
         long rawT = cmd.meetMs() - (long) cmd.tauFineSec() * 1000L;
         long takeoffT = rawT - Math.floorMod(rawT, cmd.timeGridMs());
-        boolean feasible = takeoffT >= cmd.nowMs();
+        boolean feasible = rawT >= cmd.nowMs();
+        if (feasible && takeoffT < cmd.nowMs()) {
+            // 真实起飞需求仍在未来，但对齐到网格起点已过去：取下一格，避免回填过去的时刻
+            takeoffT += cmd.timeGridMs();
+        }
 
         return new B_TakeoffTimeResult(cmd.comboId(), takeoffT, feasible,
                                        feasible ? null : TakeoffInfeasibleReason.BEFORE_NOW, cmd.tauFineSec());

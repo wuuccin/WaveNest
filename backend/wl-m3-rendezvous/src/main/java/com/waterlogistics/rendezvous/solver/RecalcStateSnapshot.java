@@ -52,10 +52,12 @@ public record RecalcStateSnapshot(
         if (!Double.isFinite(sogMs) || sogMs < 0.0 || sogMs > ShipState.MAX_SOG_MS) {
             throw new IllegalArgumentException("船速须在 [0, " + ShipState.MAX_SOG_MS + "] m/s，实际 " + sogMs);
         }
+        sogMs = sogMs == 0.0 ? 0.0 : sogMs;
         if (sogMs > 0.0) {
             if (!Double.isFinite(shipCogDeg) || shipCogDeg < 0.0 || shipCogDeg >= 360.0) {
                 throw new IllegalArgumentException("船航向非法：shipCogDeg=" + shipCogDeg);
             }
+            shipCogDeg = ((shipCogDeg % 360.0) + 360.0) % 360.0;
         } else {
             shipCogDeg = Double.isFinite(shipCogDeg)
                     ? ((shipCogDeg % 360.0) + 360.0) % 360.0

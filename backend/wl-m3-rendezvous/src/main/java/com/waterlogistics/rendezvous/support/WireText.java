@@ -1,5 +1,6 @@
 package com.waterlogistics.rendezvous.support;
 
+import java.text.Normalizer;
 import java.util.regex.Pattern;
 
 /**
@@ -7,7 +8,7 @@ import java.util.regex.Pattern;
  */
 public final class WireText {
 
-    private static final Pattern SPACING = Pattern.compile("[\\s\\p{Z}\\p{Cf}]");
+    private static final Pattern SPACING = Pattern.compile("[\\s\\p{Z}\\p{Cf}\\p{Cc}]");
 
     private static final Pattern UNSAFE = Pattern.compile("[\\p{Cntrl}\\p{Cf}\\p{Zl}\\p{Zp}]");
 
@@ -21,7 +22,20 @@ public final class WireText {
      * @return 归一后的文本；入参为 {@code null} 时返回 {@code null}
      */
     public static String normalizeToken(String value) {
-        return value == null ? null : SPACING.matcher(value).replaceAll("");
+        if (value == null) {
+            return null;
+        }
+        return SPACING.matcher(Normalizer.normalize(value, Normalizer.Form.NFKC)).replaceAll("");
+    }
+
+    /**
+     * 是否含日志/协议不允许的控制、格式或分隔字符。
+     *
+     * @param value 待检查文本
+     * @return 含不安全字符时为 {@code true}
+     */
+    public static boolean isUnsafe(String value) {
+        return value != null && UNSAFE.matcher(value).find();
     }
 
     /**

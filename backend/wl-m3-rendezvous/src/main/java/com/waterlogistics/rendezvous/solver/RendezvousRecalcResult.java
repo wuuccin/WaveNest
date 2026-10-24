@@ -1,6 +1,7 @@
 package com.waterlogistics.rendezvous.solver;
 
 import com.waterlogistics.algo.meeting.model.B_RendezvousSolution;
+import com.waterlogistics.rendezvous.support.WireText;
 
 import java.util.Objects;
 
@@ -29,8 +30,11 @@ public record RendezvousRecalcResult(
         Objects.requireNonNull(requestId, "requestId 不能为空");
         Objects.requireNonNull(solution, "solution 不能为空");
         requestId = requestId.strip();
-        if (requestId.isBlank()) {
+        if (requestId.isEmpty()) {
             throw new IllegalArgumentException("requestId 不能为空白字符串");
+        }
+        if (requestId.length() > 64 || WireText.isUnsafe(requestId)) {
+            throw new IllegalArgumentException("requestId 非法：长度或字符不在允许范围内");
         }
     }
 }

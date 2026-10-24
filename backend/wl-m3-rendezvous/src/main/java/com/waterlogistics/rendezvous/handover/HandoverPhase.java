@@ -3,8 +3,6 @@ package com.waterlogistics.rendezvous.handover;
 import com.waterlogistics.rendezvous.support.WireText;
 import lombok.Getter;
 
-import java.util.regex.Pattern;
-
 
 
 /**
@@ -48,10 +46,11 @@ public enum HandoverPhase {
 
 
     HandoverPhase(String value) {
-        if (value == null || value.isBlank()) {
-            throw new IllegalStateException("末段子阶段口径词不能为空：" + name());
+        String normalized = WireText.normalizeToken(value);
+        if (normalized == null || normalized.isEmpty()) {
+            throw new IllegalArgumentException("末段子阶段口径词不能为空：" + name());
         }
-        this.value = value;
+        this.value = normalized;
     }
 
 

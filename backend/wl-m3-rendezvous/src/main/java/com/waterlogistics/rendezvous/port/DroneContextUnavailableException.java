@@ -61,6 +61,8 @@ public class DroneContextUnavailableException extends RuntimeException {
 
 
     private static String sanitize(String droneId) {
-        return droneId == null || droneId.isBlank() ? "<unknown>" : droneId;
+        return droneId == null || droneId.isBlank()
+                ? "<unknown>"
+                : com.waterlogistics.rendezvous.support.WireText.escapeForLog(droneId);
     }
 }

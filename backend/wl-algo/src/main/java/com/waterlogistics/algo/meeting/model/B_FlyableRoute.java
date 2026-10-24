@@ -21,7 +21,7 @@ import java.util.Objects;
  * @param comboId           绑定的候选组合标识
  * @param waypoints         航点序列，按时刻严格升序（相邻航点时刻不得相同）
  * @param tauFine           精算飞行时长 τ_fine，秒（精算账）
- * @param energyExact       精确能耗，满电百分比（精算账）
+ * @param energyExact       精确能耗，满电百分比（精算账；生成侧饱和到 100%，不可区分超出量）
  * @param pathRisk          路径风险 [0,1]，供 D 组风险项
  * @param landingPointsAlong 沿途可用迫降点标注（仅标注；落点由 E 功能 10 给定——红线③）
  * @param avoidZones        本航迹实际避让的禁飞区／桥梁净空标识（取证用）
@@ -53,13 +53,16 @@ public record B_FlyableRoute(
         if (routeId.isBlank() || routeVersion.isBlank() || comboId.isBlank()) {
             throw new IllegalArgumentException("routeId/routeVersion/comboId 不能为空白字符串");
         }
-        if (waypoints == null || waypoints.size() < 2) {
-            throw new IllegalArgumentException("waypoints 至少需要 2 个航点：C 组据其粗估航迹长度，单点航迹长度为 0");
+        if (waypoints == null) {
+            throw new IllegalArgumentException("waypoints 不能为空");
         }
         try {
             waypoints = List.copyOf(waypoints);
         } catch (NullPointerException e) {
             throw new IllegalArgumentException("waypoints 不能包含空元素", e);
+        }
+        if (waypoints.size() < 2) {
+            throw new IllegalArgumentException("waypoints 至少需要 2 个航点：C 组据其粗估航迹长度，单点航迹长度为 0");
         }
         for (int i = 1; i < waypoints.size(); i++) {
             if (waypoints.get(i).t() <= waypoints.get(i - 1).t()) {

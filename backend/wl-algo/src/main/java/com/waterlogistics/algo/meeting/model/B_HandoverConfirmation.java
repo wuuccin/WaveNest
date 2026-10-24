@@ -60,12 +60,14 @@ public record B_HandoverConfirmation(
         if (droneId == null || droneId.isBlank()) {
             throw new IllegalArgumentException("droneId 不能为空或空白");
         }
-        Objects.requireNonNull(handoverResult, "handoverResult 不能为空");
+        if (handoverResult == null) {
+            throw new IllegalArgumentException("handoverResult 不能为空");
+        }
         if ((actualMeetLon == null) != (actualMeetLat == null)) {
             throw new IllegalArgumentException("实际会面点经度与纬度须同时存在或同时为空");
         }
         requireCoordinate(plannedMeetLon, plannedMeetLat, "planned");
-        if (plannedMeetT <= 0L) {
+        if (plannedMeetT < EpochMillis.MIN_VALID_MS) {
             throw new IllegalArgumentException("计划会面时刻须为正的 Unix 毫秒值，实际 " + plannedMeetT);
         }
         if (actualMeetLon != null) {
@@ -109,7 +111,7 @@ public record B_HandoverConfirmation(
 
     private static void requireCoordinate(Double lon, Double lat, String name) {
         if (lon == null || lat == null) {
-            return;
+            throw new IllegalArgumentException(name + " 会面坐标不能为空");
         }
         if (!Double.isFinite(lon) || lon < -180.0 || lon > 180.0
                 || !Double.isFinite(lat) || lat < -90.0 || lat > 90.0) {

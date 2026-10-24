@@ -40,7 +40,11 @@ public enum TrackSegment {
 
 
     TrackSegment(String value) {
-        this.value = value;
+        String normalized = WireText.normalizeToken(value);
+        if (normalized == null || normalized.isEmpty()) {
+            throw new IllegalArgumentException("航迹分段口径词不能为空：" + name());
+        }
+        this.value = normalized;
     }
 
     /**
@@ -64,7 +68,7 @@ public enum TrackSegment {
     /**
      * 按对端口径词解析枚举。
      *
-     * @param value 对端口径词（中文分段词；首尾空白忽略，空白或未知即拒绝）
+     * @param value 对端口径词（中文分段词；全部空白与格式字符忽略，空白或未知即拒绝）
      * @return 对应的航迹分段
      * @throws IllegalArgumentException 入参为空/空白或无匹配口径词
      */

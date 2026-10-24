@@ -1,5 +1,6 @@
 package com.waterlogistics.rendezvous.port;
 
+import com.waterlogistics.rendezvous.support.WireText;
 import lombok.Getter;
 
 
@@ -55,7 +56,7 @@ public class SnapshotUnavailableException extends RuntimeException {
 
     private SnapshotUnavailableException(String shipMmsi, String reason, boolean ownershipMismatch,
             String actualShipMmsi) {
-        super(reason + "：船 " + (shipMmsi == null || shipMmsi.isBlank() ? "<unknown>" : shipMmsi));
+        super(reason + "：船 " + display(shipMmsi));
         this.shipMmsi = shipMmsi;
         this.ownershipMismatch = ownershipMismatch;
         this.actualShipMmsi = actualShipMmsi;
@@ -74,6 +75,10 @@ public class SnapshotUnavailableException extends RuntimeException {
     public static SnapshotUnavailableException ownershipMismatch(String shipMmsi, String actualShipMmsi) {
         String actual = actualShipMmsi == null || actualShipMmsi.isBlank() ? "<unknown>" : actualShipMmsi;
         return new SnapshotUnavailableException(shipMmsi,
-                "快照归属与目标船不符（实际归属 " + actual + "），拒绝求解", true, actualShipMmsi);
+                "快照归属与目标船不符（实际归属 " + actual + "），拒绝求解", true, actual);
+    }
+
+    private static String display(String value) {
+        return value == null || value.isBlank() ? "<unknown>" : WireText.escapeForLog(value);
     }
 }
