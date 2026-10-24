@@ -166,7 +166,13 @@ public final class HandoverJudge {
 
 
     private static double relativeX(HandoverSample sample, double cosLat) {
-        return (sample.droneLon() - sample.shipLon()) * HandoverJudge.METERS_PER_DEG * cosLat;
+        double dLon = sample.droneLon() - sample.shipLon();
+        if (dLon > 180.0) {
+            dLon -= 360.0;
+        } else if (dLon < -180.0) {
+            dLon += 360.0;
+        }
+        return dLon * HandoverJudge.METERS_PER_DEG * cosLat;
     }
 
 

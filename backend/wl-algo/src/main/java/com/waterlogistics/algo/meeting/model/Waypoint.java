@@ -4,7 +4,7 @@ package com.waterlogistics.algo.meeting.model;
  * 航点——{@code B_FlyableRoute.waypoints[i]} 与 {@code B_ReturnRoute.waypoints[i]} 共用
  * （《81-B组算法方案》§2.3 第（2）（5）项）。
  *
- * <p>单位：位置为十进制度（项目基准坐标系），高度与距离为米，速度为 m/s，
+ * <p>单位：位置为十进制度（项目基准坐标系），高度为米，速度为 m/s，
  * 时刻为 Unix 毫秒（《02-术语表》§5）。
  *
  * @param lon     航点经度
@@ -26,9 +26,9 @@ public record Waypoint(
         long t) {
 
     public Waypoint {
-        if (t < EpochMillis.MIN_VALID_MS) {
-            throw new IllegalArgumentException("航点时刻须为 Unix 毫秒值（下界 "
-                    + EpochMillis.MIN_VALID_MS + "），实际 " + t);
+        if (!EpochMillis.isValid(t)) {
+            throw new IllegalArgumentException("航点时刻须为 Unix 毫秒值（范围 ["
+                    + EpochMillis.MIN_VALID_MS + ", " + EpochMillis.MAX_VALID_MS + "]），实际 " + t);
         }
         if (!Double.isFinite(lon) || lon < -180.0 || lon > 180.0) {
             throw new IllegalArgumentException("航点经度须为 [-180,180] 内的有限数，实际 " + lon);

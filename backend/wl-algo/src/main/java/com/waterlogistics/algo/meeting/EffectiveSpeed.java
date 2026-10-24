@@ -31,8 +31,9 @@ public final class EffectiveSpeed {
         if (wind == null) {
             throw new IllegalArgumentException("wind 不能为空");
         }
-        if (!Double.isFinite(cruiseSpeedMs) || cruiseSpeedMs <= 0 || !Double.isFinite(bearingDeg)) {
-            throw new IllegalArgumentException("有效速度入参非法（巡航速度须为正、方位须为有限值），实际 cruise="
+        if (!Double.isFinite(cruiseSpeedMs) || cruiseSpeedMs <= 0 || !Double.isFinite(bearingDeg)
+                || bearingDeg < -360.0 || bearingDeg > 720.0) {
+            throw new IllegalArgumentException("有效速度入参非法（巡航速度须为正、方位须在 [-360, 720] 度内），实际 cruise="
                     + cruiseSpeedMs + ", bearing=" + bearingDeg);
         }
         // 方位归一化到 [0,360)，避免大数值方位在角度差中丢失精度

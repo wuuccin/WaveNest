@@ -73,7 +73,9 @@ public final class DeviationTracker {
             );
         }
         DeviationTracker.validateForecast(forecastLons, forecastLats);
-        double signedXte = CrossTrackError.signedM(shipLon, shipLat, forecastLons, forecastLats);
+        // 船位与航迹起点取同一经度表示；跨 ±180° 时按短侧折回，避免 XTE 出现整圈误差
+        double alignedShipLon = DeviationTracker.alignLon(shipLon, forecastLons.get(0).doubleValue());
+        double signedXte = CrossTrackError.signedM(alignedShipLon, shipLat, forecastLons, forecastLats);
         if (!Double.isFinite(signedXte)) {
             throw new IllegalArgumentException("横向偏差计算结果非有限，预测航迹入参非法");
         }
@@ -114,7 +116,7 @@ public final class DeviationTracker {
             }
         }
         for (int i = 1; i < pointCount; i++) {
-            if (Math.abs(forecastLons.get(i).doubleValue() - forecastLons.get(i - 1).doubleValue()) > 180.0) {
+            if (Math.abs(forecastLons.get(i).doubleValue() - forecastLons.get(i - 1).doubleValue()) >= 180.0) {
                 throw new IllegalArgumentException(
                         "预测航迹跨 ±180° 经线，请先归一化经度：index " + (i - 1) + " -> " + i);
             }
@@ -124,6 +126,20 @@ public final class DeviationTracker {
 
 
 
+
+    /**
+     * 把经度折到与参考点同一侧的 ±180° 表示，供跨日界线船位使用。
+     */
+    private static double alignLon(double lon, double originLon) {
+        double delta = lon - originLon;
+        if (delta > 180.0) {
+            return lon - 360.0;
+        }
+        if (delta < -180.0) {
+            return lon + 360.0;
+        }
+        return lon;
+    }
 
     /**
      * 校验航迹列规模——长度一致且不少于 2 点，返回点数。

@@ -58,6 +58,9 @@ public record RendezvousSolveRequest(
     /** 会面时间窗余量的统一上界，秒（一天，防配置异常把窗口退化为截止时刻） */
     public static final int MAX_WINDOW_MARGIN_SEC = 86_400;
 
+    /** 收敛阈值上界，秒：过大时不动点会首步即收敛，解失去意义 */
+    public static final double MAX_CONVERGE_EPSILON_SEC = 60.0;
+
     public RendezvousSolveRequest {
         Objects.requireNonNull(snapshot, "snapshot 不能为空");
         if (snapshot.points() == null || snapshot.points().isEmpty()) {
@@ -74,8 +77,10 @@ public record RendezvousSolveRequest(
             throw new IllegalArgumentException(
                     "最大迭代次数须在 [1, " + MAX_ITERATIONS + "] 内，实际 " + maxIterations);
         }
-        if (!Double.isFinite(convergeEpsilonSec) || convergeEpsilonSec <= 0) {
-            throw new IllegalArgumentException("收敛阈值必须为正的有限数，实际 " + convergeEpsilonSec);
+        if (!Double.isFinite(convergeEpsilonSec) || convergeEpsilonSec <= 0
+                || convergeEpsilonSec > MAX_CONVERGE_EPSILON_SEC) {
+            throw new IllegalArgumentException("收敛阈值须在 (0, " + MAX_CONVERGE_EPSILON_SEC
+                    + "] 秒内，实际 " + convergeEpsilonSec);
         }
         if (meetWindowMarginSec < 0 || meetWindowMarginSec > MAX_WINDOW_MARGIN_SEC) {
             throw new IllegalArgumentException(
@@ -84,6 +89,10 @@ public record RendezvousSolveRequest(
         if (deadlineMs < nowMs) {
             throw new IllegalArgumentException(
                     "最晚会面时刻不得早于求解起点，实际 nowMs=" + nowMs + ", deadlineMs=" + deadlineMs);
+        }
+        if (shipState != null && shipState.t() != nowMs) {
+            throw new IllegalArgumentException(
+                    "船状态时刻须与求解起点一致，实际 shipState.t=" + shipState.t() + ", nowMs=" + nowMs);
         }
         if (!Double.isFinite(nestLon) || nestLon < -180.0 || nestLon > 180.0
                 || !Double.isFinite(nestLat) || nestLat < -90.0 || nestLat > 90.0) {

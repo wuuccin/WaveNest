@@ -1,5 +1,6 @@
 package com.waterlogistics.rendezvous.handover;
 
+import com.waterlogistics.algo.meeting.model.EpochMillis;
 import java.util.List;
 import java.util.Objects;
 
@@ -38,11 +39,14 @@ public record HandoverCommand(
         Objects.requireNonNull(taskId, "taskId 不能为空");
         Objects.requireNonNull(droneId, "droneId 不能为空");
         Objects.requireNonNull(params, "params 不能为空");
-        if (taskId.isBlank() || droneId.isBlank()) {
+        taskId = taskId.strip();
+        droneId = droneId.strip();
+        if (taskId.isEmpty() || droneId.isEmpty()) {
             throw new IllegalArgumentException("taskId/droneId 不能为空白字符串");
         }
-        if (plannedMeetT <= 0L) {
-            throw new IllegalArgumentException("计划会面时刻必须为正的 Unix 毫秒值，实际 " + plannedMeetT);
+        if (plannedMeetT < EpochMillis.MIN_VALID_MS) {
+            throw new IllegalArgumentException("计划会面时刻须为 Unix 毫秒值（下界 "
+                    + EpochMillis.MIN_VALID_MS + "），实际 " + plannedMeetT);
         }
         if (!Double.isFinite(plannedMeetLon) || !Double.isFinite(plannedMeetLat)
                 || plannedMeetLon < -180.0 || plannedMeetLon > 180.0

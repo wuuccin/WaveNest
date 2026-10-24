@@ -40,7 +40,7 @@ public record ShipState(
         }
         sogMs += 0.0;
         if (sogMs > 0.0) {
-            if (!Double.isFinite(cogDeg) || cogDeg < 0.0 || cogDeg >= 360.0) {
+            if (!Double.isFinite(cogDeg) || cogDeg < 0.0 || cogDeg > 360.0) {
                 throw new IllegalArgumentException("航向非法：cogDeg=" + cogDeg);
             }
             cogDeg = ((cogDeg % 360.0) + 360.0) % 360.0 + 0.0;

@@ -49,8 +49,12 @@ public record B_ConflictResult(
         if (!cpaAllNull && !cpaAllSet) {
             throw new IllegalArgumentException("CPA 三字段须同时存在或同时为空");
         }
-        if (cpaT != null && cpaT < 0L) {
-            throw new IllegalArgumentException("CPA 时刻须为非负的 Unix 毫秒值，实际 " + cpaT);
+        if (conflictFlag && cpaAllNull) {
+            throw new IllegalArgumentException("冲突结论须给出 CPA 三字段");
+        }
+        if (cpaT != null && cpaT < EpochMillis.MIN_VALID_MS) {
+            throw new IllegalArgumentException("CPA 时刻须为 Unix 毫秒值（下界 "
+                    + EpochMillis.MIN_VALID_MS + "），实际 " + cpaT);
         }
         if (cpaT != null && conflictSpaceTime != null
                 && (cpaT < conflictSpaceTime.tBegin() || cpaT > conflictSpaceTime.tEnd())) {
@@ -65,8 +69,8 @@ public record B_ConflictResult(
             if (!conflictFlag) {
                 throw new IllegalArgumentException("无冲突时不应给出绕行航迹");
             }
-            if (detourRoute.isEmpty()) {
-                throw new IllegalArgumentException("绕行航迹不得为空列表");
+            if (detourRoute.size() < 2) {
+                throw new IllegalArgumentException("绕行航迹至少需要 2 个航点，实际 " + detourRoute.size());
             }
             for (int i = 0; i < detourRoute.size(); i++) {
                 Waypoint waypoint = detourRoute.get(i);

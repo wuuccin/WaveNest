@@ -42,7 +42,7 @@ public record HandoverParams(
                 || !Double.isFinite(energyRatePerSecPct)
                 || !(stableSec > (double) 0) || !(windLimitMs > (double) 0) || !(energyRatePerSecPct >= (double) 0)) {
             throw new IllegalArgumentException(
-                    "稳定持续时间须为正、风阈与能耗率不能为负且均须为有限数，实际 stableSec="
+                    "稳定持续时间与交接风阈值须为正、能耗率不能为负，且均须为有限数，实际 stableSec="
                             + stableSec + ", windLimitMs=" + windLimitMs + ", energyRatePerSecPct=" + energyRatePerSecPct);
         }
     }

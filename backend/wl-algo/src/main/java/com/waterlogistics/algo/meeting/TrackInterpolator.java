@@ -67,7 +67,7 @@ public final class TrackInterpolator {
      * 时保留 {@code -180}，作为固定的边界取舍。
      */
     private static double normalizeDLon(double dLon) {
-        if (dLon > 180.0) {
+        if (dLon >= 180.0) {
             return dLon - 360.0;
         }
         if (dLon < -180.0) {

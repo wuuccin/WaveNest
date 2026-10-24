@@ -43,6 +43,10 @@ public final class GeoApprox {
     public static double bearingDeg(double lon1, double lat1, double lon2, double lat2) {
         requireLonLat(lon1, lat1);
         requireLonLat(lon2, lat2);
+        if (Math.abs(lat1) >= 90.0 || Math.abs(lat2) >= 90.0) {
+            throw new IllegalArgumentException(
+                    "极点处初始方位无定义，实际 lat1=" + lat1 + ", lat2=" + lat2);
+        }
         double phi1 = Math.toRadians(lat1);
         double phi2 = Math.toRadians(lat2);
         double dLon = Math.toRadians(normalizeLonDelta(lon1, lon2));

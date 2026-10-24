@@ -1,5 +1,6 @@
 package com.waterlogistics.app.push;
 
+import com.waterlogistics.contract.mq.AlertEventMessage;
 import com.waterlogistics.contract.mq.TopicName;
 import com.waterlogistics.contract.mq.UavTelemetry;
 import com.waterlogistics.contract.state.AlertLevel;
@@ -10,7 +11,7 @@ import com.waterlogistics.contract.ws.WsFrameType;
 import com.waterlogistics.dispatch.order.OrderStateChangedEvent;
 import com.waterlogistics.dispatch.prediction.PredictionUpdatedEvent;
 import com.waterlogistics.dispatch.rendezvous.RendezvousPlanCommittedEvent;
-import com.waterlogistics.monitor.alert.AlertRecorder;
+import com.waterlogistics.dispatch.taskstate.FlightPhaseChangedEvent;
 import org.springframework.amqp.core.ExchangeTypes;
 import org.springframework.amqp.rabbit.annotation.Exchange;
 import org.springframework.amqp.rabbit.annotation.Queue;
@@ -39,6 +40,12 @@ public final class RealtimeEventBridge {
     /** 等状态事务提交后再发送已确认的订单视图；本层只转发。 */
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
     public void onOrderStateChanged(OrderStateChangedEvent event) {
+        endpoint.publish(WsFrameType.ORDER_STATE, event.view());
+    }
+
+    /** M2 飞行阶段推进已写 task_log，本层只把飞行态视图转成订单状态帧。 */
+    @EventListener
+    public void onFlightPhaseChanged(FlightPhaseChangedEvent event) {
         endpoint.publish(WsFrameType.ORDER_STATE, event.view());
     }
 
@@ -80,7 +87,7 @@ public final class RealtimeEventBridge {
                     type = ExchangeTypes.TOPIC,
                     durable = "true"),
             key = TopicName.ALERT_EVENT))
-    public void onAlertEvent(AlertRecorder.AlertEvent event) {
+    public void onAlertEvent(AlertEventMessage event) {
         endpoint.publish(WsFrameType.ALARM, new AlarmFrame(
                 AlertType.fromValue(event.alertType()),
                 AlertLevel.fromValue(event.level()),
@@ -88,7 +95,7 @@ public final class RealtimeEventBridge {
                 alertMessage(event)));
     }
 
-    private static String alertMessage(AlertRecorder.AlertEvent event) {
+    private static String alertMessage(AlertEventMessage event) {
         StringBuilder text = new StringBuilder("无人机 ")
                 .append(event.droneId()).append("：").append(event.alertType());
         if (event.currentValue() != null) {

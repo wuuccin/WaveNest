@@ -70,10 +70,10 @@ public record B_RendezvousSolution(
                     || !Double.isFinite(meetLat) || meetLat < -90.0 || meetLat > 90.0) {
                 throw new IllegalArgumentException("会面点坐标必须为有限数且在合法范围内");
             }
-            if (meetTMin < EpochMillis.MIN_VALID_MS || meetTMax < EpochMillis.MIN_VALID_MS
-                    || shipArriveT < EpochMillis.MIN_VALID_MS || droneArriveT < EpochMillis.MIN_VALID_MS) {
-                throw new IllegalArgumentException("时刻字段须为 Unix 毫秒值（下界 "
-                        + EpochMillis.MIN_VALID_MS + "）");
+            if (!EpochMillis.isValid(meetTMin) || !EpochMillis.isValid(meetTMax)
+                    || !EpochMillis.isValid(shipArriveT) || !EpochMillis.isValid(droneArriveT)) {
+                throw new IllegalArgumentException("时刻字段须为 Unix 毫秒值（范围 ["
+                        + EpochMillis.MIN_VALID_MS + ", " + EpochMillis.MAX_VALID_MS + "]）");
             }
             if (meetTMin > meetTMax) {
                 throw new IllegalArgumentException("会面时刻窗下界不得晚于上界");

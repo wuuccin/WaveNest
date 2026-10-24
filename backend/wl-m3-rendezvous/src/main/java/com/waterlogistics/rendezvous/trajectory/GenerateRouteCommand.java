@@ -89,12 +89,12 @@ public record GenerateRouteCommand(
                 throw new IllegalArgumentException("landingPointsAlong/avoidZones 不能包含 null");
             }
         }
-        landingPointsAlong = List.copyOf(landingPointsAlong);
-        avoidZones = List.copyOf(avoidZones);
         if (landingPointsAlong.size() > GenerateRouteCommand.MAX_ANNOTATION_IDS
                 || avoidZones.size() > GenerateRouteCommand.MAX_ANNOTATION_IDS) {
             throw new IllegalArgumentException("landingPointsAlong/avoidZones 不得超过 " + GenerateRouteCommand.MAX_ANNOTATION_IDS + " 项");
         }
+        landingPointsAlong = List.copyOf(landingPointsAlong);
+        avoidZones = List.copyOf(avoidZones);
         if (landingPointsAlong.stream().anyMatch(String::isBlank)
                 || avoidZones.stream().anyMatch(String::isBlank)) {
             throw new IllegalArgumentException("landingPointsAlong/avoidZones 不能包含空白标识");
@@ -110,6 +110,7 @@ public record GenerateRouteCommand(
                 || endLon < -180.0 || endLon > 180.0 || endLat < -90.0 || endLat > 90.0) {
             throw new IllegalArgumentException("起终点经纬度超出地理范围");
         }
+        // 微米级容差是几何退化的数值保护，不是可配置业务阈值
         if (GeoApprox.distanceM(startLon, startLat, endLon, endLat) < 1e-6) {
             throw new IllegalArgumentException("起终点不能重合（零长度航迹）");
         }
@@ -120,14 +121,17 @@ public record GenerateRouteCommand(
         if (startMs <= 0L || startMs > GenerateRouteCommand.MAX_START_MS) {
             throw new IllegalArgumentException("起点时刻须为正且不晚于 2100-01-01T00:00:00Z，实际 " + startMs);
         }
-        if (!Double.isFinite(speedMs) || !(speedMs > (double) 0)) {
-            throw new IllegalArgumentException("速度必须为正的有限数，实际 " + speedMs);
+        if (!Double.isFinite(speedMs) || speedMs < MissionTrackCommand.MIN_SPEED_MS
+                || speedMs > MissionTrackCommand.MAX_SPEED_MS) {
+            throw new IllegalArgumentException("速度须在 [" + MissionTrackCommand.MIN_SPEED_MS + ", "
+                    + MissionTrackCommand.MAX_SPEED_MS + "] m/s 内，实际 " + speedMs);
         }
-        if (!Double.isFinite(cruiseAltM) || !(cruiseAltM > (double) 0)) {
+        if (!Double.isFinite(cruiseAltM) || cruiseAltM <= 0.0) {
             throw new IllegalArgumentException("巡航高度必须为正的有限数，实际 " + cruiseAltM);
         }
-        if (!Double.isFinite(energyRatePerSecPct) || !(energyRatePerSecPct >= (double) 0)) {
-            throw new IllegalArgumentException("能耗率不能为负且须为有限数，实际 " + energyRatePerSecPct);
+        if (!Double.isFinite(energyRatePerSecPct) || energyRatePerSecPct < 0.0
+                || energyRatePerSecPct > 10.0) {
+            throw new IllegalArgumentException("能耗率须在 [0, 10] %/s 内，实际 " + energyRatePerSecPct);
         }
         if (!(pathRisk >= (double) 0 && pathRisk <= 1.0)) {
             throw new IllegalArgumentException("路径风险须在 [0,1]，实际 " + pathRisk);

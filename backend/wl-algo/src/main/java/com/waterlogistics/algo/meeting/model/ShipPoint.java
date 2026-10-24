@@ -43,11 +43,14 @@ public record ShipPoint(
         if (cog == 360.0) {
             cog = 0.0;
         }
+        cog = cog == 0.0 ? 0.0 : cog;
         if (!Double.isFinite(sigmaAlong) || sigmaAlong < 0.0
                 || !Double.isFinite(sigmaCross) || sigmaCross < 0.0) {
             throw new IllegalArgumentException(
                     "沿航迹／法向标准差必须为有限非负值，实际 sigmaAlong=" + sigmaAlong
                             + ", sigmaCross=" + sigmaCross);
         }
+        sigmaAlong = sigmaAlong == 0.0 ? 0.0 : sigmaAlong;
+        sigmaCross = sigmaCross == 0.0 ? 0.0 : sigmaCross;
     }
 }
