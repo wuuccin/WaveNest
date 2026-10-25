@@ -16,11 +16,15 @@ package com.waterlogistics.dispatch.prediction;
  *
  * @param mmsi              目标船标识
  * @param snapshotVersion   触发时的快照版本号（M2 内部为 {@code long} 单调递增）
- * @param previousCourseDeg 上一版预测主轴方位，度
- * @param currentCourseDeg  本版预测主轴方位，度
+ * @param previousCourseDeg 上一版<b>观测</b>对地航向，度（不是快照主轴方位，见下）
+ * @param currentCourseDeg  本版观测对地航向，度
  * @param courseDeltaDeg    两版方位差（取最短弧，度，恒为非负）
  * @param triggerReason     触发原因（追溯用）
  * @param tsMs              触发时刻，Unix 毫秒
+ *
+ * <p><b>口径变更（10-23 F4）</b>：这两个方位原为「预测主轴方位」，切精算版后快照主轴取的是
+ * 参考线走向（{@code course(s)}），不随船转弯而变，用它判「船是否改成向」会永远判不出跳变；
+ * 故统一改为<b>观测对地航向</b>，两种实现下语义一致。
  */
 public record RecomputeRequest(
         String mmsi,

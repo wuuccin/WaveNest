@@ -75,9 +75,17 @@ public final class TrackGenerator {
         int waypointCount = cmd.waypointCount();
         for (int i = 0; i < waypointCount; i++) {
             double frac = (double) i / (double) (waypointCount - 1);
+            boolean first = i == 0;
+            boolean last = i == waypointCount - 1;
+            double lon = first ? cmd.startLon()
+                    : last ? cmd.endLon()
+                    : TrackGenerator.wrapLon(cmd.startLon() + frac * dLon);
+            double lat = first ? cmd.startLat()
+                    : last ? cmd.endLat()
+                    : cmd.startLat() + frac * (cmd.endLat() - cmd.startLat());
             waypoints.add(new Waypoint(
-                    TrackGenerator.wrapLon(cmd.startLon() + frac * dLon),
-                    cmd.startLat() + frac * (cmd.endLat() - cmd.startLat()),
+                    lon,
+                    lat,
                     cmd.cruiseAltM(),
                     cmd.speedMs(),
                     cmd.startMs() + Math.round(frac * (double) tauFine * 1000.0)));
@@ -115,6 +123,7 @@ public final class TrackGenerator {
                 cmd.comboId(),
                 waypoints,
                 tauFine,
+                // 饱和到 100%：仅表示至少用满，不能区分“刚好够”与“严重超限”
                 Math.min(100.0, (double) tauFine * cmd.energyRatePerSecPct()),
                 cmd.pathRisk(),
                 cmd.landingPointsAlong(),
@@ -201,8 +210,13 @@ public final class TrackGenerator {
         TrackGenerator.appendField(payload, Integer.toString(cmd.waypointCount()));
         TrackGenerator.appendField(payload, Double.toString(cmd.energyRatePerSecPct()));
         TrackGenerator.appendField(payload, Double.toString(cmd.pathRisk()));
-        TrackGenerator.appendField(payload, cmd.landingPointsAlong().toString());
-        TrackGenerator.appendField(payload, cmd.avoidZones().toString());
+        for (String id : cmd.landingPointsAlong()) {
+            TrackGenerator.appendField(payload, id);
+        }
+        payload.append('#');
+        for (String id : cmd.avoidZones()) {
+            TrackGenerator.appendField(payload, id);
+        }
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             byte[] hash = digest.digest(payload.toString().getBytes(StandardCharsets.UTF_8));
@@ -217,10 +231,11 @@ public final class TrackGenerator {
 
 
     private static boolean sameBoundary(Waypoint left, Waypoint right) {
+        // 末端速度允许按段切换，不参与边界一致性；坐标按微度级容差比较
         return left.t() == right.t()
-                && Double.compare(left.lon(), right.lon()) == 0
-                && Double.compare(left.lat(), right.lat()) == 0
-                && Double.compare(left.altM(), right.altM()) == 0;
+                && Math.abs(left.lon() - right.lon()) <= 1e-9
+                && Math.abs(left.lat() - right.lat()) <= 1e-9
+                && Math.abs(left.altM() - right.altM()) <= 1e-6;
     }
 
     /**

@@ -92,12 +92,12 @@ public final class RendezvousSolver {
             if (!(t <= tHi)) {
                 t = Double.NaN;
             }
-            double tBisection = solveByBisection(request, tLo, tHi, v);
-            // 固定点结果须先验会面条件已满足；容差按毫秒取整与收敛阈值折算为米
-            double toleranceM = v * (request.convergeEpsilonSec() + 0.001);
-            if (!Double.isNaN(t) && gapMeters(request, Math.round(t), tLo, v) > toleranceM) {
+            // 只容许毫秒取整带来的亚毫米级数值残差，不因迭代阈值放宽「可行性」
+            if (!Double.isNaN(t) && gapMeters(request, Math.round(t), tLo, v) > 1e-6) {
                 t = Double.NaN;
             }
+            long bisectUpper = Double.isNaN(t) ? tHi : Math.min(tHi, (long) Math.ceil(t));
+            double tBisection = solveByBisection(request, tLo, bisectUpper, v);
             if (!Double.isNaN(tBisection)) {
                 t = Double.isNaN(t) ? tBisection : Math.min(t, tBisection);
             }
@@ -111,7 +111,9 @@ public final class RendezvousSolver {
         double[] meeting = TrackInterpolator.positionAt(request.snapshot(), meetT);
         int tauCoarse = (int) Math.ceil(
                 GeoApprox.distanceM(request.nestLon(), request.nestLat(), meeting[0], meeting[1]) / v);
-        long meetTMax = Math.min(meetT + request.meetWindowMarginSec() * 1000L, request.deadlineMs());
+        long trackEndMs = points.get(points.size() - 1).t();
+        long meetTMax = Math.min(meetT + request.meetWindowMarginSec() * 1000L,
+                Math.min(request.deadlineMs(), trackEndMs));
 
         return B_RendezvousSolution.solved(solutionId, request.comboId(),
                 meeting[0], meeting[1], meetT, meetTMax, meetT, tauCoarse, snapshotVersion);

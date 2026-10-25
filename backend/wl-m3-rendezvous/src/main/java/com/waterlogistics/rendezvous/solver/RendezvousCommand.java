@@ -81,11 +81,13 @@ public record RendezvousCommand(
                 nestLat > 90.0) {
             throw new IllegalArgumentException("机巢坐标必须为有限数且经纬度在合法范围内");
         }
-        if (!Double.isFinite(cruiseSpeedMs) || !(cruiseSpeedMs > (double) 0)) {
-            throw new IllegalArgumentException("巡航速度必须为正的有限数，实际 " + cruiseSpeedMs);
+        if (!Double.isFinite(cruiseSpeedMs) || cruiseSpeedMs <= 0.0 || cruiseSpeedMs > 100.0) {
+            throw new IllegalArgumentException("巡航速度须在 (0, 100] m/s 内，实际 " + cruiseSpeedMs);
         }
-        if (meetWindowMarginSec < 0) {
-            throw new IllegalArgumentException("会面时间窗余量不能为负，实际 " + meetWindowMarginSec);
+        if (meetWindowMarginSec < 0
+                || meetWindowMarginSec > RendezvousSolveRequest.MAX_WINDOW_MARGIN_SEC) {
+            throw new IllegalArgumentException("会面时间窗余量须在 [0, "
+                    + RendezvousSolveRequest.MAX_WINDOW_MARGIN_SEC + "] 秒内，实际 " + meetWindowMarginSec);
         }
         if (nowMs < EpochMillis.MIN_VALID_MS) {
             throw new IllegalArgumentException("求解起点须为 Unix 毫秒值，实际 " + nowMs);
@@ -96,8 +98,8 @@ public record RendezvousCommand(
         if (!Double.isFinite(convergeEpsilonSec) || !(convergeEpsilonSec > (double) 0)) {
             throw new IllegalArgumentException("收敛阈值必须为正的有限数，实际 " + convergeEpsilonSec);
         }
-        if (convergeEpsilonSec * 1000.0 >= (double) (deadlineMs - nowMs)) {
-            throw new IllegalArgumentException("收敛阈值须明显小于求解时域，实际 epsilonSec="
+        if (convergeEpsilonSec * 1000.0 * 1000.0 >= (double) (deadlineMs - nowMs)) {
+            throw new IllegalArgumentException("收敛阈值须小于求解时域的千分之一，实际 epsilonSec="
                     + convergeEpsilonSec + ", 时域毫秒=" + (deadlineMs - nowMs));
         }
         if (maxIterations <= 0 || maxIterations > RendezvousSolveRequest.MAX_ITERATIONS) {

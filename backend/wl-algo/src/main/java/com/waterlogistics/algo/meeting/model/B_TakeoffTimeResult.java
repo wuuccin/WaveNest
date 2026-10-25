@@ -31,17 +31,20 @@ public record B_TakeoffTimeResult(
 
         int tauCoarseUsed) {
 
+    private static final int MAX_TAU_SEC = Integer.MAX_VALUE / 1000;
+
     public B_TakeoffTimeResult {
-        Objects.requireNonNull(comboId, "comboId 不能为空");
-        if (comboId.isBlank()) {
-            throw new IllegalArgumentException("comboId 不能为空白字符串");
+        if (comboId == null || comboId.isBlank()) {
+            throw new IllegalArgumentException("comboId 不能为空或空白字符串");
         }
-        if (feasible && takeoffT < EpochMillis.MIN_VALID_MS) {
+        comboId = comboId.strip();
+        if (feasible && !EpochMillis.isValid(takeoffT)) {
             throw new IllegalArgumentException(
-                    "可行结果的起飞时刻须为 Unix 毫秒值（疑似误传秒级时间戳），实际 " + takeoffT);
+                    "可行结果的起飞时刻须为 Unix 毫秒值，实际 " + takeoffT);
         }
-        if (tauCoarseUsed <= 0) {
-            throw new IllegalArgumentException("本次反推所用时长必须为正，实际 " + tauCoarseUsed);
+        if (tauCoarseUsed <= 0 || tauCoarseUsed > MAX_TAU_SEC) {
+            throw new IllegalArgumentException("本次反推所用时长须在 [1, " + MAX_TAU_SEC
+                    + "] 秒内，实际 " + tauCoarseUsed);
         }
         if (feasible && infeasibleReason != null) {
             throw new IllegalArgumentException("可行结果不应携带不可行原因");

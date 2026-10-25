@@ -38,7 +38,7 @@ public record SegmentedTrack(
                 throw new IllegalArgumentException("航点时刻必须严格递增，实际 " + t + " 不晚于 " + prevT);
             }
             int segment = point.segment().rank();
-            if (segment < prevSegment || (prevSegment >= 0 && segment > prevSegment + 1)) {
+            if (segment < prevSegment || segment > prevSegment + 1) {
                 throw new IllegalArgumentException("分段标签须按去程、末段交接、返程顺序出现，不得跳段");
             }
             prevT = t;

@@ -36,7 +36,7 @@ import java.util.Objects;
  * 真实起点最多晚报、终点最多早报一个采样步长；中间空档可能被并段扩大。消费方须向两端
  * 各外扩一个 {@code sampleStepMs} 后再使用，不得按边界直接错峰。
  *
- * <p>检出限制：判据只在离散采样时刻求值，<b>最短可检冲突时长＝{@code sampleStepMs}</b>——
+ * <p>检出限制：判据只在离散采样时刻求值，基准最短可检冲突时长＝{@code sampleStepMs}；<b>长窗口会按 20 万采样上限自适应放大步长</b>，实际分辨率与边界外扩量以放大后的有效步长为准——
  * 更短且恰好落在两采样点之间的冲突会漏检（区间本身仍只会被保守扩大）。经度方向的米/度
  * 比例取两航迹首点纬度的均值，适用于十公里级、纬向跨度不大的作业区。
  *
@@ -91,7 +91,7 @@ public final class TrackConflictChecker {
         if (tStart > tEnd) {
             return shortCircuit;
         }
-        if (!TrackConflictChecker.areBoxesOverlapping(routePoints, otherPoints, params)) {
+        if (!TrackConflictChecker.areBoxesOverlapping(routePoints, otherPoints, params, tStart, tEnd)) {
             return shortCircuit;
         }
 
@@ -181,11 +181,12 @@ public final class TrackConflictChecker {
      * 三维包围盒粗筛——§3.4 步骤 2：水平箱距（二维）与垂直箱隙<b>都</b>小于各自安全
      * 间隔才可能冲突，否则近零成本剔除。箱距是任意轨迹点对距离的下界，故剔除不丢真冲突。
      */
-    private static boolean areBoxesOverlapping(Iterable<LocalPoint> routePoints,
-                                               Iterable<LocalPoint> otherPoints,
-                                               ConflictParams params) {
-        double[] boxRoute = TrackConflictChecker.box(routePoints);
-        double[] boxOther = TrackConflictChecker.box(otherPoints);
+    private static boolean areBoxesOverlapping(List<LocalPoint> routePoints,
+                                               List<LocalPoint> otherPoints,
+                                               ConflictParams params,
+                                               long tStart, long tEnd) {
+        double[] boxRoute = TrackConflictChecker.box(routePoints, tStart, tEnd);
+        double[] boxOther = TrackConflictChecker.box(otherPoints, tStart, tEnd);
         double dxGap = Math.max((double) 0, Math.max(boxRoute[0] - boxOther[1], boxOther[0] - boxRoute[1]));
         double dyGap = Math.max((double) 0, Math.max(boxRoute[2] - boxOther[3], boxOther[2] - boxRoute[3]));
         double altGap = Math.max((double) 0, Math.max(boxRoute[4] - boxOther[5], boxOther[4] - boxRoute[5]));
@@ -199,12 +200,25 @@ public final class TrackConflictChecker {
     /**
      * 返回 {minX, maxX, minY, maxY, minAlt, maxAlt}
      */
-    private static double[] box(Iterable<LocalPoint> points) {
+    private static double[] box(List<LocalPoint> points, long tStart, long tEnd) {
         double[] box = {
                 Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY,
                 Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY,
                 Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY};
         for (LocalPoint p : points) {
+            if (p.t() < tStart || p.t() > tEnd) {
+                continue;
+            }
+            box[0] = Math.min(box[0], p.x());
+            box[1] = Math.max(box[1], p.x());
+            box[2] = Math.min(box[2], p.y());
+            box[3] = Math.max(box[3], p.y());
+            box[4] = Math.min(box[4], p.altM());
+            box[5] = Math.max(box[5], p.altM());
+        }
+        // 时间窗端点多落在两个航点之间：补插值端点，避免只用窗内航点收窄过度
+        for (long t : new long[] {tStart, tEnd}) {
+            LocalPoint p = TrackConflictChecker.interpolate(points, t);
             box[0] = Math.min(box[0], p.x());
             box[1] = Math.max(box[1], p.x());
             box[2] = Math.min(box[2], p.y());

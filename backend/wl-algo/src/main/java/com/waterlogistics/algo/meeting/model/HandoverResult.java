@@ -14,6 +14,9 @@ public enum HandoverResult {
     private final String value;
 
     HandoverResult(String value) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException("交接结果口径词不能为空：" + name());
+        }
         this.value = value;
     }
 
@@ -42,6 +45,7 @@ public enum HandoverResult {
                 return result;
             }
         }
-        throw new IllegalArgumentException("未知交接结果：" + value);
+        throw new IllegalArgumentException("未知交接结果："
+                + value.replaceAll("[\\p{Cntrl}\\p{Cf}\\p{Zl}\\p{Zp}]", "?"));
     }
 }

@@ -45,8 +45,10 @@ public record RecalcOptions(
                     "会面时间窗余量须在 [0, " + RendezvousSolveRequest.MAX_WINDOW_MARGIN_SEC
                             + "] 秒内，实际 " + meetWindowMarginSec);
         }
-        if (!Double.isFinite(convergeEpsilonSec) || !(convergeEpsilonSec > (double) 0)) {
-            throw new IllegalArgumentException("收敛阈值必须为正的有限数，实际 " + convergeEpsilonSec);
+        if (!Double.isFinite(convergeEpsilonSec) || convergeEpsilonSec <= 0.0
+                || convergeEpsilonSec > RendezvousSolveRequest.MAX_CONVERGE_EPSILON_SEC) {
+            throw new IllegalArgumentException("收敛阈值须在 (0, "
+                    + RendezvousSolveRequest.MAX_CONVERGE_EPSILON_SEC + "] 秒内，实际 " + convergeEpsilonSec);
         }
         if (maxIterations <= 0 || maxIterations > RendezvousSolveRequest.MAX_ITERATIONS) {
             throw new IllegalArgumentException(

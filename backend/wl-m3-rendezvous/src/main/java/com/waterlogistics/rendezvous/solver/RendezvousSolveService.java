@@ -54,6 +54,12 @@ public class RendezvousSolveService {
         Objects.requireNonNull(cmd, "cmd 不能为空");
         ShipTrackSnapshot snapshot = SnapshotGate.fetchVerified(
                 this.snapshotPort, cmd.shipMmsi(), cmd.snapshotVersion());
+        long snapshotStartT = snapshot.points().get(0).t();
+        long snapshotEndT = snapshot.points().get(snapshot.points().size() - 1).t();
+        if (cmd.nowMs() < snapshotStartT || cmd.nowMs() > snapshotEndT) {
+            throw new IllegalArgumentException("求解时刻超出快照覆盖范围，实际 nowMs=" + cmd.nowMs()
+                    + ", 快照区间=[" + snapshotStartT + ", " + snapshotEndT + "]");
+        }
         return RendezvousSolver.solve(new RendezvousSolveRequest(
                 cmd.comboId(), cmd.nestLon(), cmd.nestLat(), cmd.cruiseSpeedMs(),
                 cmd.representativeWind(), snapshot, null /* shipState：常规求解回落快照插值 */,

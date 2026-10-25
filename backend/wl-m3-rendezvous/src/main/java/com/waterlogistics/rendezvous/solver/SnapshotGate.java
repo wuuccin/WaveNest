@@ -52,7 +52,7 @@ final class SnapshotGate {
         if (!Objects.equals(shipMmsi, snapshot.shipMmsi())) {
             throw SnapshotUnavailableException.ownershipMismatch(shipMmsi, snapshot.shipMmsi());
         }
-        if (snapshot.version() == null || !Objects.equals(expectedVersion, snapshot.version())) {
+        if (!Objects.equals(expectedVersion, snapshot.version())) {
             throw new SnapshotVersionMismatchException(shipMmsi, expectedVersion, snapshot.version());
         }
         return snapshot;

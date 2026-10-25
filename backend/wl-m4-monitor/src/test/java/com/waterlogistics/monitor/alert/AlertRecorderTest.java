@@ -5,7 +5,7 @@ import com.waterlogistics.algo.detection.HeartbeatLostDetector;
 import com.waterlogistics.algo.detection.LowBatteryDetector;
 import com.waterlogistics.algo.detection.SysParamProvider;
 import com.waterlogistics.contract.state.AlertType;
-import com.waterlogistics.monitor.alert.AlertRecorder.AlertEvent;
+import com.waterlogistics.contract.mq.AlertEventMessage;
 import com.waterlogistics.storage.entity.AlertEntity;
 import com.waterlogistics.storage.repository.AlertMapper;
 import org.junit.jupiter.api.Test;
@@ -31,12 +31,12 @@ class AlertRecorderTest {
 
     /** MQ 发送替身：覆盖 publish，记录已发事件，不碰 RabbitTemplate。 */
     private static final class RecordingPublisher extends AlertEventPublisher {
-        final List<AlertEvent> sent = new ArrayList<>();
+        final List<AlertEventMessage> sent = new ArrayList<>();
         RecordingPublisher() {
             super(null);
         }
         @Override
-        public void publish(AlertEvent event) {
+        public void publish(AlertEventMessage event) {
             sent.add(event);
         }
     }
@@ -93,9 +93,9 @@ class AlertRecorderTest {
         DetectionResult crit = det.feed(5.0, 2_000);   // LEVEL_CHANGED 严重
         DetectionResult hold = det.feed(5.0, 3_000);   // DURATION 严重持续
 
-        AlertEvent e1 = recorder.record(warn, "uav-1", "order-9");
-        AlertEvent e2 = recorder.record(crit, "uav-1", "order-9");
-        AlertEvent dropped = recorder.record(hold, "uav-1", "order-9");
+        AlertEventMessage e1 = recorder.record(warn, "uav-1", "order-9");
+        AlertEventMessage e2 = recorder.record(crit, "uav-1", "order-9");
+        AlertEventMessage dropped = recorder.record(hold, "uav-1", "order-9");
 
         assertNotNull(e1);
         assertNotNull(e2, "级别变化必须产事件");
@@ -129,10 +129,10 @@ class AlertRecorderTest {
         DetectionResult loss = hb.check(121_000, true);     // LOSS_DECLARED 严重（灭失，同级凭相位标识）
         DetectionResult after = hb.check(130_000, true);    // DURATION
 
-        AlertEvent e1 = recorder.record(raised, "uav-2", null);
-        AlertEvent dropped = recorder.record(during, "uav-2", null);
-        AlertEvent e2 = recorder.record(loss, "uav-2", null);
-        AlertEvent droppedAfter = recorder.record(after, "uav-2", null);
+        AlertEventMessage e1 = recorder.record(raised, "uav-2", null);
+        AlertEventMessage dropped = recorder.record(during, "uav-2", null);
+        AlertEventMessage e2 = recorder.record(loss, "uav-2", null);
+        AlertEventMessage droppedAfter = recorder.record(after, "uav-2", null);
 
         assertNotNull(e1);
         assertNull(dropped);
@@ -156,7 +156,7 @@ class AlertRecorderTest {
         AlertRecorder recorder = newRecorder(new RecordingPublisher());
         LowBatteryDetector det = new LowBatteryDetector(params());
 
-        AlertEvent first = recorder.record(det.feed(15.0, 1_000), "uav-3", null);
+        AlertEventMessage first = recorder.record(det.feed(15.0, 1_000), "uav-3", null);
         // 检测层清除相位本身不入流水
         DetectionResult cleared = det.feed(35.0, 2_000);
         assertNull(recorder.record(cleared, "uav-3", null));
@@ -164,17 +164,17 @@ class AlertRecorderTest {
         assertSame(DetectionResult.Phase.CLEARED, cleared.phase());
         recorder.resolve("uav-3", AlertType.LOW_BATTERY);
 
-        AlertEvent second = recorder.record(det.feed(15.0, 3_000), "uav-3", null);
+        AlertEventMessage second = recorder.record(det.feed(15.0, 3_000), "uav-3", null);
         assertNotNull(second);
         assertNotEquals(first.eventId(), second.eventId(), "复位后再触发必须是新事件");
 
         // 流水顺序与类型隔离：不同无人机互不影响去重
         LowBatteryDetector other = new LowBatteryDetector(params());
-        AlertEvent otherEvent = recorder.record(other.feed(15.0, 1_000), "uav-4", null);
+        AlertEventMessage otherEvent = recorder.record(other.feed(15.0, 1_000), "uav-4", null);
         assertNotNull(otherEvent);
         assertNotEquals(second.eventId(), otherEvent.eventId());
 
-        List<AlertRecorder.AlertEvent> log = recorder.eventLog();
+        List<AlertEventMessage> log = recorder.eventLog();
         assertEquals(3, log.size());
     }
 
@@ -195,7 +195,7 @@ class AlertRecorderTest {
         LowBatteryDetector det = new LowBatteryDetector(params());
 
         // RAISED 警告 → insert 一行：alertId=eventId、中文枚举、trigger_time 非空、未处理
-        AlertEvent warn = recorder.record(det.feed(15.0, 1_000), "uav-6", "order-6");
+        AlertEventMessage warn = recorder.record(det.feed(15.0, 1_000), "uav-6", "order-6");
         assertEquals(1, mr.inserts.size(), "首次触发必须 insert 一次");
         AlertEntity row = mr.inserts.get(0);
         assertEquals(warn.eventId(), row.getAlertId(), "alert_id 复用 eventId");
@@ -208,7 +208,7 @@ class AlertRecorderTest {
         assertNull(row.getHandleRecord(), "处置记录落库时为空");
 
         // 升级严重 → update level（同一 alertId），不得再 insert
-        AlertEvent crit = recorder.record(det.feed(5.0, 2_000), "uav-6", "order-6");
+        AlertEventMessage crit = recorder.record(det.feed(5.0, 2_000), "uav-6", "order-6");
         assertEquals(warn.eventId(), crit.eventId());
         assertEquals(1, mr.inserts.size(), "级别变化不得再 insert");
         assertEquals(1, mr.updates, "级别变化必须 update level 一次");

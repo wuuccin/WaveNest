@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
+import com.waterlogistics.contract.mq.AlertEventMessage;
 import com.waterlogistics.contract.mq.UavTelemetry;
 import com.waterlogistics.contract.order.OrderView;
 import com.waterlogistics.contract.state.OrderStatus;
@@ -17,7 +18,6 @@ import com.waterlogistics.dispatch.order.OrderStateChangedEvent;
 import com.waterlogistics.dispatch.prediction.PredictionSnapshot;
 import com.waterlogistics.dispatch.prediction.PredictionUpdatedEvent;
 import com.waterlogistics.dispatch.rendezvous.RendezvousPlanCommittedEvent;
-import com.waterlogistics.monitor.alert.AlertRecorder;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -83,7 +83,7 @@ class RealtimeEventBridgeTest {
 
     @Test
     void alertEvent_shouldForwardAlarmFrame() {
-        AlertRecorder.AlertEvent event = new AlertRecorder.AlertEvent(
+        AlertEventMessage event = new AlertEventMessage(
                 "event-1", "低电量", "警告", 12, "UAV-01", "ORD-1",
                 1_700_000_000_000L, 18.0, 20.0);
 

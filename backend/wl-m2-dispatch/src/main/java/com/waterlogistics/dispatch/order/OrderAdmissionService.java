@@ -3,6 +3,7 @@ package com.waterlogistics.dispatch.order;
 import com.waterlogistics.contract.order.OrderView;
 import com.waterlogistics.contract.state.OrderStatus;
 import com.waterlogistics.dispatch.record.TaskLogRecorder;
+import com.waterlogistics.dispatch.taskstate.FlightPhaseChangedEvent;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -12,6 +13,7 @@ import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
@@ -121,7 +123,19 @@ public class OrderAdmissionService {
      */
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
     public void onOrderStateChanged(OrderStateChangedEvent event) {
-        OrderView next = event.view();
+        merge(event.view());
+    }
+
+    /**
+     * 飞行态变化也并入 REST 快照：order_state 与 GET /api/orders 共用同一
+     * stateVersion，避免重连后低版本快照把飞行阶段盖回「已派发」。
+     */
+    @EventListener
+    public void onFlightPhaseChanged(FlightPhaseChangedEvent event) {
+        merge(event.view());
+    }
+
+    private void merge(OrderView next) {
         orders.compute(next.orderId(), (orderId, current) ->
                 current == null || next.stateVersion() > current.stateVersion() ? next : current);
     }
