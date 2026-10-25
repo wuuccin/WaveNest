@@ -37,9 +37,11 @@ import org.springframework.transaction.annotation.Transactional;
  *       <b>B3 闸门检查内含</b>——熔断时转「已受理待唤醒」，本编排就此结束（返回 {@code null}），
  *       不选机、不求解（熔断期间做无用功事小，无快照环境下空跑求解会把
  *       「延后」误变成「失败」）；</li>
- *   <li>{@link CandidateFeasibilityPlanner#selectFeasible} 选机（<b>C1 已接入 10-21</b>：
+ *   <li>{@link CandidateFeasibilityPlanner#selectFeasibleWithReasons} 选机（<b>C1 已接入 10-21</b>：
  *       生成 → 逐个判可行性 → 取最近的可飞候选；原为「只选不判」的
- *       {@code CandidateSelector#selectBest}）；</li>
+ *       {@code CandidateSelector#selectBest}）。<b>E3（10-23）</b>起改用带淘汰原因的返回结构，
+ *       落选机型与原因随结果透出，判定口径不变（与 {@code selectFeasible} 共用同一
+ *       {@code evaluate} 管线）；</li>
  *   <li>{@link RendezvousCoordinator#solveFor} 会面求解，判「追得上」；</li>
  *   <li>{@link TaskQueueService#dispatch} 派发：调度中 → 已派发（回填 {@code droneId}/{@code meetTime}）；</li>
  *   <li>会面点坐标回填 {@code order_task.meet_lon/meet_lat}（《22-界面契约》§5 组合级产物，须可回查）。</li>
@@ -106,9 +108,19 @@ public class DispatchOrchestrator {
         }
 
         // 第 2 步：选机（C1 已接入：生成 → 逐个判可行性 → 取最近的可飞候选）
-        CandidateGenerator.CandidateCombo best = candidateFeasibilityPlanner.selectFeasible(order);
+        //
+        // E3（10-23）：改用带淘汰原因的返回结构。判定口径与 selectFeasible 完全一致（共用
+        // evaluate 管线，不改判定逻辑／阈值／文案），差别只有一条——全数淘汰时它不抛异常、
+        // 由编排层决定拒单口径。此处仍抛 IllegalStateException：本编排第 1 步已把订单推进到
+        // 「调度中」，抛异常才能让事务回滚、避免「调度中」成为脏状态停留（见类注释「失败语义」）。
+        CandidateFeasibilityPlanner.FeasibleSelection selection =
+                candidateFeasibilityPlanner.selectFeasibleWithReasons(order);
+        logRejectedCandidates(orderId, selection);
+        CandidateGenerator.CandidateCombo best = selection.chosen();
         if (best == null) {
-            throw new IllegalStateException("订单 " + orderId + " 派发失败：无可用候选组合");
+            throw new IllegalStateException("订单 " + orderId + " 派发失败：无可用候选组合"
+                    + "（候选 " + selection.candidates().size() + " 个，全部被淘汰）"
+                    + rejectionDetail(selection));
         }
 
         // 第 3 步：会面求解（M3 动态会面，判「追得上」；无解抛异常，不得退回假时刻）
@@ -130,5 +142,39 @@ public class DispatchOrchestrator {
                 plan.takeoffTime(), plan.solutionId(), plan.snapshotVersion());
 
         return best.droneId();
+    }
+
+    /**
+     * 落选候选的原因透出（E3）：每个不可飞候选打一条日志，机型单独成列，
+     * 让「哪架机、为什么落选」在演示与排障时直接可见，不必再去翻判定端日志。
+     */
+    private void logRejectedCandidates(String orderId,
+            CandidateFeasibilityPlanner.FeasibleSelection selection) {
+        for (CandidateFeasibilityPlanner.CandidateVerdict verdict : selection.candidates()) {
+            if (verdict.feasible()) {
+                continue;
+            }
+            log.info("订单 {} 候选落选：机型={} 机巢={} 机号={} 原因={}",
+                    orderId, verdict.model(), verdict.nestId(), verdict.droneId(),
+                    String.join("；", verdict.reasons()));
+        }
+    }
+
+    /**
+     * 全数淘汰时的原因明细，挂进异常消息。
+     *
+     * <p>沿用原 {@code selectFeasible} 的可观测性——它的异常消息带 {@code rejectionSummary}，
+     * 换用不抛异常的新方法后若不补这段，排障信息会丢失。
+     */
+    private String rejectionDetail(CandidateFeasibilityPlanner.FeasibleSelection selection) {
+        StringBuilder detail = new StringBuilder();
+        for (CandidateFeasibilityPlanner.CandidateVerdict verdict : selection.candidates()) {
+            if (verdict.feasible()) {
+                continue;
+            }
+            detail.append("\n  - ").append(verdict.model()).append("（").append(verdict.droneId())
+                    .append("）：").append(String.join("；", verdict.reasons()));
+        }
+        return detail.toString();
     }
 }
