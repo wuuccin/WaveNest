@@ -7,10 +7,11 @@ import { drawMeeting } from '../layers/meetingLayer'
 import { drawDrone } from '../layers/droneTrackLayer'
 import { drawAlerts } from '../layers/alertLayer'
 
-const props = defineProps({ comparison: { type: Object, default: null }, branchRoute: { type: Object, default: null }, focusRoute: { type: Boolean, default: false } })
+const props = defineProps({ comparison: { type: Object, default: null }, branchRoute: { type: Object, default: null }, focusRoute: { type: Boolean, default: false }, droneId: { type: String, default: '' } })
 const ship = useShipStore(), drone = useDroneStore(), order = useOrderStore(), alert = useAlertStore()
 let map, comparisonGroup, shipGroup, meetingGroup, droneGroup, branchGroup, alertGroup, lastBoundsKey = ''
 const valid = point => point && Number.isFinite(point.lat) && Number.isFinite(point.lon)
+const visibleDrone = computed(() => props.droneId ? (drone.byId[props.droneId] || null) : drone.current)
 const meetingShiftKm = computed(() => {
   const before = props.comparison?.meeting
   const after = order.rendezvous
@@ -73,13 +74,13 @@ const update = () => {
   drawComparison()
   drawShip(map, shipGroup, ship.current)
   drawMeeting(map, meetingGroup, order.rendezvous)
-  drawDrone(map, droneGroup, drone.current)
+  drawDrone(map, droneGroup, visibleDrone.value)
   drawBranchRoute()
-  drawAlerts(map, alertGroup, alert.items, order.orders, drone.current, ship.current)
+  drawAlerts(map, alertGroup, alert.items, order.orders, visibleDrone.value, ship.current)
   const points = (props.focusRoute
-    ? [ship.current, drone.current, order.rendezvous, props.comparison?.meeting, ...(props.branchRoute?.points || [])]
-    : [ship.current, ...(ship.current?.points || []), drone.current,
-      ...(drone.current?.segments || []).flatMap(segment => segment.points || []), order.rendezvous,
+    ? [ship.current, visibleDrone.value, order.rendezvous, props.comparison?.meeting, ...(props.branchRoute?.points || [])]
+    : [ship.current, ...(ship.current?.points || []), visibleDrone.value,
+      ...(visibleDrone.value?.segments || []).flatMap(segment => segment.points || []), order.rendezvous,
       props.comparison?.ship, ...(props.comparison?.ship?.points || []), props.comparison?.meeting,
       ...(props.branchRoute?.points || [])]).filter(valid)
   if (!points.length) return
@@ -107,8 +108,8 @@ onMounted(() => {
   update()
   setTimeout(() => { if (map) { map.invalidateSize(); lastBoundsKey = ''; update() } }, 100)
 })
-watch([() => ship.current, () => drone.current, () => order.rendezvous, () => alert.items.length,
-  () => order.orders, () => props.comparison, () => props.branchRoute], update, { deep: true })
+watch([() => ship.current, () => visibleDrone.value, () => order.rendezvous, () => alert.items.length,
+  () => order.orders, () => props.comparison, () => props.branchRoute, () => props.droneId], update, { deep: true })
 onUnmounted(() => { map?.remove(); map = null })
 </script>
 

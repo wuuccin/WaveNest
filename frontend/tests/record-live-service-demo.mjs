@@ -45,6 +45,13 @@ async function caption(title, explanation, facts = [], ms = 3200) {
   await page.waitForTimeout(ms)
 }
 
+async function waitForOrderState(label, title, explanation, facts = []) {
+  await page.waitForFunction(expected => {
+    return document.querySelector('.mission-panel .state-chip')?.textContent.trim() === expected
+  }, label, { timeout: 8 * 60 * 1000 })
+  await caption(title, explanation, [`实时状态 ${label}`, ...facts], 4600)
+}
+
 let video
 let orderId = ''
 try {
@@ -52,10 +59,15 @@ try {
   await page.goto(`${baseUrl}/#dashboard`, { waitUntil: 'domcontentloaded' })
   await page.locator('.header-status').getByText('WebSocket 已连接').waitFor({ timeout: 15000 })
   video = page.video()
+  const reset = await page.evaluate(async () => {
+    const response = await fetch('/sim/ship/reset', { method: 'POST' })
+    if (!response.ok) throw new Error(`POST /sim/ship/reset ${response.status}`)
+    return response.json()
+  })
   await caption(
     'WaveNest · 前后端实时联通演示',
-    '当前画面连接本机正式 Spring Boot 服务，数据来源保持为“实时服务”。',
-    ['前端 5173', '后端 8080', 'WebSocket 已连接', 'RabbitMQ / Redis 健康'],
+    '当前画面连接最新 develop 的正式 Spring Boot 服务，数据来源保持为“实时服务”。',
+    ['前端 5173', '后端 8080', 'WebSocket 已连接', 'RabbitMQ / Redis 健康', `仿真航向 ${reset.cog}°`],
     4300
   )
 
@@ -112,11 +124,43 @@ try {
 
   await page.getByRole('link', { name: '运行总览', exact: true }).click()
   await page.locator('.map-panel').first().waitFor()
+  await page.locator('.mission-facts').getByText(taskPayload.droneId, { exact: true }).waitFor({ timeout: 12000 })
   await caption(
     '第 3 步 · 实时监控船舶和无人机',
-    'M1 仿真器持续把 AIS、无人机遥测和气象消息送入 RabbitMQ，再由 WebSocket 推到地图。请观察图标位置和电量持续变化。',
-    ['data.ais', 'data.uav.telemetry', 'data.weather', 'WebSocket /ws'],
+    `M1 仿真器持续把 AIS、无人机遥测和气象消息送入 RabbitMQ，再由 WebSocket 推到地图。任务卡和地图已绑定执行机 ${taskPayload.droneId}。`,
+    ['data.ais', 'data.uav.telemetry', 'data.weather', 'WebSocket /ws', `执行机 ${taskPayload.droneId}`],
     6500
+  )
+
+  await caption(
+    '等待飞行阶段自动推进',
+    '后端根据真实会面时刻、机巢距离、巡航速度和交接时长推进状态；等待期间地图仍持续接收实时遥测。',
+    [`预计会面 ${taskPayload.meetTime.replace('T', ' ')}`, `执行机 ${taskPayload.droneId}`, '轮询间隔 1 秒'],
+    3500
+  )
+  await waitForOrderState(
+    '去程中',
+    '第 4 步 · 起飞确认，进入去程',
+    '后端 FlightPhaseAdvancer 写入 task_log，并通过 WebSocket 广播“去程中”。',
+    ['已派发 → 去程中']
+  )
+  await waitForOrderState(
+    '末段交接中',
+    '第 5 步 · 到达会面时刻，进入末段交接',
+    '状态由后端按计算出的会面时刻自动推进，前端只负责接收并展示。',
+    ['去程中 → 末段交接中']
+  )
+  await waitForOrderState(
+    '返航中',
+    '第 6 步 · 交接完成，无人机返航',
+    '交接时长达到系统参数后，后端记录“交接完成”并广播返航状态。',
+    ['末段交接中 → 返航中']
+  )
+  await waitForOrderState(
+    '已完成',
+    '第 7 步 · 落巢完成，实时闭环结束',
+    '返航时长到期后，后端写入“落巢完成”，本次实时订单从下单走到了完成。',
+    ['返航中 → 已完成', `订单 ${orderId}`]
   )
 
   const turn = await page.evaluate(async id => {
@@ -125,8 +169,8 @@ try {
     return response.json()
   }, orderId)
   await caption(
-    '第 4 步 · 后端注入船舶变向',
-    '真实调用仿真控制接口，船舶右转 45°；随后产生的新 AIS 会实时更新轨迹。',
+    '附加验证 · 后端注入船舶变向',
+    '完整订单结束后，再真实调用仿真控制接口验证船舶变向；随后产生的新 AIS 会实时更新轨迹。',
     [`turnCount ${turn.turnCount}`, `新航向 ${turn.newCog}°`, `triggerMode ${turn.triggerMode}`],
     6500
   )
@@ -140,7 +184,7 @@ try {
   await page.waitForFunction(() => Number(document.querySelector('[aria-label="回放进度"]')?.max) > 0, null, { timeout: 12000 })
   const max = Number(await slider.getAttribute('max'))
   await caption(
-    '第 5 步 · 读取真实历史轨迹',
+    '第 8 步 · 读取真实历史轨迹',
     `回放按订单 ${orderId} 找到 ${taskPayload.droneId}，GET /api/replay/${taskPayload.droneId} 返回历史帧。`,
     [`历史帧 ${max + 1} 条`, '来源 MySQL flight_point', '可逐帧拖动'],
     4800
@@ -150,8 +194,8 @@ try {
   await slider.fill(String(max))
   await caption(
     '实时联通演示结束',
-    '本次已验证下单、自动派发、实时遥测、船舶变向和任务回放。当前正式后端状态自动推进到“已派发”，交接完成态仍需后续业务模块接通。',
-    [`订单 ${orderId}`, `无人机 ${taskPayload.droneId}`, '全程实时服务数据'],
+    '本次已验证下单、自动派发、去程、末段交接、返航、完成、实时遥测、船舶变向和任务回放。',
+    [`订单 ${orderId}`, `无人机 ${taskPayload.droneId}`, '全程实时服务数据', '状态由后端广播'],
     6000
   )
 
