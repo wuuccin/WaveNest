@@ -28,17 +28,18 @@ await page.route('**/api/replay/UAV-EMPTY', route => route.fulfill({
 
 try {
   await page.goto(process.env.E7B_BASE_URL || 'http://127.0.0.1:5173', { waitUntil: 'domcontentloaded' })
+  await page.getByRole('button', { name: '实时服务' }).click()
   await page.getByRole('link', { name: '任务回放' }).click()
   const select = page.getByLabel('回放任务')
   await select.waitFor()
   assert.equal(await select.inputValue(), 'ORD-02', '下拉选中值必须是 orderId')
-  assert.equal(await select.locator('option').first().textContent(), 'ORD-02 · UAV-02')
-  await page.getByText('实际飞行记录 2 条').waitFor()
+  assert.equal(await select.locator('option:checked').textContent(), 'ORD-02 · UAV-02')
+  await page.getByText('2 条记录').waitFor()
   assert(requests.includes('/api/replay/UAV-02'), '回放请求必须把 orderId 映射为 droneId')
   assert(!requests.some(path => path.endsWith('/records')), '不得调用未实现的记录明细端点')
 
   await select.selectOption('ORD-EMPTY')
-  await page.getByText('暂无飞行记录', { exact: true }).waitFor()
+  await page.getByText('该任务暂无飞行记录', { exact: true }).waitFor()
   assert.equal(await page.getByText(/回放读取失败/).count(), 0, '404 应呈现空态而非失败')
   assert(requests.includes('/api/replay/UAV-EMPTY'))
   console.log('replay browser checks passed')

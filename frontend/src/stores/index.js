@@ -2,13 +2,28 @@ import { defineStore } from 'pinia'
 import { ORDER_STATES, normalizeOrder, displayEnum } from '../api/adapter'
 
 export const useShipStore = defineStore('ship', { state: () => ({ current: null }), actions: { apply(data) { this.current = data } } })
-export const useDroneStore = defineStore('drone', { state: () => ({ current: null, tracks: {} }), actions: { apply(data) {
-  if (!data) { this.current = null; this.tracks = {}; return }
+export const useNestStore = defineStore('nest', {
+  state: () => ({ items: [], loaded: false, error: '' }),
+  actions: {
+    apply(items) {
+      if (!Array.isArray(items)) throw new Error('GET /api/nests 未返回机巢数组')
+      this.items = items.filter(item => item?.nestId && Number.isFinite(Number(item.lon)) && Number.isFinite(Number(item.lat)))
+      this.loaded = true
+      this.error = ''
+    },
+    fail(error) { this.items = []; this.loaded = true; this.error = error?.message || String(error) },
+    reset() { this.items = []; this.loaded = false; this.error = '' }
+  }
+})
+export const useDroneStore = defineStore('drone', { state: () => ({ current: null, byId: {}, tracks: {} }), actions: { apply(data) {
+  if (!data) { this.current = null; this.byId = {}; this.tracks = {}; return }
   if (!Number.isFinite(data.lon) || !Number.isFinite(data.lat)) return
   const track = this.tracks[data.uavId] ??= []
   if (!track.length || data.ts > track.at(-1).ts) track.push(data)
   if (track.length > 3000) track.shift()
-  this.current = { ...data, segments: data.segments || track.slice(1).map((point,i) => ({ phase:point.flightPhase, points:[track[i],point] })) }
+  const currentFrame = { ...data, segments: data.segments || track.slice(1).map((point,i) => ({ phase:point.flightPhase, points:[track[i],point] })) }
+  this.byId[data.uavId] = currentFrame
+  this.current = currentFrame
 } } })
 export const useAlertStore = defineStore('alert', { state: () => ({ items: [] }), actions: { apply(data) { this.items.unshift(data); this.items = this.items.slice(0, 80) }, clear() { this.items = [] } } })
 export const useEventStore = defineStore('event', { state: () => ({ items: [] }), actions: { add(type, data) { this.items.unshift({ type, data, ts: data?.eventTs || Date.now() }); this.items = this.items.slice(0, 120) }, clear() { this.items = [] } } })
