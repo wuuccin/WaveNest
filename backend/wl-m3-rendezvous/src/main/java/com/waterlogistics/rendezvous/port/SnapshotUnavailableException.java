@@ -55,8 +55,8 @@ public class SnapshotUnavailableException extends RuntimeException {
 
 
     private SnapshotUnavailableException(String shipMmsi, String reason, boolean ownershipMismatch,
-            String actualShipMmsi) {
-        super(reason + "：船 " + display(shipMmsi));
+                                         String actualShipMmsi) {
+        super(reason + "：船 " + SnapshotUnavailableException.display(shipMmsi));
         this.shipMmsi = shipMmsi;
         this.ownershipMismatch = ownershipMismatch;
         this.actualShipMmsi = actualShipMmsi;
@@ -69,14 +69,19 @@ public class SnapshotUnavailableException extends RuntimeException {
     /**
      * 快照存在但归属与目标船不符。
      *
-     * @param shipMmsi 目标船标识
+     * @param shipMmsi       目标船标识
+     * @param actualShipMmsi 快照实际归属船号（空/空白在异常消息中记作 {@code <unknown>}）
      * @return 归属不符异常（与「查无快照」区分，避免误导排障）
      */
     public static SnapshotUnavailableException ownershipMismatch(String shipMmsi, String actualShipMmsi) {
         String actual = actualShipMmsi == null || actualShipMmsi.isBlank() ? "<unknown>" : actualShipMmsi;
         return new SnapshotUnavailableException(shipMmsi,
-                "快照归属与目标船不符（实际归属 " + actual + "），拒绝求解", true, actual);
+                                                "快照归属与目标船不符（实际归属 " + actual + "），拒绝求解", true, actual);
     }
+
+
+
+
 
     private static String display(String value) {
         return value == null || value.isBlank() ? "<unknown>" : WireText.escapeForLog(value);

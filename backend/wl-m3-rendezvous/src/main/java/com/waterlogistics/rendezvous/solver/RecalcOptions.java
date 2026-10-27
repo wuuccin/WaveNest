@@ -48,7 +48,7 @@ public record RecalcOptions(
         if (!Double.isFinite(convergeEpsilonSec) || convergeEpsilonSec <= 0.0
                 || convergeEpsilonSec > RendezvousSolveRequest.MAX_CONVERGE_EPSILON_SEC) {
             throw new IllegalArgumentException("收敛阈值须在 (0, "
-                    + RendezvousSolveRequest.MAX_CONVERGE_EPSILON_SEC + "] 秒内，实际 " + convergeEpsilonSec);
+                                                       + RendezvousSolveRequest.MAX_CONVERGE_EPSILON_SEC + "] 秒内，实际 " + convergeEpsilonSec);
         }
         if (maxIterations <= 0 || maxIterations > RendezvousSolveRequest.MAX_ITERATIONS) {
             throw new IllegalArgumentException(

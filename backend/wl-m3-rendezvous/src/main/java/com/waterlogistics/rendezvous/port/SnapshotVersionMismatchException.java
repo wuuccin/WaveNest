@@ -45,6 +45,10 @@ public class SnapshotVersionMismatchException extends RuntimeException {
         this(shipMmsi, expected, actual, null);
     }
 
+
+
+
+
     /**
      * @param shipMmsi 目标船标识
      * @param expected 调用方期望的快照版本
@@ -52,7 +56,7 @@ public class SnapshotVersionMismatchException extends RuntimeException {
      * @param cause    导致版本校验失败的底层原因
      */
     public SnapshotVersionMismatchException(String shipMmsi, String expected, String actual,
-            Throwable cause) {
+                                            Throwable cause) {
         super("快照版本不一致，拒绝求解：船 "
                       + (shipMmsi == null || shipMmsi.isBlank() ? "<unknown>" : shipMmsi)
                       + "，期望版本 " + (expected == null || expected.isBlank() ? "<none>" : expected)
@@ -62,11 +66,29 @@ public class SnapshotVersionMismatchException extends RuntimeException {
         this.actual = actual;
     }
 
+
+
+
+
+    /**
+     * 返回调用方期望的快照版本。
+     *
+     * @return 期望版本；空/空白时归一为 {@code <none>}，便于日志与排障
+     */
     public String getExpected() {
-        return expected == null || expected.isBlank() ? "<none>" : expected;
+        return this.expected == null || this.expected.isBlank() ? "<none>" : this.expected;
     }
 
+
+
+
+
+    /**
+     * 返回端口实际取回的版本。
+     *
+     * @return 实际版本；空/空白时归一为 {@code <none>}，便于日志与排障
+     */
     public String getActual() {
-        return actual == null || actual.isBlank() ? "<none>" : actual;
+        return this.actual == null || this.actual.isBlank() ? "<none>" : this.actual;
     }
 }

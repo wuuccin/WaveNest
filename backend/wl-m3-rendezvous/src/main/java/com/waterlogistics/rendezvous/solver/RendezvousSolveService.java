@@ -58,7 +58,7 @@ public class RendezvousSolveService {
         long snapshotEndT = snapshot.points().get(snapshot.points().size() - 1).t();
         if (cmd.nowMs() < snapshotStartT || cmd.nowMs() > snapshotEndT) {
             throw new IllegalArgumentException("求解时刻超出快照覆盖范围，实际 nowMs=" + cmd.nowMs()
-                    + ", 快照区间=[" + snapshotStartT + ", " + snapshotEndT + "]");
+                                                       + ", 快照区间=[" + snapshotStartT + ", " + snapshotEndT + "]");
         }
         return RendezvousSolver.solve(new RendezvousSolveRequest(
                 cmd.comboId(), cmd.nestLon(), cmd.nestLat(), cmd.cruiseSpeedMs(),

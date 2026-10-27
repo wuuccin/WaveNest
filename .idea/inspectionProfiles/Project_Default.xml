@@ -589,7 +589,6 @@
     <inspection_tool class="NegativelyNamedBooleanVariable" enabled="true" level="WARNING" enabled_by_default="true" />
     <inspection_tool class="NestedAssignment" enabled="true" level="WARNING" enabled_by_default="true" />
     <inspection_tool class="NestedAssignmentJS" enabled="true" level="WARNING" enabled_by_default="true" />
-    <inspection_tool class="NestedConditionalExpression" enabled="true" level="WARNING" enabled_by_default="true" />
     <inspection_tool class="NestedConditionalExpressionJS" enabled="true" level="WARNING" enabled_by_default="true" />
     <inspection_tool class="NestedFunctionCallJS" enabled="true" level="WARNING" enabled_by_default="true" />
     <inspection_tool class="NestedFunctionJS" enabled="true" level="WARNING" enabled_by_default="true" />
@@ -753,12 +752,6 @@
     <inspection_tool class="ReplacePrintlnWithLogging" enabled="true" level="WARNING" enabled_by_default="true" />
     <inspection_tool class="ResultOfObjectAllocationIgnored" enabled="true" level="WARNING" enabled_by_default="true" />
     <inspection_tool class="ResultSetIndexZero" enabled="true" level="WARNING" enabled_by_default="true" />
-    <inspection_tool class="ReturnNull" enabled="true" level="WARNING" enabled_by_default="true">
-      <option name="m_reportObjectMethods" value="true" />
-      <option name="m_reportArrayMethods" value="true" />
-      <option name="m_reportCollectionMethods" value="true" />
-      <option name="m_ignorePrivateMethods" value="false" />
-    </inspection_tool>
     <inspection_tool class="ReturnOfInnerClass" enabled="true" level="WARNING" enabled_by_default="true" />
     <inspection_tool class="ReturnThis" enabled="true" level="WARNING" enabled_by_default="true" />
     <inspection_tool class="ReuseOfLocalVariableJS" enabled="true" level="WARNING" enabled_by_default="true" />
@@ -842,6 +835,7 @@
           <option value="OverlyCoupledMethod" />
           <option value="UncheckedExceptionClass" />
           <option value="DuplicatedCode" />
+          <option value="DataFlowIssue" />
         </list>
       </option>
     </inspection_tool>

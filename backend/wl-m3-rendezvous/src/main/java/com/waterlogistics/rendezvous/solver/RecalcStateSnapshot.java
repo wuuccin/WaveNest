@@ -65,7 +65,7 @@ public record RecalcStateSnapshot(
         }
         if (shipStateT < EpochMillis.MIN_VALID_MS) {
             throw new IllegalArgumentException("船状态时刻须为 Unix 毫秒值（下界 "
-                    + EpochMillis.MIN_VALID_MS + "），实际 " + shipStateT);
+                                                       + EpochMillis.MIN_VALID_MS + "），实际 " + shipStateT);
         }
         boolean droneAllNull = droneLon == null && droneLat == null && droneBattery == null && droneStateT == null;
         boolean droneAllSet = droneLon != null && droneLat != null && droneBattery != null && droneStateT != null;
@@ -86,7 +86,7 @@ public record RecalcStateSnapshot(
             }
             if (droneStateT.longValue() < EpochMillis.MIN_VALID_MS) {
                 throw new IllegalArgumentException("机状态时刻须为 Unix 毫秒值（下界 "
-                        + EpochMillis.MIN_VALID_MS + "），实际 " + droneStateT);
+                                                           + EpochMillis.MIN_VALID_MS + "），实际 " + droneStateT);
             }
         }
     }
