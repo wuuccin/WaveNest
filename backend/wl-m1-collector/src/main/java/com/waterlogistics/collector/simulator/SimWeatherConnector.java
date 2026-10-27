@@ -25,14 +25,14 @@ public class SimWeatherConnector implements DataSourceConnector {
 
     private final MqDataPublisher publisher;
 
-    /** 网格左下角经度 */
-    @Value("${wavenest.sim.weather.lon0:114.290000}")
+    /** 网格左下角经度——随南昌航段一起挪（T1-4）：只切船不切网格，风会落在原来的地方 */
+    @Value("${wavenest.sim.weather.lon0:115.850000}")
     private double lon0;
-    /** 网格左下角纬度 */
-    @Value("${wavenest.sim.weather.lat0:30.590000}")
+    /** 网格左下角纬度——南昌航段南端附近 */
+    @Value("${wavenest.sim.weather.lat0:28.658000}")
     private double lat0;
-    /** 网格步长（十进制度） */
-    @Value("${wavenest.sim.weather.step:0.010000}")
+    /** 网格步长（十进制度）——0.044°≈4.9 km，2×2 网格罩住朝阳端—八一端全程（南北跨 0.035°），四角仍贴近江面 */
+    @Value("${wavenest.sim.weather.step:0.044000}")
     private double step;
     /** 每轴网格点数 */
     @Value("${wavenest.sim.weather.grid:2}")

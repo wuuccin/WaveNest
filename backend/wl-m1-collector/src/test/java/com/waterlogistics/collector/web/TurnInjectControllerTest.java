@@ -35,7 +35,7 @@ class TurnInjectControllerTest {
     @Test
     @DisplayName("连点 10 次必触发：每次航向 +10°，计数到 10")
     void tenClicksAlwaysTrigger() {
-        double cog = 90.0;
+        double cog = 21.0;   // T1-4：南昌段初始航向（朝阳端 → 八一端）
         for (int i = 0; i < 10; i++) {
             ResponseEntity<Map<String, Object>> resp = controller.turn(10.0, null);
             assertEquals(200, resp.getStatusCode().value());
@@ -45,7 +45,7 @@ class TurnInjectControllerTest {
             cog = newCog;
         }
         assertEquals(10, controller.status().getBody().get("turnCount"));
-        assertEquals(190.0, sim.currentCog(), 1e-9);
+        assertEquals(121.0, sim.currentCog(), 1e-9);
     }
 
     @Test
@@ -54,7 +54,7 @@ class TurnInjectControllerTest {
         Map<String, Object> body = controller.turn(60.0, "ORD-20261016-01").getBody();
         assertEquals("order", body.get("triggerMode"));
         assertEquals("ORD-20261016-01", body.get("orderId"));
-        assertEquals(150.0, body.get("newCog"));
+        assertEquals(81.0, body.get("newCog"));
     }
 
     @Test
@@ -75,7 +75,7 @@ class TurnInjectControllerTest {
 
         Thread.sleep(1_600L);
 
-        assertEquals(135.0, sim.currentCog(), 1e-9, "1 秒后应已自动 +45°");
+        assertEquals(66.0, sim.currentCog(), 1e-9, "1 秒后应已自动 +45°");
         assertEquals(1, controller.status().getBody().get("turnCount"));
         assertEquals(0, controller.listSchedules().getBody().size(), "触发后应从列表移除");
         assertNotNull(id);
@@ -89,7 +89,7 @@ class TurnInjectControllerTest {
         assertEquals(true, cancelled.get("cancelled"));
 
         Thread.sleep(1_400L);
-        assertEquals(90.0, sim.currentCog(), 1e-9, "取消后不应变向");
+        assertEquals(21.0, sim.currentCog(), 1e-9, "取消后不应变向");
         assertEquals(0, controller.status().getBody().get("turnCount"));
     }
 
@@ -104,7 +104,7 @@ class TurnInjectControllerTest {
         assertEquals("reset", body.get("action"));
         assertEquals(0, controller.status().getBody().get("turnCount"));
         assertEquals(0, controller.status().getBody().get("pendingSchedules"));
-        assertEquals(90.0, sim.currentCog(), 1e-9);
+        assertEquals(21.0, sim.currentCog(), 1e-9);
     }
 
     @Test

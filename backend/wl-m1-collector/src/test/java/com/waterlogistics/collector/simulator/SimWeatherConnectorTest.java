@@ -77,8 +77,8 @@ class SimWeatherConnectorTest {
             positions.add(w.lon() + "," + w.lat());
         }
         assertEquals(4, positions.size(), "四个网格点坐标必须互不相同");
-        assertTrue(positions.contains("114.29,30.59"), "应包含网格左下角");
-        assertTrue(positions.contains("114.3,30.6"), "应包含网格右上角");
+        assertTrue(positions.contains("115.85,28.658"), "应包含网格左下角（航段南端）");
+        assertTrue(positions.contains("115.894,28.702"), "应包含网格右上角（航段北端）");
     }
 
     @Test
