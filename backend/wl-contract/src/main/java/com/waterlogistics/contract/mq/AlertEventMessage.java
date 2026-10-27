@@ -12,8 +12,12 @@ import com.waterlogistics.contract.state.AlertType;
  * <h3>与检测层内部结构的关系</h3>
  *
  * <p>本对象是检测层内部结构 {@code AlertRecorder.AlertEvent} 的<b>契约层同构替换</b>：
- * 九个字段的<b>名称、类型、顺序逐项一致</b>，切换时只换类型，<b>字段取值一律原样</b>。
+ * 原九个字段的<b>名称、类型、顺序逐项一致</b>，切换时只换类型，<b>字段取值一律原样</b>。
  * 跨模块一律只认本契约对象（口径纪律第 4 条），不得在调度侧照抄一份监控侧的结构。
+ *
+ * <p><b>T1-1 扩字段</b>（10-27 契约与地基）：新增 {@code lon}／{@code lat} 两项（第十、第十一字段），
+ * 原九字段不动；检测层侧由 T1-3 填值——取告警目标当前位置，失联场景取最后已知位置，
+ * <b>取不到就留 {@code null}，不许造假坐标</b>。
  *
  * <h3>字段取值口径</h3>
  *
@@ -41,6 +45,8 @@ import com.waterlogistics.contract.state.AlertType;
  * @param timestamp      告警首次触发时刻，Unix 毫秒
  * @param currentValue   当前值：偏航距离（m）／电量（%）／风速（m/s）；<b>失联时为 {@code null}</b>
  * @param thresholdValue 阈值，与 {@code currentValue} 同量纲；<b>可为 {@code null}</b>
+ * @param lon            告警目标位置-经度（T1-1 新增，T1-3 填值）；失联且无最后已知位置时为 {@code null}
+ * @param lat            告警目标位置-纬度（T1-1 新增，T1-3 填值）；同 {@code lon}
  */
 public record AlertEventMessage(
         String eventId,
@@ -51,8 +57,22 @@ public record AlertEventMessage(
         String orderId,
         long timestamp,
         Double currentValue,
-        Double thresholdValue) {
+        Double thresholdValue,
+        Double lon,
+        Double lat) {
 
     /** 本对象对应的 MQ 主题 */
     public static final String TOPIC = TopicName.ALERT_EVENT;
+
+    /**
+     * 兼容构造器：保留 T1-1 之前的九参签名，新字段留空。
+     *
+     * <p>构造点分散在 wl-m4 检测层与多处测试，序号 2 填值前逐处迁移，互不阻塞。
+     */
+    public AlertEventMessage(String eventId, String alertType, String level,
+                             int duration, String droneId, String orderId,
+                             long timestamp, Double currentValue, Double thresholdValue) {
+        this(eventId, alertType, level, duration, droneId, orderId,
+                timestamp, currentValue, thresholdValue, null, null);
+    }
 }
