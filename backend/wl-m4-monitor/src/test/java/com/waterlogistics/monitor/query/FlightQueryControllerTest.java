@@ -1,6 +1,7 @@
 package com.waterlogistics.monitor.query;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.waterlogistics.algo.measurement.TelemetryCleaner;
@@ -30,6 +31,8 @@ class FlightQueryControllerTest {
         assertEquals(2, response.frames().size());
         assertEquals("drone_state", response.frames().get(0).type());
         assertEquals(1_000L, response.frames().get(0).data().ts());
+        assertEquals(90.0, response.frames().get(0).data().heading());
+        assertNull(response.frames().get(0).data().activeOrderId());
         assertEquals(2_000L, response.frames().get(1).data().ts());
     }
 

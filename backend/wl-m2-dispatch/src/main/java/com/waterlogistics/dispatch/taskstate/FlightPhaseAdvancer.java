@@ -235,6 +235,43 @@ public class FlightPhaseAdvancer {
     }
 
     /**
+     * 按机号查当前在飞订单号（T1-2：实时出口投影用它填 {@code DroneStateFrame.activeOrderId}）。
+     *
+     * <p>取 {@link #cycleStates} 中机号相同、且尚未推进到「已完成」的订单，多条时取
+     * {@code meet_time} 最新的一条——重入队后 {@code create_time} 不变，只有
+     * {@code meet_time} 才标识本派发周期。
+     *
+     * <p><b>为什么不查库</b>：飞行态只写 {@code task_log}，不写 {@code order_task.status}，
+     * 库里订单派发后长期停在「已派发」，按状态查会把已飞完的单重新捞出来；
+     * {@code cycleStates} 的 {@code phase} 是由 {@code task_log} 恢复的真实阶段，判得准。
+     *
+     * <p><b>两条边界</b>：① 缓存由 {@code tick()} 按
+     * {@code wavenest.m2.flight-advance-interval-sec}（默认 2 秒）刷新，派单后到首次 tick
+     * 之前取不到值；② 缺执行机上下文的订单（{@code droneContextPort.resolve} 返回 null）
+     * 在 {@link #advanceOrder} 中直接 return、不建 state，该机永远查不到，与候选链同一数据前提。
+     *
+     * @return 在飞订单号；该机当前无在飞订单时返回 {@code null}（契约允许为空，不算缺值）
+     */
+    public String activeOrderIdOf(String droneId) {
+        if (droneId == null) {
+            return null;
+        }
+        String activeOrderId = null;
+        long latestMeetMs = Long.MIN_VALUE;
+        for (Map.Entry<String, CycleState> entry : cycleStates.entrySet()) {
+            CycleState state = entry.getValue();
+            if (!droneId.equals(state.droneId()) || state.phase() == OrderStatus.FINISHED) {
+                continue;
+            }
+            if (state.meetMs() > latestMeetMs) {
+                latestMeetMs = state.meetMs();
+                activeOrderId = entry.getKey();
+            }
+        }
+        return activeOrderId;
+    }
+
+    /**
      * 按状态链顺序校验并写入一条飞行态审计，随后广播展示视图。
      */
     private void emit(OrderTaskEntity order, OrderStatus from, OrderStatus to,

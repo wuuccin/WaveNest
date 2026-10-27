@@ -1,9 +1,11 @@
 package com.waterlogistics.monitor.alert;
 
 import com.waterlogistics.algo.detection.DetectionResult;
+import com.waterlogistics.algo.measurement.TelemetryState;
 import com.waterlogistics.contract.mq.AlertEventMessage;
 import com.waterlogistics.contract.state.AlertLevel;
 import com.waterlogistics.contract.state.AlertType;
+import com.waterlogistics.monitor.store.FlightRecordStore;
 import com.waterlogistics.storage.entity.AlertEntity;
 import com.waterlogistics.storage.repository.AlertMapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
@@ -75,15 +77,25 @@ public class AlertRecorder {
     /** alert 表 Mapper（纯单测/无库环境可为 null，此时只发 MQ + 内存留痕） */
     private final AlertMapper alertMapper;
 
+    /** 飞行记录仓（T1-3 取告警目标最后已知位置；纯单测可为 null，此时位置留空） */
+    private final FlightRecordStore flightRecordStore;
+
     @Autowired
-    public AlertRecorder(AlertEventPublisher publisher, AlertMapper alertMapper) {
+    public AlertRecorder(AlertEventPublisher publisher, AlertMapper alertMapper,
+                         FlightRecordStore flightRecordStore) {
         this.publisher = publisher;
         this.alertMapper = alertMapper;
+        this.flightRecordStore = flightRecordStore;
     }
 
-    /** 无库构造（单元测试/内存兜底；生产由 Spring 使用双参构造） */
+    /** 无记录仓构造（单元测试/内存兜底；位置留空，不造假坐标） */
+    public AlertRecorder(AlertEventPublisher publisher, AlertMapper alertMapper) {
+        this(publisher, alertMapper, null);
+    }
+
+    /** 无库构造（单元测试/内存兜底；生产由 Spring 使用三参构造） */
     public AlertRecorder(AlertEventPublisher publisher) {
-        this(publisher, null);
+        this(publisher, null, null);
     }
 
     private static String activeKey(String droneId, AlertType type) {
@@ -112,6 +124,9 @@ public class AlertRecorder {
         String eventId = previous == null ? UUID.randomUUID().toString() : previous.eventId();
         activeAlerts.put(key, new ActiveAlert(eventId, result.level(), result.triggeredAtMs()));
 
+        // T1-3：位置取告警目标最后已知位置（失联即最后一次上报值）；取不到留空，不造假坐标
+        Double[] position = lastKnownPosition(droneId);
+
         AlertEventMessage event = new AlertEventMessage(
                 eventId,
                 result.alertType().getValue(),
@@ -121,12 +136,33 @@ public class AlertRecorder {
                 orderId,
                 result.triggeredAtMs(),
                 result.currentValue(),
-                result.thresholdValue()
+                result.thresholdValue(),
+                position[0],
+                position[1]
         );
         eventLog.add(event);
         publisher.publish(event);
         persist(previous, event);
         return event;
+    }
+
+    /**
+     * 取该机最后一次<b>真实上报</b>且几何可用的位置（经度、纬度两元）。
+     *
+     * <p>失联场景没有新帧流入，这里返回的正是「最后一次上报值」；补插帧不参与，
+     * 避免把插值坐标当成实测位置。没有可用记录时返回 {@code {null, null}}，由调用方留空，
+     * 用默认点凑数等同于造假。</p>
+     */
+    private Double[] lastKnownPosition(String droneId) {
+        if (flightRecordStore == null) return new Double[]{null, null};
+        List<TelemetryState> track = flightRecordStore.replay(droneId);
+        for (int i = track.size() - 1; i >= 0; i--) {
+            TelemetryState state = track.get(i);
+            if (!state.imputed() && state.geometryUsable()) {
+                return new Double[]{state.longitude(), state.latitude()};
+            }
+        }
+        return new Double[]{null, null};
     }
 
     /**
