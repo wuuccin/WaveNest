@@ -4,8 +4,11 @@ import com.waterlogistics.algo.detection.DetectionResult;
 import com.waterlogistics.algo.detection.HeartbeatLostDetector;
 import com.waterlogistics.algo.detection.LowBatteryDetector;
 import com.waterlogistics.algo.detection.SysParamProvider;
+import com.waterlogistics.algo.measurement.TelemetryState;
+import com.waterlogistics.contract.mq.UavTelemetry;
 import com.waterlogistics.contract.state.AlertType;
 import com.waterlogistics.contract.mq.AlertEventMessage;
+import com.waterlogistics.monitor.store.FlightRecordStore;
 import com.waterlogistics.storage.entity.AlertEntity;
 import com.waterlogistics.storage.repository.AlertMapper;
 import org.junit.jupiter.api.Test;
@@ -13,6 +16,7 @@ import org.junit.jupiter.api.Test;
 import java.lang.reflect.Proxy;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -224,5 +228,63 @@ class AlertRecorderTest {
         // 清除复位不碰库（handle_status 无「已清除」态，不臆造）
         recorder.resolve("uav-6", AlertType.LOW_BATTERY);
         assertEquals(0, mr.deleteByIds, "复位不得 delete");
+    }
+
+    /** 造一条清洗后状态；geometryUsable 要求经纬度有限且 stateStatus 不为 missing。 */
+    private static TelemetryState state(String uavId, double lon, double lat, long tsMs, boolean imputed) {
+        return new TelemetryState(
+                new UavTelemetry(uavId, lon, lat, 100.0, 12.0, 60.0, 90.0, tsMs),
+                "ok", imputed, "good", List.of(), null, tsMs, "WGS-84", Map.of());
+    }
+
+    @Test
+    void 告警事件带上告警目标最后已知位置() {
+        RecordingPublisher publisher = new RecordingPublisher();
+        FlightRecordStore store = new FlightRecordStore();
+        AlertRecorder recorder = new AlertRecorder(publisher, null, store);
+        LowBatteryDetector det = new LowBatteryDetector(params());
+
+        store.append(state("uav-7", 115.8800, 28.6800, 1_000, false));
+        store.append(state("uav-7", 115.8900, 28.6900, 2_000, false));
+
+        AlertEventMessage event = recorder.record(det.feed(15.0, 2_000), "uav-7", "order-7");
+
+        assertNotNull(event);
+        assertEquals(115.8900, event.lon(), "位置取最新一帧实测坐标");
+        assertEquals(28.6900, event.lat());
+        assertEquals(1, publisher.sent.size());
+        assertEquals(115.8900, publisher.sent.get(0).lon(), "发出的事件同样带位置");
+    }
+
+    @Test
+    void 失联告警位置取最后一次上报值且不采用插值帧() {
+        RecordingPublisher publisher = new RecordingPublisher();
+        FlightRecordStore store = new FlightRecordStore();
+        AlertRecorder recorder = new AlertRecorder(publisher, null, store);
+        HeartbeatLostDetector hb = new HeartbeatLostDetector(params());
+
+        store.append(state("uav-8", 115.9100, 28.7100, 1_000, false));  // 最后一次真实上报
+        store.append(state("uav-8", 115.9200, 28.7200, 2_000, true));   // 补插帧，不得当成实测位置
+        hb.heartbeat(1_000);
+
+        AlertEventMessage event = recorder.record(hb.check(61_000, true), "uav-8", null);
+
+        assertNotNull(event);
+        assertEquals("失联", event.alertType());
+        assertEquals(115.9100, event.lon(), "失联只能取最后一次真实上报值");
+        assertEquals(28.7100, event.lat());
+    }
+
+    @Test
+    void 无上报记录时位置留空不造假() {
+        RecordingPublisher publisher = new RecordingPublisher();
+        AlertRecorder recorder = new AlertRecorder(publisher, null, new FlightRecordStore());
+        LowBatteryDetector det = new LowBatteryDetector(params());
+
+        AlertEventMessage event = recorder.record(det.feed(15.0, 1_000), "uav-9", null);
+
+        assertNotNull(event);
+        assertNull(event.lon(), "无最后已知位置时留空，不用默认点凑数");
+        assertNull(event.lat());
     }
 }
