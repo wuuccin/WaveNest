@@ -22,14 +22,14 @@ public class SimAisConnector implements DataSourceConnector {
 
     private final MqDataPublisher publisher;
 
-    /** 起始经度（十进制度） */
-    @Value("${wavenest.sim.ais.start-lon:114.300000}")
+    /** 起始经度（十进制度）——南昌段朝阳端（航段西南端，1 号巢一带） */
+    @Value("${wavenest.sim.ais.start-lon:115.861000}")
     private double startLon;
-    /** 起始纬度（十进制度） */
-    @Value("${wavenest.sim.ais.start-lat:30.600000}")
+    /** 起始纬度（十进制度）——南昌段朝阳端 */
+    @Value("${wavenest.sim.ais.start-lat:28.664000}")
     private double startLat;
-    /** 初始航向（度，正北为 0 顺时针） */
-    @Value("${wavenest.sim.ais.start-cog:90.0}")
+    /** 初始航向（度，正北为 0 顺时针）——朝阳端 → 八一端方位角约 21°（朝上游） */
+    @Value("${wavenest.sim.ais.start-cog:21.0}")
     private double startCog;
     /** 航速（节） */
     @Value("${wavenest.sim.ais.sog-knots:8.0}")
