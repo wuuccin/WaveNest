@@ -43,7 +43,10 @@ import org.springframework.transaction.annotation.Transactional;
  * <p><b>隔离口径</b>：{@code DecisionCapture} 与消费器的 eventId 去重集是<b>上下文级单例</b>，
  * 事务只回滚 DB 不回滚内存态——广播断言一律按本用例的 eventId 过滤，不锁全量列表。
  */
-@SpringBootTest
+@SpringBootTest(properties =
+        // T1-5 起机巢在南昌航段、仿真器仍在旧域（杨添爻 T1-4 切换前），
+        // 仿真 AIS 流会覆盖本测试手喂的船位快照导致候选全灭——关掉仿真流，测试独占喂数
+        "wavenest.sim.enabled=false")
 @Transactional
 class AlertDrivenRescheduleTest {
 
@@ -88,8 +91,9 @@ class AlertDrivenRescheduleTest {
 
     /** 前置：喂船位快照（候选距离过滤与会面求解前提），下单走完整主链到「已派发」 */
     private String dispatchedOrder() {
+        // 船位取南昌赣江演示航段南昌大桥旁（T1-5 起机巢在航段两端，两巢均在 5km 内）
         predictionService.refresh(new AisMessage(
-                SHIP, "F1测试船", 114.306, 30.606, 5.0, 90.0, System.currentTimeMillis()));
+                SHIP, "F1测试船", 115.8590, 28.6630, 5.0, 90.0, System.currentTimeMillis()));
         OrderSubmitResponse resp = admissionService.submit(new OrderSubmitRequest(
                 SHIP, 5.5, "医疗物资", System.currentTimeMillis() + 3_600_000L, "URGENT"));
         assertThat(resp.accepted()).isTrue();
@@ -217,7 +221,7 @@ class AlertDrivenRescheduleTest {
     @Test
     void weatherClear_shouldWakeBacklog() {
         predictionService.refresh(new AisMessage(
-                SHIP, "F1测试船", 114.306, 30.606, 5.0, 90.0, System.currentTimeMillis()));
+                SHIP, "F1测试船", 115.8590, 28.6630, 5.0, 90.0, System.currentTimeMillis()));
 
         // 熔断中下单 → B3 延后语义：已受理待唤醒（不是拒单）
         gateService.trip(GateSource.AUTO);
