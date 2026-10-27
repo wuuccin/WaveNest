@@ -2,9 +2,9 @@ package com.waterlogistics.dispatch.plan;
 
 import com.waterlogistics.algo.candidate.CandidateGenerator;
 import com.waterlogistics.contract.state.OrderStatus;
-import com.waterlogistics.contract.ws.RendezvousFrame;
 import com.waterlogistics.dispatch.candidate.CandidateSelector;
 import com.waterlogistics.dispatch.feasibility.CandidateFeasibilityPlanner;
+import com.waterlogistics.dispatch.frame.RendezvousFrameProjector;
 import com.waterlogistics.dispatch.queue.TaskQueueService;
 import com.waterlogistics.dispatch.rendezvous.RendezvousCoordinator;
 import com.waterlogistics.dispatch.rendezvous.RendezvousPlanCommittedEvent;
@@ -134,8 +134,12 @@ public class DispatchOrchestrator {
         order.setMeetLat(BigDecimal.valueOf(plan.meetLat()));
         orderTaskMapper.updateById(order);
         // C3：完整方案已持久化后发布投影，app 层在事务提交后转成 WebSocket 帧。
+        // 会面帧投影抽成纯函数 RendezvousFrameProjector，编排器与队列侧（T1-6）共用同一口径，
+        // 不重跑判定；etaTs 取 plan.takeoffTime()（值即 meetTMin＝会面时刻，非起飞时刻）。
         eventPublisher.publishEvent(new RendezvousPlanCommittedEvent(
-                new RendezvousFrame(orderId, plan.meetLon(), plan.meetLat(), true)));
+                new RendezvousFrameProjector().project(new RendezvousFrameProjector.Input(
+                        orderId, plan.meetLon(), plan.meetLat(), true,
+                        selection, plan.takeoffTime()))));
 
         log.info("派发编排完成：orderId={} droneId={} comboId={} 会面点={},{} 起飞={} 解={} 快照版本={}",
                 orderId, best.droneId(), best.comboId(), plan.meetLon(), plan.meetLat(),
@@ -168,13 +172,10 @@ public class DispatchOrchestrator {
      */
     private String rejectionDetail(CandidateFeasibilityPlanner.FeasibleSelection selection) {
         StringBuilder detail = new StringBuilder();
-        for (CandidateFeasibilityPlanner.CandidateVerdict verdict : selection.candidates()) {
-            if (verdict.feasible()) {
-                continue;
-            }
-            detail.append("\n  - ").append(verdict.model()).append("（").append(verdict.droneId())
-                    .append("）：").append(String.join("；", verdict.reasons()));
+        for (String reason : RendezvousFrameProjector.reasonsOf(selection)) {
+            detail.append("\n  - ").append(reason);
         }
         return detail.toString();
     }
+
 }
