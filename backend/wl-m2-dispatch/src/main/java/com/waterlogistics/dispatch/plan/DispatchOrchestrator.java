@@ -139,7 +139,9 @@ public class DispatchOrchestrator {
         eventPublisher.publishEvent(new RendezvousPlanCommittedEvent(
                 new RendezvousFrameProjector().project(new RendezvousFrameProjector.Input(
                         orderId, plan.meetLon(), plan.meetLat(), true,
-                        selection, plan.takeoffTime()))));
+                        selection.candidates().size(),
+                        RendezvousFrameProjector.reasonsOf(selection),
+                        plan.takeoffTime()))));
 
         log.info("派发编排完成：orderId={} droneId={} comboId={} 会面点={},{} 起飞={} 解={} 快照版本={}",
                 orderId, best.droneId(), best.comboId(), plan.meetLon(), plan.meetLat(),
