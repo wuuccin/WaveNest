@@ -48,7 +48,7 @@ public final class FlightQueryController {
         var telemetry = state.telemetry();
         return new ReplayFrame(WsFrameType.DRONE_STATE.getType(), new DroneStateFrame(
                 telemetry.uavId(), telemetry.lon(), telemetry.lat(), telemetry.battery(),
-                null, telemetry.ts()));
+                null, telemetry.ts(), telemetry.heading(), null));
     }
 
     public record ReplayResponse(String taskId, List<ReplayFrame> frames) {
