@@ -3,10 +3,8 @@ package com.waterlogistics.dispatch.queue;
 import com.waterlogistics.contract.order.OrderView;
 import com.waterlogistics.contract.rest.WaitReason;
 import com.waterlogistics.contract.state.OrderStatus;
-import com.waterlogistics.contract.ws.RendezvousFrame;
 import com.waterlogistics.dispatch.gate.DispatchGateService;
 import com.waterlogistics.dispatch.order.OrderStateChangedEvent;
-import com.waterlogistics.dispatch.rendezvous.RendezvousPlanCommittedEvent;
 import com.waterlogistics.storage.entity.OrderTaskEntity;
 import com.waterlogistics.storage.entity.TaskLogEntity;
 import com.waterlogistics.storage.repository.OrderTaskMapper;
@@ -89,30 +87,23 @@ public class TaskQueueService {
         transition(order, OrderStatus.WAIT_DISPATCH, OrderStatus.DISPATCHING, "组批调度");
     }
 
-    /** 派发：调度中 → 已派发（第 4 步定案 + 第 5 步回填，关联无人机与起飞时刻） */
+    /**
+     * 派发：调度中 → 已派发（第 4 步定案 + 第 5 步回填，关联无人机与起飞时刻）。
+     *
+     * <p><b>T1-6（2026-10-27 口径调整）</b>：会面点坐标回填与会面帧
+     * （{@code RendezvousPlanCommittedEvent}）由编排器统一发布，此处不发——
+     * 队列侧签名没有候选数与淘汰原因，再发一帧只会产生「一条全、一条空」的
+     * 重复帧。原带 meetLon/meetLat 的五参重载无任何调用方（全仓仅编排器调
+     * 本方法），属遗留死代码，已一并清除。
+     */
     @Transactional
     public void dispatch(String orderId, String droneId, LocalDateTime meetTime) {
-        dispatch(orderId, droneId, meetTime, null, null);
-    }
-
-    /** 派发并回填 M2 已求得的组合会面方案。 */
-    @Transactional
-    public void dispatch(String orderId, String droneId, LocalDateTime meetTime,
-            Double meetLon, Double meetLat) {
         OrderTaskEntity order = orderTaskMapper.selectById(orderId);
         requireStatus(order, OrderStatus.DISPATCHING);
         order.setDroneId(droneId);
         order.setMeetTime(meetTime);
-        if (meetLon != null && meetLat != null) {
-            order.setMeetLon(java.math.BigDecimal.valueOf(meetLon));
-            order.setMeetLat(java.math.BigDecimal.valueOf(meetLat));
-        }
         orderTaskMapper.updateById(order);
         transition(order, OrderStatus.DISPATCHING, OrderStatus.DISPATCHED, "派发");
-        if (meetLon != null && meetLat != null) {
-            eventPublisher.publishEvent(new RendezvousPlanCommittedEvent(
-                    new RendezvousFrame(orderId, meetLon, meetLat, true)));
-        }
     }
 
     /**
