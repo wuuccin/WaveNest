@@ -11,12 +11,27 @@ const launchOptions = { headless: true }
 if (process.env.BROWSER_PATH) launchOptions.executablePath = process.env.BROWSER_PATH
 const browser = await chromium.launch(launchOptions)
 
+async function stubLiveApi(page) {
+  await page.route('**/api/orders', route => route.fulfill({ json: { orders: [] } }))
+  await page.route('**/api/monitor/tasks', route => route.fulfill({ json: { tasks: [] } }))
+  await page.route('**/api/nests', route => route.fulfill({ json: [
+    { nestId: 'NEST-NANCHANG-1', lon: 115.852, lat: 28.646, capacity: 4, supportedModels: ['M30T'], status: '可用' },
+    { nestId: 'NEST-NANCHANG-2', lon: 115.879, lat: 28.692, capacity: 4, supportedModels: ['M400'], status: '可用' }
+  ] }))
+  await page.routeWebSocket('**/ws', socket => { socket.onMessage(() => {}) })
+}
+
 for (const viewport of [{ width: 1440, height: 900, name: 'desktop' }, { width: 768, height: 1024, name: 'tablet' }, { width: 390, height: 844, name: 'mobile' }]) {
   const page = await browser.newPage({ viewport })
   const errors = []
   page.on('pageerror', error => errors.push(error.message))
+  await stubLiveApi(page)
   await page.goto(`${baseUrl}/#dashboard`, { waitUntil: 'domcontentloaded' })
+  await page.locator('.nest-pin').nth(1).waitFor({ timeout: 5000 })
+  if (await page.locator('.nest-pin').count() !== 2) throw new Error(`${viewport.name}: map must draw only the two backend nest rows`)
+  if (await page.locator('.nest-marker-label').allTextContents().then(names => names.join('|')) !== 'NEST-NANCHANG-1|NEST-NANCHANG-2') throw new Error(`${viewport.name}: nest ids did not match the backend rows`)
   await page.getByRole('button', { name: '离线演示' }).click()
+  if (await page.locator('.nest-pin').count()) throw new Error(`${viewport.name}: live nest rows remained after switching to the offline data source`)
   const checkOverflow = async area => {
     if (await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1)) throw new Error(`${viewport.name}: ${area} horizontal overflow`)
   }
@@ -82,6 +97,7 @@ for (const viewport of [{ width: 1440, height: 900, name: 'desktop' }, { width: 
 const live = await browser.newPage()
 const liveErrors = []
 live.on('pageerror', error => liveErrors.push(error.message))
+await stubLiveApi(live)
 await live.goto(`${baseUrl}/#dashboard`, { waitUntil: 'domcontentloaded' })
 await live.getByRole('button', { name: '实时服务' }).click()
 await live.locator('.header-status').getByText('WebSocket 已连接').waitFor({ timeout: 10000 })

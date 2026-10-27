@@ -2,6 +2,19 @@ import { defineStore } from 'pinia'
 import { ORDER_STATES, normalizeOrder, displayEnum } from '../api/adapter'
 
 export const useShipStore = defineStore('ship', { state: () => ({ current: null }), actions: { apply(data) { this.current = data } } })
+export const useNestStore = defineStore('nest', {
+  state: () => ({ items: [], loaded: false, error: '' }),
+  actions: {
+    apply(items) {
+      if (!Array.isArray(items)) throw new Error('GET /api/nests 未返回机巢数组')
+      this.items = items.filter(item => item?.nestId && Number.isFinite(Number(item.lon)) && Number.isFinite(Number(item.lat)))
+      this.loaded = true
+      this.error = ''
+    },
+    fail(error) { this.items = []; this.loaded = true; this.error = error?.message || String(error) },
+    reset() { this.items = []; this.loaded = false; this.error = '' }
+  }
+})
 export const useDroneStore = defineStore('drone', { state: () => ({ current: null, byId: {}, tracks: {} }), actions: { apply(data) {
   if (!data) { this.current = null; this.byId = {}; this.tracks = {}; return }
   if (!Number.isFinite(data.lon) || !Number.isFinite(data.lat)) return

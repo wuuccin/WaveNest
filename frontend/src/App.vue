@@ -12,7 +12,7 @@ import { SCENES } from './realtime/mock'
 import { GUIDE_STAGES, buildLiveGuideSteps, buildOfflineGuideSteps, buildContinueGuideSteps } from './realtime/guided'
 import { buildReplaySteps, droneIdForOrder, normalizeReplayTasks } from './replay/model'
 import { api } from './api/client'
-import { useOrderStore, useShipStore, useDroneStore, useAlertStore, useEventStore } from './stores'
+import { useOrderStore, useShipStore, useDroneStore, useAlertStore, useEventStore, useNestStore } from './stores'
 
 const route = ref(location.hash.slice(1) || 'dashboard')
 const sceneIndex = ref(0)
@@ -41,6 +41,7 @@ const ship = useShipStore()
 const drone = useDroneStore()
 const alerts = useAlertStore()
 const events = useEventStore()
+const nests = useNestStore()
 const connection = realtime.status
 
 const view = computed(() => ['dashboard', 'console', 'crew', 'replay', 'guide'].includes(route.value) ? route.value : 'dashboard')
@@ -93,6 +94,7 @@ const isTerminal = computed(() => ['已完成', '已拒绝', '失败', '异常�
 const progressPercent = computed(() => `${Math.min(100, Math.max(0, Math.round(stageIndex.value / DEMO_STAGES.length * 100)))}%`)
 const clock = ref(new Date().toLocaleTimeString('zh-CN', { hour12: false }))
 let clockTimer
+let nestRequestToken = 0
 
 const onHash = () => {
   const next = location.hash.slice(1) || 'dashboard'
@@ -114,11 +116,13 @@ onMounted(() => {
   if (source.value === 'live') {
     realtime.connect()
     void refreshMonitorTasks().catch(error => { feedback.value = `任务列表读取失败：${error.message}` })
+    void refreshNests()
   } else realtime.resetMock()
 })
 
 onUnmounted(() => {
   guideToken++
+  nestRequestToken++
   window.removeEventListener('hashchange', onHash)
   clearInterval(clockTimer)
   realtime.close()
@@ -187,7 +191,22 @@ function selectSource(next) {
   if (next === 'live') {
     realtime.connect()
     void refreshMonitorTasks().catch(error => { feedback.value = `任务列表读取失败：${error.message}` })
-  } else realtime.resetMock()
+    void refreshNests()
+  } else {
+    nests.reset()
+    realtime.resetMock()
+  }
+}
+
+async function refreshNests() {
+  const requestToken = ++nestRequestToken
+  nests.reset()
+  try {
+    const rows = await api.nests()
+    if (requestToken === nestRequestToken && source.value === 'live') nests.apply(rows)
+  } catch (error) {
+    if (requestToken === nestRequestToken && source.value === 'live') nests.fail(error)
+  }
 }
 
 async function refreshMonitorTasks() {
@@ -473,7 +492,7 @@ async function importRecording(event) {
         <div class="dashboard-section-title"><div><span>实时态势</span><h2>现在运行到哪里</h2></div><p>地图和指标随后端数据更新；点击上方入口执行具体操作。</p></div>
         <section class="metric-strip" aria-label="运行指标"><div><span>当前订单</span><strong>{{ orders.orders.length }}</strong><small>{{ activeCount }} 条进行中</small></div><div><span>已完成任务</span><strong>{{ completedCount }}</strong><small>按后端订单状态统计</small></div><div><span>任务无人机电量</span><strong>{{ battery === null ? '--' : `${battery}%` }}</strong><small>{{ currentTask?.droneId || missionDrone?.uavId || '暂无遥测' }}</small></div><div><span>运行告警</span><strong :class="{ 'value-alert': alerts.items.length }">{{ alerts.items.length }}</strong><small>{{ alerts.items.length ? '请查看事件流' : '当前无告警' }}</small></div></section>
         <section class="dashboard-layout">
-          <section class="map-panel"><div class="panel-head"><div><h2>任务地图</h2><p>船舶预测轨迹、无人机位置与会面点</p></div><div class="map-legend"><span><i class="legend-line ship"></i>船舶</span><span><i class="legend-dot drone"></i>无人机</span><span><i class="legend-target"></i>会面点</span></div></div><MapView :drone-id="currentTask?.droneId || ''"/><div class="map-summary"><div><span>当前船舶</span><strong>{{ ship.current?.shipName || '江运 08' }}</strong></div><div><span>飞行阶段</span><strong>{{ phase }}</strong></div><div><span>会面点</span><strong>{{ meetingLabel }}</strong></div><div><span>数据来源</span><strong>{{ source === 'live' ? '后端实时数据' : '本地演示数据' }}</strong></div></div></section>
+          <section class="map-panel"><div class="panel-head"><div><h2>任务地图</h2><p>船舶预测轨迹、无人机位置与会面点</p></div><div class="map-legend"><span><i class="legend-line ship"></i>船舶</span><span><i class="legend-dot drone"></i>无人机</span><span><i class="legend-target"></i>会面点</span><span v-if="nests.items.length"><i class="legend-nest">⌂</i>后端机巢</span></div></div><MapView :drone-id="currentTask?.droneId || ''"/><div class="map-summary"><div><span>当前船舶</span><strong>{{ ship.current?.shipName || '江运 08' }}</strong></div><div><span>飞行阶段</span><strong>{{ phase }}</strong></div><div><span>会面点</span><strong>{{ meetingLabel }}</strong></div><div><span>数据来源</span><strong>{{ source === 'live' ? '后端实时数据' : '本地演示数据' }}</strong></div></div></section>
           <aside class="mission-column"><section class="mission-panel"><div class="panel-head compact"><div><h2>当前任务</h2><p>{{ current?.orderId || '暂无订单' }}</p></div><span class="state-chip" :class="{ success: isTerminal && current?.orderStatus === '已完成', danger: ['失败', '异常终止'].includes(current?.orderStatus) }">{{ current?.orderStatus || '等待任务' }}</span></div><template v-if="showDemoProgress"><div class="mission-progress"><div class="progress-head"><span>演示步骤</span><strong>{{ stageIndex }} / {{ DEMO_STAGES.length }}</strong></div><div class="progress-track"><span :style="{ width: progressPercent }"></span></div></div><ol class="stage-list"><li v-for="(stage, index) in DEMO_STAGES" :key="stage" :class="stageClass(index)"><span class="stage-number">{{ index + 1 }}</span><span>{{ stage }}</span><b v-if="index < stageIndex">完成</b><b v-else-if="index === stageIndex - 1">进行中</b></li></ol></template><div v-else class="live-order-summary"><span>后端订单状态</span><strong>{{ current?.orderStatus || '暂无订单' }}</strong><p>{{ current ? '完整状态变化请到调度台查看。' : '从“船员下单”创建订单，或开始完整演示。' }}</p></div><div class="mission-facts"><div><span>无人机</span><strong>{{ currentTask?.droneId || missionDrone?.uavId || '待分配' }}</strong></div><div><span>电量</span><strong>{{ battery === null ? '--' : `${battery}%` }}</strong></div><div><span>会面点</span><strong>{{ orders.rendezvous?.locked ? '已锁定' : '尚未锁定' }}</strong></div><div><span>{{ showDemoProgress ? '演示阶段' : '订单状态' }}</span><strong>{{ showDemoProgress ? stageTitle : (current?.orderStatus || '待开始') }}</strong></div></div><button class="button-secondary full-button" @click="go('console')">打开调度台</button></section><details class="dashboard-events"><summary>查看最新事件</summary><EventStream /></details></aside>
         </section>
         <section class="demo-panel"><div class="demo-copy"><p class="section-kicker">讲解式仿真</p><h2>先亲手下单，再选择变向后的处理</h2><p>船舶变向后，先重新评估会面方案。你可以选择原机继续配送，或放弃本次会面并带货返航；两种选择会显示不同航线，每一步都由你手动推进。</p></div><div class="demo-actions"><button class="button-primary" @click="startGuide">开始分步演示 →</button><button class="button-quiet" @click="enterReplay">查看已有任务回放</button></div><details class="demo-tools"><summary>录屏、导出与导入回放</summary><div><span>演示流程：下单 → 预计会面 → 去程 → 船舶变向 → 选择处理方式 → 查看对应航线与后续步骤</span><button class="text-button" @click="screenRecording ? stopScreenRecording() : startScreenRecording()">{{ screenRecording ? '停止录屏' : '录制当前页面' }}</button><button class="text-button" @click="exportRecording">导出回放</button><label class="text-button">导入回放<input type="file" accept="application/json" @change="importRecording"></label></div></details></section>

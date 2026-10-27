@@ -2,6 +2,7 @@ import { chromium } from 'playwright'
 
 const browser = await chromium.launch({ headless: true, ...(process.env.BROWSER_PATH ? { executablePath: process.env.BROWSER_PATH } : {}) })
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+await page.addInitScript(() => localStorage.setItem('wavenest-source', 'mock'))
 await page.goto(`${process.env.FRONTEND_URL || 'http://127.0.0.1:5173'}/#dashboard`, { waitUntil: 'domcontentloaded' })
 await page.getByRole('button', { name: '离线演示' }).click()
 console.log('dashboard blocks:', await page.evaluate(() => Object.fromEntries(['.page-heading', '.operations-hero', '.workflow-grid', '.metric-strip', '.dashboard-layout', '.dashboard-layout .map-panel', '.mission-column', '.mission-panel', '.mission-column .event-panel', '.demo-panel'].map(selector => {
