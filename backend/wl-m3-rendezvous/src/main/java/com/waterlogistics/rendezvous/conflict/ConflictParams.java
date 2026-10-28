@@ -31,13 +31,13 @@ public record ConflictParams(
 
     @SuppressWarnings("MissingJavadoc")
     public ConflictParams {
-        if (!Double.isFinite(horizontalSepM) || horizontalSepM <= 0.0 || horizontalSepM > MAX_HORIZONTAL_SEP_M) {
-            throw new IllegalArgumentException("horizontalSepM 须在 (0, " + MAX_HORIZONTAL_SEP_M + "] 米内，实际 "
-                    + horizontalSepM);
+        if (!Double.isFinite(horizontalSepM) || horizontalSepM <= 0.0 || horizontalSepM > ConflictParams.MAX_HORIZONTAL_SEP_M) {
+            throw new IllegalArgumentException("horizontalSepM 须在 (0, " + ConflictParams.MAX_HORIZONTAL_SEP_M + "] 米内，实际 "
+                                                       + horizontalSepM);
         }
-        if (!Double.isFinite(verticalSepM) || verticalSepM <= 0.0 || verticalSepM > MAX_VERTICAL_SEP_M) {
-            throw new IllegalArgumentException("verticalSepM 须在 (0, " + MAX_VERTICAL_SEP_M + "] 米内，实际 "
-                    + verticalSepM);
+        if (!Double.isFinite(verticalSepM) || verticalSepM <= 0.0 || verticalSepM > ConflictParams.MAX_VERTICAL_SEP_M) {
+            throw new IllegalArgumentException("verticalSepM 须在 (0, " + ConflictParams.MAX_VERTICAL_SEP_M + "] 米内，实际 "
+                                                       + verticalSepM);
         }
         if (sampleStepMs < ConflictParams.MIN_SAMPLE_STEP_MS || sampleStepMs > ConflictParams.MAX_SAMPLE_STEP_MS) {
             throw new IllegalArgumentException("采样步长须在 [" + ConflictParams.MIN_SAMPLE_STEP_MS + ", "

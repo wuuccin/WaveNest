@@ -62,6 +62,13 @@ public record GenerateRouteCommand(
 
     static final int MAX_WAYPOINT_COUNT = 512;
 
+    /**
+     * 航迹速度下限（m/s）——单段与三段命令共用，防极低速导致航段时长不可控
+     */
+    static final double MIN_SPEED_MS = 0.1;
+
+    static final double MAX_SPEED_MS = 100.0;
+
     private static final int MAX_ANNOTATION_IDS = 512;
 
     /** 起点时刻上界：2100-01-01T00:00:00Z，为防止后续时刻加法溢出 */
@@ -121,10 +128,10 @@ public record GenerateRouteCommand(
         if (startMs <= 0L || startMs > GenerateRouteCommand.MAX_START_MS) {
             throw new IllegalArgumentException("起点时刻须为正且不晚于 2100-01-01T00:00:00Z，实际 " + startMs);
         }
-        if (!Double.isFinite(speedMs) || speedMs < MissionTrackCommand.MIN_SPEED_MS
-                || speedMs > MissionTrackCommand.MAX_SPEED_MS) {
-            throw new IllegalArgumentException("速度须在 [" + MissionTrackCommand.MIN_SPEED_MS + ", "
-                    + MissionTrackCommand.MAX_SPEED_MS + "] m/s 内，实际 " + speedMs);
+        if (!Double.isFinite(speedMs) || speedMs < GenerateRouteCommand.MIN_SPEED_MS
+                || speedMs > GenerateRouteCommand.MAX_SPEED_MS) {
+            throw new IllegalArgumentException("速度须在 [" + GenerateRouteCommand.MIN_SPEED_MS + ", "
+                                                       + GenerateRouteCommand.MAX_SPEED_MS + "] m/s 内，实际 " + speedMs);
         }
         if (!Double.isFinite(cruiseAltM) || cruiseAltM <= 0.0) {
             throw new IllegalArgumentException("巡航高度必须为正的有限数，实际 " + cruiseAltM);

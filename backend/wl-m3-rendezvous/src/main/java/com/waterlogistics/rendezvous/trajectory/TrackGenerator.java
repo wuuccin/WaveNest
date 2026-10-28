@@ -34,6 +34,10 @@ public final class TrackGenerator {
     /** 航迹生成内核版本：生成规则变化时必须递增，否则同输入的 routeVersion 不会更新 */
     private static final String ALGORITHM_VERSION = "track-gen-v1";
 
+
+
+
+
     private TrackGenerator() {
     }
 
@@ -170,12 +174,12 @@ public final class TrackGenerator {
         // 段边界点只保留一次：拼接前先确认相邻两段的边界点确实一致，防未来改动静默丢点
         Waypoint outboundEnd = outbound.waypoints().get(outbound.waypoints().size() - 1);
         Waypoint terminalStart = terminal.waypoints().get(0);
-        if (!sameBoundary(outboundEnd, terminalStart)) {
+        if (TrackGenerator.isBoundaryMismatch(outboundEnd, terminalStart)) {
             throw new IllegalStateException("段边界航点不一致：末段首点应等于去程末点");
         }
         Waypoint terminalEnd = terminal.waypoints().get(terminal.waypoints().size() - 1);
         Waypoint returnStart = returning.waypoints().get(0);
-        if (!sameBoundary(terminalEnd, returnStart)) {
+        if (TrackGenerator.isBoundaryMismatch(terminalEnd, returnStart)) {
             throw new IllegalStateException("段边界航点不一致：返程首点应等于末段末点");
         }
         List<SegmentedWaypoint> points = new ArrayList<>(cmd.waypointsPerLeg() * 3 - 2);
@@ -230,13 +234,17 @@ public final class TrackGenerator {
 
 
 
-    private static boolean sameBoundary(Waypoint left, Waypoint right) {
+    private static boolean isBoundaryMismatch(Waypoint left, Waypoint right) {
         // 末端速度允许按段切换，不参与边界一致性；坐标按微度级容差比较
-        return left.t() == right.t()
-                && Math.abs(left.lon() - right.lon()) <= 1e-9
-                && Math.abs(left.lat() - right.lat()) <= 1e-9
-                && Math.abs(left.altM() - right.altM()) <= 1e-6;
+        return left.t() != right.t()
+                || Math.abs(left.lon() - right.lon()) > 1e-9
+                || Math.abs(left.lat() - right.lat()) > 1e-9
+                || Math.abs(left.altM() - right.altM()) > 1e-6;
     }
+
+
+
+
 
     /**
      * 长度前缀写入，避免分隔符或列表文本串位导致指纹碰撞

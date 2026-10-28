@@ -81,7 +81,7 @@ public class RendezvousRecalcService {
         long snapshotEndT = snapshot.points().get(snapshot.points().size() - 1).t();
         if (state.shipStateT() < snapshotStartT || state.shipStateT() > snapshotEndT) {
             throw new IllegalArgumentException("船状态时刻超出快照覆盖范围，实际 shipStateT="
-                    + state.shipStateT() + ", 快照区间=[" + snapshotStartT + ", " + snapshotEndT + "]");
+                                                       + state.shipStateT() + ", 快照区间=[" + snapshotStartT + ", " + snapshotEndT + "]");
         }
         if (options.deadlineMs() < state.shipStateT()) {
             throw new IllegalArgumentException("最晚会面时刻不得早于船状态时刻，实际 deadlineMs="

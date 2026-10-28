@@ -87,7 +87,7 @@ public record RendezvousCommand(
         if (meetWindowMarginSec < 0
                 || meetWindowMarginSec > RendezvousSolveRequest.MAX_WINDOW_MARGIN_SEC) {
             throw new IllegalArgumentException("会面时间窗余量须在 [0, "
-                    + RendezvousSolveRequest.MAX_WINDOW_MARGIN_SEC + "] 秒内，实际 " + meetWindowMarginSec);
+                                                       + RendezvousSolveRequest.MAX_WINDOW_MARGIN_SEC + "] 秒内，实际 " + meetWindowMarginSec);
         }
         if (nowMs < EpochMillis.MIN_VALID_MS) {
             throw new IllegalArgumentException("求解起点须为 Unix 毫秒值，实际 " + nowMs);
@@ -100,7 +100,7 @@ public record RendezvousCommand(
         }
         if (convergeEpsilonSec * 1000.0 * 1000.0 >= (double) (deadlineMs - nowMs)) {
             throw new IllegalArgumentException("收敛阈值须小于求解时域的千分之一，实际 epsilonSec="
-                    + convergeEpsilonSec + ", 时域毫秒=" + (deadlineMs - nowMs));
+                                                       + convergeEpsilonSec + ", 时域毫秒=" + (deadlineMs - nowMs));
         }
         if (maxIterations <= 0 || maxIterations > RendezvousSolveRequest.MAX_ITERATIONS) {
             throw new IllegalArgumentException(

@@ -39,20 +39,24 @@ public enum TrackSegment {
 
 
 
-    TrackSegment(String value) {
+    TrackSegment(CharSequence value) {
         String normalized = WireText.normalizeToken(value);
         if (normalized == null || normalized.isEmpty()) {
-            throw new IllegalArgumentException("航迹分段口径词不能为空：" + name());
+            throw new IllegalArgumentException("航迹分段口径词不能为空：" + this.name());
         }
         this.value = normalized;
     }
+
+
+
+
 
     /**
      * 固定排序秩，与声明顺序解耦，供分段拼接校验使用。
      *
      * @return 去程 0、末段交接 1、返程 2
      */
-    public int rank() {
+    int rank() {
         return switch (this) {
             case OUTBOUND -> 0;
             case TERMINAL -> 1;
@@ -72,7 +76,7 @@ public enum TrackSegment {
      * @return 对应的航迹分段
      * @throws IllegalArgumentException 入参为空/空白或无匹配口径词
      */
-    public static TrackSegment fromValue(String value) {
+    public static TrackSegment fromValue(CharSequence value) {
         if (value == null) {
             throw new IllegalArgumentException("航迹分段不能为空");
         }
