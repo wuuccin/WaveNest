@@ -1,6 +1,7 @@
 package com.waterlogistics.rendezvous.trajectory;
 
 import com.waterlogistics.algo.meeting.GeoApprox;
+
 import java.util.Objects;
 
 
@@ -78,10 +79,6 @@ public record MissionTrackCommand(
 
     private static final double MAX_ALT_M = 10_000.0;
 
-    static final double MIN_SPEED_MS = 0.1;
-
-    static final double MAX_SPEED_MS = 100.0;
-
 
 
 
@@ -115,7 +112,7 @@ public record MissionTrackCommand(
                 || cruiseAltM < MissionTrackCommand.MIN_ALT_M
                 || cruiseAltM > MissionTrackCommand.MAX_ALT_M) {
             throw new IllegalArgumentException("巡航高度须在 [" + MissionTrackCommand.MIN_ALT_M + ", "
-                    + MissionTrackCommand.MAX_ALT_M + "] m 内，实际 " + cruiseAltM);
+                                                       + MissionTrackCommand.MAX_ALT_M + "] m 内，实际 " + cruiseAltM);
         }
         if (waypointsPerLeg < 2 || waypointsPerLeg > GenerateRouteCommand.MAX_WAYPOINT_COUNT) {
             throw new IllegalArgumentException(
@@ -123,12 +120,12 @@ public record MissionTrackCommand(
         }
         if (!Double.isFinite(outboundSpeedMs) || !Double.isFinite(terminalSpeedMs)
                 || !Double.isFinite(returnSpeedMs)
-                || outboundSpeedMs < MissionTrackCommand.MIN_SPEED_MS || terminalSpeedMs < MissionTrackCommand.MIN_SPEED_MS
-                || returnSpeedMs < MissionTrackCommand.MIN_SPEED_MS
-                || outboundSpeedMs > MissionTrackCommand.MAX_SPEED_MS || terminalSpeedMs > MissionTrackCommand.MAX_SPEED_MS
-                || returnSpeedMs > MissionTrackCommand.MAX_SPEED_MS) {
+                || outboundSpeedMs < GenerateRouteCommand.MIN_SPEED_MS || terminalSpeedMs < GenerateRouteCommand.MIN_SPEED_MS
+                || returnSpeedMs < GenerateRouteCommand.MIN_SPEED_MS
+                || outboundSpeedMs > GenerateRouteCommand.MAX_SPEED_MS || terminalSpeedMs > GenerateRouteCommand.MAX_SPEED_MS
+                || returnSpeedMs > GenerateRouteCommand.MAX_SPEED_MS) {
             throw new IllegalArgumentException(
-                    "各段速度须在 [" + MissionTrackCommand.MIN_SPEED_MS + ", " + MissionTrackCommand.MAX_SPEED_MS
+                    "各段速度须在 [" + GenerateRouteCommand.MIN_SPEED_MS + ", " + GenerateRouteCommand.MAX_SPEED_MS
                             + "] m/s 且为有限数，实际 outboundSpeedMs=" + outboundSpeedMs
                             + ", terminalSpeedMs=" + terminalSpeedMs + ", returnSpeedMs=" + returnSpeedMs);
         }
@@ -145,7 +142,7 @@ public record MissionTrackCommand(
         if (!Double.isFinite(totalSec)
                 || totalMs > MissionTrackCommand.MAX_EPOCH_MS - takeoffMs) {
             throw new IllegalArgumentException("三段航程累计结束时刻超出合理纪元上界，实际起飞时刻 " + takeoffMs
-                    + "、累计时长秒 " + totalSec);
+                                                       + "、累计时长秒 " + totalSec);
         }
     }
 

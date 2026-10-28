@@ -45,10 +45,10 @@ public enum HandoverPhase {
 
 
 
-    HandoverPhase(String value) {
+    HandoverPhase(CharSequence value) {
         String normalized = WireText.normalizeToken(value);
         if (normalized == null || normalized.isEmpty()) {
-            throw new IllegalArgumentException("末段子阶段口径词不能为空：" + name());
+            throw new IllegalArgumentException("末段子阶段口径词不能为空：" + this.name());
         }
         this.value = normalized;
     }
@@ -64,7 +64,7 @@ public enum HandoverPhase {
      * @return 对应的末段子阶段
      * @throws IllegalArgumentException 入参为空/空白或无匹配口径词
      */
-    public static HandoverPhase fromValue(String value) {
+    public static HandoverPhase fromValue(CharSequence value) {
         if (value == null) {
             throw new IllegalArgumentException("末段子阶段不能为空");
         }

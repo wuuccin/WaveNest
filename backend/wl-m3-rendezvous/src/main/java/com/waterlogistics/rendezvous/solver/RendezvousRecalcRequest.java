@@ -3,6 +3,7 @@ package com.waterlogistics.rendezvous.solver;
 import com.waterlogistics.algo.meeting.model.EpochMillis;
 
 import com.waterlogistics.rendezvous.support.WireText;
+
 import java.util.Objects;
 import java.util.regex.Pattern;
 
@@ -59,6 +60,7 @@ public record RendezvousRecalcRequest(
     private static final int MAX_ID_LENGTH = 64;
 
     private static final int MAX_REASON_LENGTH = 256;
+    private static final Pattern PATTERN = Pattern.compile("^[\\p{Z}\\s]+|[\\p{Z}\\s]+$");
 
 
 
@@ -70,45 +72,66 @@ public record RendezvousRecalcRequest(
         Objects.requireNonNull(snapshotVersion, "snapshotVersion 不能为空");
         Objects.requireNonNull(shipMmsi, "shipMmsi 不能为空");
         Objects.requireNonNull(stateSnapshot, "stateSnapshot 不能为空");
-        requestId = safeIdentifier(trimSpaces(requestId), "requestId", MAX_ID_LENGTH);
-        droneId = safeIdentifier(trimSpaces(droneId), "droneId", MAX_ID_LENGTH);
-        snapshotVersion = safeIdentifier(trimSpaces(snapshotVersion), "snapshotVersion", MAX_ID_LENGTH);
-        shipMmsi = trimSpaces(shipMmsi);
-        orderId = blankToNull(orderId);
-        triggerReason = blankToNull(triggerReason);
+        requestId = RendezvousRecalcRequest.safeIdentifier(
+                RendezvousRecalcRequest.trimSpaces(requestId),
+                "requestId",
+                RendezvousRecalcRequest.MAX_ID_LENGTH);
+        droneId = RendezvousRecalcRequest.safeIdentifier(
+                RendezvousRecalcRequest.trimSpaces(droneId),
+                "droneId",
+                RendezvousRecalcRequest.MAX_ID_LENGTH);
+        snapshotVersion = RendezvousRecalcRequest.safeIdentifier(
+                RendezvousRecalcRequest.trimSpaces(snapshotVersion),
+                "snapshotVersion",
+                RendezvousRecalcRequest.MAX_ID_LENGTH);
+        shipMmsi = RendezvousRecalcRequest.trimSpaces(shipMmsi);
+        orderId = RendezvousRecalcRequest.blankToNull(orderId);
+        triggerReason = RendezvousRecalcRequest.blankToNull(triggerReason);
         if (requestId.isEmpty() || droneId.isEmpty() || snapshotVersion.isEmpty()) {
             throw new IllegalArgumentException("requestId/droneId/snapshotVersion 不能为空白字符串");
         }
         if (orderId != null) {
-            safeIdentifier(orderId, "orderId", MAX_ID_LENGTH);
+            RendezvousRecalcRequest.safeIdentifier(orderId, "orderId", RendezvousRecalcRequest.MAX_ID_LENGTH);
         }
         if (triggerReason != null) {
-            safeIdentifier(triggerReason, "triggerReason", MAX_REASON_LENGTH);
+            RendezvousRecalcRequest.safeIdentifier(triggerReason, "triggerReason", RendezvousRecalcRequest.MAX_REASON_LENGTH);
         }
-        if (!MMSI_PATTERN.matcher(shipMmsi).matches()) {
+        if (!RendezvousRecalcRequest.MMSI_PATTERN.matcher(shipMmsi).matches()) {
             throw new IllegalArgumentException("shipMmsi 须为 9 位数字，实际长度 " + shipMmsi.length()
-                    + "，值 '" + WireText.escapeForLog(shipMmsi) + "'");
+                                                       + "，值 '" + WireText.escapeForLog(shipMmsi) + "'");
         }
         if (!EpochMillis.isValid(timestamp)) {
             throw new IllegalArgumentException("请求时刻须为 Unix 毫秒值（范围 ["
-                    + EpochMillis.MIN_VALID_MS + ", " + EpochMillis.MAX_VALID_MS + "]），实际 " + timestamp);
+                                                       + EpochMillis.MIN_VALID_MS + ", " + EpochMillis.MAX_VALID_MS + "]），实际 " + timestamp);
         }
     }
 
-    private static String blankToNull(String value) {
-        String stripped = trimSpaces(value);
+
+
+
+
+    private static String blankToNull(CharSequence value) {
+        String stripped = RendezvousRecalcRequest.trimSpaces(value);
         return stripped == null || stripped.isEmpty() ? null : stripped;
     }
 
-    private static String trimSpaces(String value) {
+
+
+
+
+    private static String trimSpaces(CharSequence value) {
         if (value == null) {
             return null;
         }
-        return value.replaceAll("^[\\p{Z}\\s]+|[\\p{Z}\\s]+$", "");
+        return RendezvousRecalcRequest.PATTERN.matcher(value).replaceAll("");
     }
 
+
+
+
+
     private static String safeIdentifier(String value, String field, int maxLength) {
-        if (value.length() > maxLength || UNSAFE.matcher(value).find()) {
+        if (value.length() > maxLength || RendezvousRecalcRequest.UNSAFE.matcher(value).find()) {
             throw new IllegalArgumentException(field + " 非法：长度或字符不在允许范围内");
         }
         return value;

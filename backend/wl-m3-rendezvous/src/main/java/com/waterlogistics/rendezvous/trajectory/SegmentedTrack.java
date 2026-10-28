@@ -18,6 +18,7 @@ public record SegmentedTrack(
 
         List<SegmentedWaypoint> points) {
 
+    @SuppressWarnings("DataFlowIssue")
     public SegmentedTrack {
         Objects.requireNonNull(points, "points 不能为空");
         for (SegmentedWaypoint point : points) {
