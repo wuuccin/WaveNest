@@ -25,9 +25,9 @@ public final class FieldInjector {
         String cls = target.getClass().getSimpleName();
         switch (cls) {
             case "SimAisConnector" -> {
-                set(target, "startLon", 115.861000);   // 南昌段朝阳端
-                set(target, "startLat", 28.664000);
-                set(target, "startCog", 21.0);         // 朝阳端 → 八一端方位角（朝上游）
+                set(target, "startLon", 115.863000);   // 序号 2 放样定稿的船舶起点
+                set(target, "startLat", 28.668000);
+                set(target, "startCog", 6.7);          // 船起点 → 北巢（上游）方位角
                 set(target, "sogKnots", 8.0);
                 set(target, "shipName", "SIM-SHIP-01");
                 set(target, "mmsi", "123456789");
@@ -36,17 +36,17 @@ public final class FieldInjector {
             }
             case "SimUavTelemetryConnector" -> {
                 set(target, "uavCount", 4);
-                set(target, "centerLon", 115.868500);  // 航段中点
-                set(target, "centerLat", 28.681500);
+                set(target, "centerLon", 115.857500);  // 两机巢连线中点
+                set(target, "centerLat", 28.670000);
                 set(target, "radiusDeg", 0.0020);
                 set(target, "phaseStep", 0.054);       // 222 m × 0.054 ≈ 12 m/s，与 speed-ms 自洽
                 set(target, "speedMs", 12.0);
                 set(target, "noise", 1e-9);
             }
             case "SimWeatherConnector" -> {
-                set(target, "lon0", 115.850000);       // 网格随航段一起挪
-                set(target, "lat0", 28.658000);
-                set(target, "step", 0.044000);
+                set(target, "lon0", 115.840000);       // 网格随定稿航段一起挪
+                set(target, "lat0", 28.640000);
+                set(target, "step", 0.058000);
                 set(target, "grid", 2);
                 set(target, "windBase", 5.0);
                 set(target, "gustAdd", 3.0);

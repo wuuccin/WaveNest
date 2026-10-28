@@ -22,14 +22,27 @@ public class SimAisConnector implements DataSourceConnector {
 
     private final MqDataPublisher publisher;
 
-    /** 起始经度（十进制度）——南昌段朝阳端（航段西南端，1 号巢一带） */
-    @Value("${wavenest.sim.ais.start-lon:115.861000}")
+    /**
+     * 起始经度（十进制度）——序号 2 图上放样定稿的船舶起点（2026-10-28）。
+     *
+     * <p>定稿来源：彭紫情 T2-2 报备，南端机巢 (115.848, 28.642)、北端机巢 (115.867, 28.698)、
+     * 船起点 (115.863, 28.668)。船起点位于两巢连线中点附近（垂距 578 m，在江面中央），
+     * 距南巢 3.24 km、北巢 3.36 km——「最近机巢」判据在两巢间有真实分叉，不是恒定选同一个。
+     *
+     * <p>原值 115.861000 是 T1-4 按旧航段估的，与定稿差 486 m。
+     */
+    @Value("${wavenest.sim.ais.start-lon:115.863000}")
     private double startLon;
-    /** 起始纬度（十进制度）——南昌段朝阳端 */
-    @Value("${wavenest.sim.ais.start-lat:28.664000}")
+    /** 起始纬度（十进制度）——定稿船舶起点 */
+    @Value("${wavenest.sim.ais.start-lat:28.668000}")
     private double startLat;
-    /** 初始航向（度，正北为 0 顺时针）——朝阳端 → 八一端方位角约 21°（朝上游） */
-    @Value("${wavenest.sim.ais.start-cog:21.0}")
+    /**
+     * 初始航向（度，正北为 0 顺时针）——朝上游（八一方向）。
+     *
+     * <p>定稿后船起点→北巢（上游机巢）方位角为 6.7°，故由 21° 收窄到 6.7°。
+     * 沿用 21° 会让船在 5 km 航程上偏出航段约 1.3 km，落到东岸。
+     */
+    @Value("${wavenest.sim.ais.start-cog:6.7}")
     private double startCog;
     /** 航速（节） */
     @Value("${wavenest.sim.ais.sog-knots:8.0}")

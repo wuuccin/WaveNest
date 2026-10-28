@@ -7,17 +7,17 @@ wavenest:
     enabled: true          # 联调期可改 false 停发数据
     tick-millis: 1000      # 采集节拍（AIS 推进步长与它同键，改一处即同步）
     ais:
-      start-lon: 115.861000     # 南昌段朝阳端（航段西南端）
-      start-lat: 28.664000
-      start-cog: 21.0      # 初始航向（朝阳端 → 八一端，朝上游）
+      start-lon: 115.863000     # 放样定稿船起点（2026-10-28 序号 2）
+      start-lat: 28.668000
+      start-cog: 6.7       # 初始航向（船起点 → 北巢，朝上游）
       sog-knots: 8.0
       ship-name: SIM-SHIP-01
       mmsi: "123456789"
       noise: 0.00005
     uav:
       count: 4
-      center-lon: 115.868500    # 航段中点
-      center-lat: 28.681500
+      center-lon: 115.857500    # 两机巢连线中点
+      center-lat: 28.670000
       radius-deg: 0.0020        # ≈222 m，不出江面
       # 相位步进须与 speed-ms 自洽：半径约 222 m 时，弧长速度 ≈ radius × step。
       # 历史教训：原值 0.35 → 实际位移约 108 m/s，而上报 speed-ms 只有 12，
@@ -27,9 +27,9 @@ wavenest:
       speed-ms: 12.0
       noise: 0.00002
     weather:
-      lon0: 115.850000          # 网格随航段一起挪
-      lat0: 28.658000
-      step: 0.044000
+      lon0: 115.840000          # 网格随定稿航段一起挪
+      lat0: 28.640000
+      step: 0.058000            # 罩住南北两巢（航段南北跨 0.056°）
       grid: 2              # 2x2 网格＝每节拍发 4 条（多条发布，U-05 口径）
       wind-base: 5.0
       gust-add: 3.0

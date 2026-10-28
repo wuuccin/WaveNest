@@ -62,8 +62,8 @@ class SimUavTelemetryConnectorTest {
         sim.pollOnce(1_000L);
         UavTelemetry m = publisher.telemetry().get(0);
 
-        double dLon = m.lon() - 115.868500;
-        double dLat = m.lat() - 28.681500;
+        double dLon = m.lon() - 115.857500;
+        double dLat = m.lat() - 28.670000;
         double distDeg = Math.hypot(dLon, dLat);
         assertEquals(0.0020, distDeg, 1e-6, "应落在半径 0.002° 的圆上");
     }
