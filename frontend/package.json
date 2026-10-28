@@ -8,7 +8,8 @@
     "dev": "vite --host 127.0.0.1 --port 5173",
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1 --port 4173",
-    "test:replay": "node tests/replay-model.mjs && node tests/replay-browser.mjs"
+    "test:replay": "node tests/replay-model.mjs && node tests/replay-browser.mjs",
+    "test:map": "node tests/map-coordinates.mjs && node tests/map-debug-tool.mjs && node tests/map-display.mjs"
   },
   "dependencies": {
     "echarts": "6.1.0",

@@ -12,7 +12,7 @@ import { SCENES } from './realtime/mock'
 import { GUIDE_STAGES, buildLiveGuideSteps, buildOfflineGuideSteps, buildContinueGuideSteps } from './realtime/guided'
 import { buildReplaySteps, droneIdForOrder, normalizeReplayTasks } from './replay/model'
 import { api } from './api/client'
-import { useOrderStore, useShipStore, useDroneStore, useAlertStore, useEventStore, useNestStore } from './stores'
+import { useOrderStore, useShipStore, useDroneStore, useAlertStore, useEventStore, useNestStore, useFleetStore, useAirspaceStore } from './stores'
 
 const route = ref(location.hash.slice(1) || 'dashboard')
 const sceneIndex = ref(0)
@@ -42,6 +42,8 @@ const drone = useDroneStore()
 const alerts = useAlertStore()
 const events = useEventStore()
 const nests = useNestStore()
+const fleet = useFleetStore()
+const airspace = useAirspaceStore()
 const connection = realtime.status
 
 const view = computed(() => ['dashboard', 'console', 'crew', 'replay', 'guide'].includes(route.value) ? route.value : 'dashboard')
@@ -95,6 +97,7 @@ const progressPercent = computed(() => `${Math.min(100, Math.max(0, Math.round(s
 const clock = ref(new Date().toLocaleTimeString('zh-CN', { hour12: false }))
 let clockTimer
 let nestRequestToken = 0
+let staticRefreshTimer
 
 const onHash = () => {
   const next = location.hash.slice(1) || 'dashboard'
@@ -116,7 +119,8 @@ onMounted(() => {
   if (source.value === 'live') {
     realtime.connect()
     void refreshMonitorTasks().catch(error => { feedback.value = `任务列表读取失败：${error.message}` })
-    void refreshNests()
+    void refreshStaticMapData()
+    staticRefreshTimer = setInterval(() => { void refreshStaticMapData() }, 5000)
   } else realtime.resetMock()
 })
 
@@ -125,6 +129,7 @@ onUnmounted(() => {
   nestRequestToken++
   window.removeEventListener('hashchange', onHash)
   clearInterval(clockTimer)
+  clearInterval(staticRefreshTimer)
   realtime.close()
   stopScreenRecording()
 })
@@ -191,21 +196,33 @@ function selectSource(next) {
   if (next === 'live') {
     realtime.connect()
     void refreshMonitorTasks().catch(error => { feedback.value = `任务列表读取失败：${error.message}` })
-    void refreshNests()
+    void refreshStaticMapData()
+    clearInterval(staticRefreshTimer)
+    staticRefreshTimer = setInterval(() => { void refreshStaticMapData() }, 5000)
   } else {
     nests.reset()
+    fleet.reset()
+    airspace.reset()
+    clearInterval(staticRefreshTimer)
     realtime.resetMock()
   }
 }
 
-async function refreshNests() {
+async function refreshStaticMapData() {
   const requestToken = ++nestRequestToken
-  nests.reset()
   try {
-    const rows = await api.nests()
-    if (requestToken === nestRequestToken && source.value === 'live') nests.apply(rows)
+    const [nestRows, droneRows, airspaceRows] = await Promise.all([api.nests(), api.drones(), api.airspace()])
+    if (requestToken === nestRequestToken && source.value === 'live') {
+      nests.apply(nestRows)
+      fleet.apply(droneRows)
+      airspace.apply(airspaceRows)
+    }
   } catch (error) {
-    if (requestToken === nestRequestToken && source.value === 'live') nests.fail(error)
+    if (requestToken === nestRequestToken && source.value === 'live') {
+      nests.fail(error)
+      fleet.fail(error)
+      airspace.fail(error)
+    }
   }
 }
 
