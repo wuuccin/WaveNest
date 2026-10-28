@@ -12,6 +12,11 @@ spring:
   # 个人本地覆盖：端口/口令/profile 等差异化配置写在这里，本文件已被 .gitignore 忽略，
   # 每个人各有一份、永不入库；不存在时 skip，不影响 clone 即跑。
   # 两条路径分别对应「仓库根目录启动」与「wl-app 模块目录启动（bootRun）」两种习惯。
+  #
+  # ★ 注意：下面两条 import 不看 profile，是「存在即无条件加载」并会覆盖本文件的同名键。
+  #   所以业务参数（尤其 wavenest.m2.prediction.bbox.*）一律不要写进 application-local.yml，
+  #   否则本文件改了什么都会被本机悄悄盖掉，端到端验证会在旧值上跑而不自知
+  #   （2026-10-27 T1-8 本地验证即如此：日志打印的框与仓库存量值不一致）。只在本地放端口/口令。
   config:
     import:
       - optional:file:./application-local.yml
@@ -50,6 +55,22 @@ wavenest:
     enabled: ${MQTT_ENABLED:false}
     host: ${MQTT_HOST:127.0.0.1}
     port: ${MQTT_PORT:1883}
+
+  m2:
+    prediction:
+      # T2-6 预测校验框定稿（全仓唯一装配配置）。
+      # 零点＝《73-赣江场景说明》§3.1 的服务航段：朝阳大桥 28.646/115.852 → 八一大桥 28.692/115.879。
+      # 船起点定稿 115.863/28.668（T2-2 图上放样，T2-7 在 m1 仿真器侧生效）。
+      # 不做四向对称：预测沿航向单向前伸，horizonSec=1800 s × 8 节 ⇒ 尾巴比船头远 7.408 km，
+      # 而航段全长仅 5.78 km，故只在航向侧（东北）留一个时域行程，西南侧只罩住起点＋噪声。
+      # 东北界取两条航向的包络（航段方位角 27.24° 与仿真器当前默认 21°）后再留 0.5 km 缓冲；
+      # 西南界按旧起点 115.861/28.664 下留一档，保证 T2-7 未合并时链路也不被拦。
+      # 四个值必须与 PredictionBboxNanchangSegmentTest 的常量同值（该类有强制守卫）。
+      bbox:
+        min-lon: 115.857
+        max-lon: 115.921
+        min-lat: 28.660
+        max-lat: 28.767
 
 logging:
   level:
