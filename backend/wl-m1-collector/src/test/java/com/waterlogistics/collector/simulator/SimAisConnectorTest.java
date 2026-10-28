@@ -31,7 +31,7 @@ class SimAisConnectorTest {
     }
 
     @Test
-    @DisplayName("节拍推进：每 tick 发一条，初始航向 21°（朝阳→八一）时经纬度均增大")
+    @DisplayName("节拍推进：每 tick 发一条，初始航向 6.7°（船起点→北巢/上游）时经纬度均增大")
     void advancesAlongHeading() {
         sim.pollOnce(1_000L);
         sim.pollOnce(2_000L);
@@ -41,9 +41,9 @@ class SimAisConnectorTest {
         AisMessage first = sent.get(0);
         AisMessage second = sent.get(1);
 
-        assertEquals(21.0, first.cog(), 1e-9);
-        assertTrue(first.lon() > 115.861000, "向东北偏北（朝八一方向）经度应增大");
-        assertTrue(first.lat() > 28.664000, "向北航向纬度应增大");
+        assertEquals(6.7, first.cog(), 1e-9);
+        assertTrue(first.lon() > 115.863000, "向东北偏北（朝北巢/上游）经度应增大");
+        assertTrue(first.lat() > 28.668000, "向北航向纬度应增大");
         assertTrue(second.lon() > first.lon(), "第二个节拍应继续前进");
     }
 
@@ -52,7 +52,7 @@ class SimAisConnectorTest {
     void turnPersistsAcrossTicks() {
         sim.pollOnce(1_000L);
         double newCog = sim.injectTurn(60.0);
-        assertEquals(81.0, newCog, 1e-9);
+        assertEquals(66.7, newCog, 1e-9);
 
         publisher.clear();
         sim.pollOnce(2_000L);
@@ -62,7 +62,7 @@ class SimAisConnectorTest {
         List<AisMessage> after = publisher.ais();
         assertEquals(3, after.size(), "变向后每个节拍都应继续发数据");
         for (AisMessage m : after) {
-            assertEquals(81.0, m.cog(), 1e-9, "变向必须持续，不能只改一帧");
+            assertEquals(66.7, m.cog(), 1e-9, "变向必须持续，不能只改一帧");
         }
         assertTrue(after.get(2).lat() > after.get(0).lat(), "81° 航向纬度应递增");
     }
@@ -77,7 +77,7 @@ class SimAisConnectorTest {
                     "第 " + (i + 1) + " 次注入未生效");
             cog = next;
         }
-        assertEquals(121.0, sim.currentCog(), 1e-9);
+        assertEquals(106.7, sim.currentCog(), 1e-9);
     }
     @Test
     @DisplayName("航向归一化：-90° → 270°，450° → 90°")
@@ -94,13 +94,13 @@ class SimAisConnectorTest {
         sim.pollOnce(2_000L);
 
         sim.reset();
-        assertEquals(21.0, sim.currentCog(), 1e-9);
+        assertEquals(6.7, sim.currentCog(), 1e-9);
 
         publisher.clear();
         sim.pollOnce(3_000L);
         AisMessage m = publisher.ais().get(0);
-        assertTrue(Math.abs(m.lon() - 115.861000) < 0.001, "reset 后应从起点附近重新出发");
-        assertTrue(m.lat() >= 28.664000, "reset 后从朝阳端向八一方向前进");
+        assertTrue(Math.abs(m.lon() - 115.863000) < 0.001, "reset 后应从起点附近重新出发");
+        assertTrue(m.lat() >= 28.668000, "reset 后从船起点向北上（上游）前进");
     }
 
     @Test
