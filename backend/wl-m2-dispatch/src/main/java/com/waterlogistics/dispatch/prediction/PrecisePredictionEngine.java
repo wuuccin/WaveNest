@@ -77,6 +77,24 @@ public class PrecisePredictionEngine {
     /** 建参考线时相邻顶点的最小间距，m：折线零长段无方向，必须去重。 */
     static final double MIN_TRACK_GAP_M = 5.0;
 
+    /**
+     * 实测轨迹<b>跨度</b>足以压住位置噪声的门限，m；不足则退回船舶自报航向定参考线走向。
+     *
+     * <p><b>为什么需要它（实测缺陷，2026-10-27）</b>：M1 仿真器按 1 Hz 发 AIS、8 节 ⇒ 每拍真实
+     * 位移只有 4.1 m，而位置噪声是 {@code ±0.00005°}（每轴 ±5.5 m）——<b>单拍位移小于噪声</b>。
+     * 冷启动只等两拍、用这 4 m 的基线定参考线走向，等于让噪声定走向：实测 200 个随机种子，
+     * 走向误差中位 25.9°、P90 73.3°、最大 174.6°；其中 8% 的种子方向直接反了，
+     * {@code v_s = sog·cos(cog − 走向)} 变成负值，弧长往回走被夹在折线端点，
+     * 30 个预测点全挤在起点 20 m 内（观感就是「船不动了」），而 σ 照常增长、
+     * 结构断言与地理框都拦不住——<b>静默错误</b>，下游会面点会按「船不动」求解。
+     *
+     * <p><b>处置</b>：跨度不足时不用实测走向，改用船舶自报的对地航向 {@code cog} 建一条直线参考线。
+     * {@code cog} 自身误差是「度」级（仿真里是精确值），比 4 m 基线 + 5.5 m 噪声强得多；
+     * 而跨度一旦够（窗口累积到 60 m 以上），仍用<b>首→末</b>实测走向——那时它比 {@code cog} 准。
+     * 这样冷启动时机不变（第 2 拍即出预测），只是走向换了更可靠的来源。
+     */
+    static final double ROBUST_BEARING_MIN_SPAN_M = 60.0;
+
     /** 线尾余量，m：投影逼近折线末端时重建参考线。 */
     static final double TAIL_MARGIN_M = 100.0;
 
@@ -261,7 +279,7 @@ public class PrecisePredictionEngine {
             }
 
             if (state.geometry == null) {
-                WaterwayGeometry geometry = buildGeometry(state.window);
+                WaterwayGeometry geometry = buildGeometry(state.window, observation.cog());
                 if (geometry == null) {
                     log.debug("精算冷启动：mmsi={} 实测点不足以建参考线（{} 条）",
                             observation.mmsi(), state.window.size());
@@ -287,7 +305,7 @@ public class PrecisePredictionEngine {
             if (state.along.s() >= state.geometry.totalLengthM() - TAIL_MARGIN_M) {
                 log.warn("参考线将尽，重建并重锚：mmsi={} s={} 总长={}",
                         observation.mmsi(), state.along.s(), state.geometry.totalLengthM());
-                WaterwayGeometry rebuilt = buildGeometry(state.window);
+                WaterwayGeometry rebuilt = buildGeometry(state.window, observation.cog());
                 if (rebuilt != null) {
                     state.geometry = rebuilt;
                     state.initialized = false;
@@ -384,9 +402,14 @@ public class PrecisePredictionEngine {
      * <p>先用 {@link AisObservationFilter} 清洗<b>建线用的点</b>；清洗后不足两点则退回原始窗口
      * （清洗只影响参考线质量，不得让整条链路停摆——滤波链本身不因单条被清洗点停拍）。
      *
+     * <p>走向按窗口跨度二选一：跨度 ≥ {@value #ROBUST_BEARING_MIN_SPAN_M} m 时用<b>首→末</b>实测走向；
+     * 不足时改用 {@code reportedCogDeg} 建直线参考线（理由见该常量）。
+     *
+     * @param window         实测窗口（按时间升序）
+     * @param reportedCogDeg 窗口末条观测自报的对地航向，度（跨度不足时的走向来源）
      * @return 参考折线；实测点不足两点时为空
      */
-    private WaterwayGeometry buildGeometry(Deque<AisMessage> window) {
+    private WaterwayGeometry buildGeometry(Deque<AisMessage> window, double reportedCogDeg) {
         List<AisMessage> raw = new ArrayList<>(window);
         List<AisMessage> cleaned = cleanForGeometry(raw);
 
@@ -398,10 +421,29 @@ public class PrecisePredictionEngine {
             return null;
         }
 
+        WaterwayGeometry.Vertex first = vertices.get(0);
         WaterwayGeometry.Vertex last = vertices.get(vertices.size() - 1);
-        WaterwayGeometry.Vertex previous = vertices.get(vertices.size() - 2);
+        double spanM = planarDistanceM(first, last);
+
+        if (spanM < ROBUST_BEARING_MIN_SPAN_M) {
+            // 跨度压不住位置噪声（1 Hz、8 节下位移 4.1 m < 噪声 ±5.5 m）：
+            // 实测走向无信息量，改用自报航向建一条直线参考线。见 ROBUST_BEARING_MIN_SPAN_M。
+            double bearingDeg = ConstantVelocityPredictor.normalizeDeg(reportedCogDeg);
+            log.debug("参考线跨度不足（{} m < {} m），走向改取自报航向 {}°",
+                    String.format(java.util.Locale.ROOT, "%.1f", spanM),
+                    ROBUST_BEARING_MIN_SPAN_M, String.format(java.util.Locale.ROOT, "%.1f", bearingDeg));
+            List<WaterwayGeometry.Vertex> straight = new ArrayList<>(3);
+            straight.add(first);
+            // 10 m 的短线段只为给出方向与一个正的段长（零点长段非法），随后接预测时域延伸段
+            WaterwayGeometry.Vertex anchor = offsetM(first, bearingDeg, Math.max(spanM, 10.0));
+            straight.add(anchor);
+            straight.add(offsetM(anchor, bearingDeg, extensionM()));
+            return new WaterwayGeometry(straight);
+        }
+
+        // 跨度够大时改用窗口首→末定走向，而不是末两个顶点：同一段轨迹上跨度越大，噪声占比越小
         double bearingDeg = ConstantVelocityPredictor.bearingDeg(
-                previous.lon(), previous.lat(), last.lon(), last.lat());
+                first.lon(), first.lat(), last.lon(), last.lat());
         vertices.add(offsetM(last, bearingDeg, extensionM()));
         return new WaterwayGeometry(vertices);
     }

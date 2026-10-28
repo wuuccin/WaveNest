@@ -8,6 +8,11 @@ import com.waterlogistics.monitor.alert.AlertRecorder;
 import com.waterlogistics.monitor.detect.DetectionOrchestrator;
 import com.waterlogistics.monitor.query.FlightQueryService;
 import com.waterlogistics.monitor.store.FlightRecordStore;
+import com.waterlogistics.monitor.track.FlightContextProvider;
+import com.waterlogistics.monitor.track.FlightPointSink;
+import com.waterlogistics.monitor.track.FlightTracker;
+import com.waterlogistics.algo.measurement.Geo;
+import com.waterlogistics.algo.measurement.RouteMeasurement;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -19,8 +24,8 @@ import static org.junit.jupiter.api.Assertions.*;
  * C5 集成验证：遥测帧 → 清洗 → 检测 → 告警记录 → MQ 发送。
  *
  * <p>不依赖真实 RabbitMQ：直接调用 {@link UavTelemetryListener#onTelemetryMessage}，
- * 验证 M4 检测链在真实链路上被驱动。偏航样本因 projection 未接入（待彭紫情 track 侧）
- * 暂不验证；低电量样本验证完整链路。</p>
+ * 验证 M4 检测链在真实链路上被驱动，包括 T2-3 直线基准偏航投影与 T2-9
+ * 清洗后航迹点持久化边界。</p>
  */
 class UavTelemetryListenerTest {
 
@@ -135,5 +140,48 @@ class UavTelemetryListenerTest {
 
         // 15% < trigger=20% → 应触发警告
         assertEquals(1, recorder.eventLog().size(), "后续低电量帧应被正常处理");
+    }
+
+    @Test
+    void 直线基准投影接入偏航检测且航迹点带订单上下文() {
+        SysParamProvider params = SysParamProvider.defaults();
+        RecordingPublisher publisher = new RecordingPublisher();
+        FlightRecordStore store = new FlightRecordStore();
+        AlertRecorder recorder = new AlertRecorder(publisher, null, store);
+        DetectionOrchestrator orchestrator = new DetectionOrchestrator(recorder, params);
+        TelemetryService telemetryService = new TelemetryService(
+                new com.waterlogistics.algo.measurement.TelemetryCleaner.Limits(
+                        50, 5000, 15, 20, 30, 1000), 4.5);
+
+        RouteMeasurement.Route route = new RouteMeasurement.Route(
+                "straight:ORD-T2-3", 1L,
+                List.of(new Geo.Point(115.8600, 28.6400),
+                        new Geo.Point(115.8600, 28.6900)));
+        RouteMeasurement.Landing landing = new RouteMeasurement.Landing(
+                "会面点", "ORD-T2-3", new Geo.Point(115.8600, 28.6900), 1L, 1);
+        FlightContextProvider.FlightContext context = new FlightContextProvider.FlightContext(
+                "ORD-T2-3", "去程", route, landing);
+        FlightContextProvider contextProvider = droneId -> context;
+        List<FlightContextProvider.FlightContext> persistedContexts = new ArrayList<>();
+        FlightPointSink sink = (state, resolved) -> persistedContexts.add(resolved);
+        UavTelemetryListener listener = new UavTelemetryListener(
+                telemetryService, orchestrator, store,
+                contextProvider, new FlightTracker(), sink);
+
+        long t0 = 1_700_000_000_000L;
+        // 约向东偏 98m，连续三帧越过严重阈值 50m，满足默认去抖 3 点。
+        for (int i = 0; i < 3; i++) {
+            listener.onTelemetryMessage(new UavTelemetry(
+                    "UAV-T2-3", 115.8610, 28.6650, 100, 10, 80.0, 0, t0 + i * 1000));
+        }
+
+        assertEquals(3, persistedContexts.size(), "每帧清洗后状态都应进入航迹落库边界");
+        assertTrue(persistedContexts.stream().allMatch(value ->
+                "ORD-T2-3".equals(value.orderId()) && "去程".equals(value.segmentType())));
+        assertEquals(1, recorder.eventLog().size(), "偏航越严重阈值并满足去抖后应产生一条告警");
+        AlertEventMessage event = recorder.eventLog().get(0);
+        assertEquals("偏航", event.alertType());
+        assertEquals("ORD-T2-3", event.orderId(), "偏航告警应带当前派发订单号");
+        assertEquals("UAV-T2-3", event.droneId());
     }
 }
