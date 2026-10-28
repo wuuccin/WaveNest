@@ -9,7 +9,7 @@ import java.util.List;
  *
  * <p><b>T1-1 扩字段</b>（10-27 契约与地基）：新增候选数／逐条淘汰原因／预计到达时刻三项，均为可空——
  * 候选数与淘汰原因取候选链已产出的结果（E3 {@code selectFeasibleWithReasons} 透出，
- * 见 T1-2 编排器侧与 T1-6 队列侧填值），预计到达时刻为 {@code meet_time} 的 Unix 毫秒。
+ * 由编排器侧（T1-2）填值，队列侧构造点不参与发帧），预计到达时刻为 {@code meet_time} 的 Unix 毫秒。
  *
  * @param orderId         订单号
  * @param meetLon         会面点经度
@@ -39,7 +39,8 @@ public record RendezvousFrame(
     /**
      * 兼容构造器：保留 T1-1 之前的四参签名，新字段留空。
      *
-     * <p>构造点分散在 wl-m2 编排器与队列侧，序号 2 填值前逐处迁移，互不阻塞。
+     * <p>会面帧只由编排器一处发（编排器侧经帧投影器产出全参帧），主代码已全部迁到全参构造器；
+     * 队列侧构造点不参与发帧，本构造器仅供旧调用点与测试过渡。
      */
     public RendezvousFrame(String orderId, double meetLon, double meetLat,
                            boolean locked) {
