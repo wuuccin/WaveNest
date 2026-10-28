@@ -15,6 +15,32 @@ export const useNestStore = defineStore('nest', {
     reset() { this.items = []; this.loaded = false; this.error = '' }
   }
 })
+export const useFleetStore = defineStore('fleet', {
+  state: () => ({ items: [], loaded: false, error: '' }),
+  actions: {
+    apply(items) {
+      if (!Array.isArray(items)) throw new Error('GET /api/drones 未返回机队数组')
+      this.items = items.filter(item => item?.droneId && (item.currentNestId || item.homeNestId))
+      this.loaded = true
+      this.error = ''
+    },
+    fail(error) { this.items = []; this.loaded = true; this.error = error?.message || String(error) },
+    reset() { this.items = []; this.loaded = false; this.error = '' }
+  }
+})
+export const useAirspaceStore = defineStore('airspace', {
+  state: () => ({ items: [], loaded: false, error: '' }),
+  actions: {
+    apply(items) {
+      if (!Array.isArray(items)) throw new Error('GET /api/airspace 未返回空域台账数组')
+      this.items = items.filter(item => item?.restrictionId && item?.kind)
+      this.loaded = true
+      this.error = ''
+    },
+    fail(error) { this.items = []; this.loaded = true; this.error = error?.message || String(error) },
+    reset() { this.items = []; this.loaded = false; this.error = '' }
+  }
+})
 export const useDroneStore = defineStore('drone', { state: () => ({ current: null, byId: {}, tracks: {} }), actions: { apply(data) {
   if (!data) { this.current = null; this.byId = {}; this.tracks = {}; return }
   if (!Number.isFinite(data.lon) || !Number.isFinite(data.lat)) return

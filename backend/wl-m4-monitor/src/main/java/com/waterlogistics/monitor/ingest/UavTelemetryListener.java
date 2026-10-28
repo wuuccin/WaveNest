@@ -4,6 +4,9 @@ import com.waterlogistics.algo.measurement.TelemetryCleaner;
 import com.waterlogistics.monitor.detect.DetectionOrchestrator;
 import com.waterlogistics.monitor.detect.DetectionSample;
 import com.waterlogistics.monitor.store.FlightRecordStore;
+import com.waterlogistics.monitor.track.FlightContextProvider;
+import com.waterlogistics.monitor.track.FlightPointSink;
+import com.waterlogistics.monitor.track.FlightTracker;
 import com.waterlogistics.contract.mq.TopicName;
 import com.waterlogistics.contract.mq.UavTelemetry;
 import org.slf4j.Logger;
@@ -14,6 +17,7 @@ import org.springframework.amqp.rabbit.annotation.Queue;
 import org.springframework.amqp.rabbit.annotation.QueueBinding;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 /**
@@ -45,13 +49,31 @@ public class UavTelemetryListener {
     private final TelemetryService telemetryService;
     private final DetectionOrchestrator detectionOrchestrator;
     private final FlightRecordStore flightRecordStore;
+    private final FlightContextProvider flightContextProvider;
+    private final FlightTracker flightTracker;
+    private final FlightPointSink flightPointSink;
 
+    @Autowired
     public UavTelemetryListener(TelemetryService telemetryService,
                                 DetectionOrchestrator detectionOrchestrator,
-                                FlightRecordStore flightRecordStore) {
+                                FlightRecordStore flightRecordStore,
+                                FlightContextProvider flightContextProvider,
+                                FlightTracker flightTracker,
+                                FlightPointSink flightPointSink) {
         this.telemetryService = telemetryService;
         this.detectionOrchestrator = detectionOrchestrator;
         this.flightRecordStore = flightRecordStore;
+        this.flightContextProvider = flightContextProvider;
+        this.flightTracker = flightTracker;
+        this.flightPointSink = flightPointSink;
+    }
+
+    /** Compatibility constructor for isolated tests without a database flight context. */
+    public UavTelemetryListener(TelemetryService telemetryService,
+                                DetectionOrchestrator detectionOrchestrator,
+                                FlightRecordStore flightRecordStore) {
+        this(telemetryService, detectionOrchestrator, flightRecordStore,
+                FlightContextProvider.NONE, new FlightTracker(), FlightPointSink.NONE);
     }
 
     /**
@@ -80,18 +102,28 @@ public class UavTelemetryListener {
             // 2. D0 飞行记录入库：只保存清洗后的状态，按 uavId/flightId 归集。
             flightRecordStore.append(state);
 
-            // 3. 组装检测样本（missionActive 暂由遥测存在即视为在飞，
+            // 3. Resolve the current dispatched cycle once for both T2-3 and T2-9.
+            //    Missing/incomplete database bindings degrade safely to null.
+            var context = flightContextProvider.resolve(message.uavId());
+            flightPointSink.persist(state, context);
+
+            // T2-3 interim definition: deviation from the straight home-nest →
+            // rendezvous baseline, not from the future planned-flight polyline.
+            var measurement = context == null ? null : flightTracker.measure(
+                    state, context.route(), context.landing(), false);
+
+            // 4. 组装检测样本（missionActive 暂由遥测存在即视为在飞，
             //    后续与 C0 派发状态对齐后由任务状态机供值）
             DetectionSample sample = new DetectionSample(
                     message.uavId(),
-                    null,                    // orderId：待与任务状态机对齐后注入
+                    context == null ? null : context.orderId(),
                     message.battery(),
-                    null,                    // projection：待彭紫情 track 侧接入后注入
+                    measurement == null ? null : measurement.projection(),
                     message.ts(),
-                    true                     // missionActive：遥测存在即视为在飞
+                    context != null          // 只有存在当前派发周期才做失联门控
             );
 
-            // 4. 驱动检测链
+            // 5. 驱动检测链
             detectionOrchestrator.onSample(sample);
 
         } catch (Exception e) {
