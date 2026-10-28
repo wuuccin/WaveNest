@@ -1,6 +1,7 @@
 package com.waterlogistics.app.push;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
@@ -129,5 +130,50 @@ class RealtimeEventBridgeTest {
         assertEquals(29.72, frame.lat().doubleValue(), 1e-9);
         assertEquals("ORD-1", frame.orderId());
         assertEquals("event-1", frame.eventId());
+    }
+
+    /** T2-1：消息自带订单号 → 原样透传，且完全不反查（自带的是检测层当轮任务态，最准）。 */
+    @Test
+    void alertEvent_withOrderId_shouldNotLookupActiveOrder() {
+        RealtimeEventBridge bridge = new RealtimeEventBridge(endpoint, flightPhaseAdvancer);
+
+        bridge.onAlertEvent(new AlertEventMessage(
+                "event-1", "低电量", "警告", 12, "UAV-01", "ORD-1",
+                1_700_000_000_000L, 18.0, 20.0));
+
+        ArgumentCaptor<AlarmFrame> captor = ArgumentCaptor.forClass(AlarmFrame.class);
+        verify(endpoint).publish(eq(WsFrameType.ALARM), captor.capture());
+        assertEquals("ORD-1", captor.getValue().orderId());
+        verify(flightPhaseAdvancer, never()).activeOrderIdOf(any());
+    }
+
+    /** T2-1：告警未带订单号 → 帧里按机号反查当前在飞订单补上，与 M2 侧决策用的是同一个单号。 */
+    @Test
+    void alertEvent_withoutOrderId_shouldFillOrderIdFromFlightPhaseCache() {
+        RealtimeEventBridge bridge = new RealtimeEventBridge(endpoint, flightPhaseAdvancer);
+        when(flightPhaseAdvancer.activeOrderIdOf("UAV-01")).thenReturn("ORD-9");
+
+        bridge.onAlertEvent(new AlertEventMessage(
+                "event-1", "低电量", "警告", 12, "UAV-01", null,
+                1_700_000_000_000L, 18.0, 20.0));
+
+        ArgumentCaptor<AlarmFrame> captor = ArgumentCaptor.forClass(AlarmFrame.class);
+        verify(endpoint).publish(eq(WsFrameType.ALARM), captor.capture());
+        assertEquals("ORD-9", captor.getValue().orderId());
+    }
+
+    /** T2-1：告警未带订单号且反查未命中 → 订单号留空，不臆造。 */
+    @Test
+    void alertEvent_withoutOrderId_andLookupMiss_shouldLeaveOrderIdNull() {
+        RealtimeEventBridge bridge = new RealtimeEventBridge(endpoint, flightPhaseAdvancer);
+        when(flightPhaseAdvancer.activeOrderIdOf("UAV-01")).thenReturn(null);
+
+        bridge.onAlertEvent(new AlertEventMessage(
+                "event-1", "低电量", "警告", 12, "UAV-01", null,
+                1_700_000_000_000L, 18.0, 20.0));
+
+        ArgumentCaptor<AlarmFrame> captor = ArgumentCaptor.forClass(AlarmFrame.class);
+        verify(endpoint).publish(eq(WsFrameType.ALARM), captor.capture());
+        assertNull(captor.getValue().orderId());
     }
 }

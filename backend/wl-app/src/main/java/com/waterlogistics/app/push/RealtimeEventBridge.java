@@ -105,8 +105,29 @@ public final class RealtimeEventBridge {
                 AlertLevel.fromValue(event.level()),
                 event.droneId(),
                 alertMessage(event),
-                // 位置与订单号由告警发送侧（T1-3）写上；取不到就原样传 null，不补默认坐标。
-                event.lon(), event.lat(), event.orderId(), event.eventId()));
+                // 位置由告警发送侧（T1-3）写上；取不到就原样传 null，不补默认坐标。
+                event.lon(), event.lat(),
+                // 订单号：发送侧带了就用带上的；没带则按机号反查在飞订单（口径见 alertOrderIdOf）。
+                alertOrderIdOf(event),
+                event.eventId()));
+    }
+
+    /**
+     * 告警帧的订单号：消息自带优先，为空则按机号反查当前在飞订单。
+     *
+     * <p>与 M2 侧 {@code AlertDrivenDispatcher} 的解析口径一致（自带优先、为空才反查）：
+     * 发送侧带了就用发送侧的——那是检测层当轮的任务态，最准；没带才反查。
+     * 这样「帧里的单号」与「重调度／返航复核实际用的单号」是同一个，不会各说各话。
+     *
+     * <p>反查只读飞行阶段推进器的内存阶段缓存（跳过已飞完的订单，零 DB 查询）；
+     * 反查未命中时仍传 {@code null}——契约允许为空，不臆造单号。
+     */
+    private String alertOrderIdOf(AlertEventMessage event) {
+        String carried = event.orderId();
+        if (carried != null && !carried.isBlank()) {
+            return carried;
+        }
+        return activeOrderIdOf(event.droneId());
     }
 
     /** 按机号查在飞订单号；缺推进器（单测场景）或该机无在飞订单时为 null。 */
