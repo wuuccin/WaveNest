@@ -84,10 +84,19 @@ public class PredictionConfig {
     /**
      * 输出区间断言网（F4 第 1 步）。
      *
-     * <p>缺省框取「仿真域 ∪ 赣江航段」（{@link PredictionAssurance.Bounds#demoArea()}）：
-     * M1 仿真器发 {@code 114.30E／30.60N}，赣江在 {@code 115.5–116.5E／28.3–29.1N}，
-     * 只框赣江会让联调每帧被拦。正式部署按航段收窄时改属性即可：
-     * {@code wavenest.m2.prediction.bbox.min-lon/min-lat/max-lon/max-lat}。
+     * <p><b>正式取值已定稿</b>：T2-6（10-28）把框收窄到《73-赣江场景说明》§3.1 的服务航段
+     * （朝阳大桥 {@code 28.646/115.852} → 八一大桥 {@code 28.692/115.879}，全长 5.78 km）
+     * 加航向侧一个预测时域的前伸，落点是 {@code application.yml} 的
+     * {@code wavenest.m2.prediction.bbox.*}（{@code 115.857–115.921 × 28.660–28.767}，
+     * 按定稿船起点 {@code 115.863/28.668} 实测包络 ＋ 0.5 km 缓冲定）。
+     * 四个值的推导与实测包络见 {@code PredictionBboxNanchangSegmentTest} 的类注释，
+     * 该类有「配置与常量同值」的强制守卫，改一处不改另一处会红。
+     *
+     * <p>下面四个 {@code :默认值} 只是<b>兜底</b>（配置缺失时才生效），取的是
+     * 「仿真域 ∪ 赣江航段」的宽框 {@link PredictionAssurance.Bounds#demoArea()}：
+     * 早前 M1 仿真器发 {@code 114.30E／30.60N}、赣江在 {@code 115.5–116.5E／28.3–29.1N}，
+     * 只框赣江会让联调每帧被拦。M1 已切南昌段，兜底值实际上不会再被触发；
+     * 但保留宽兜底是故意的——配置丢了也不至于把整条预测链路拦成匀速版而无人察觉。
      *
      * @param minLon 西界
      * @param minLat 南界
