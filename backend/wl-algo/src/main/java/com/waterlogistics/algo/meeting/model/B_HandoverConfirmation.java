@@ -1,7 +1,5 @@
 package com.waterlogistics.algo.meeting.model;
 
-import java.util.Objects;
-
 /**
  * 交接完成确认（{@code B_} 前缀＝算法层 B 组产出）——字段照《81-B组算法方案》§2.3
  * 第（6）项一字不改。
@@ -95,6 +93,8 @@ public record B_HandoverConfirmation(
                     throw new IllegalArgumentException("交接失败却带完成时刻或开销字段（taskId=" + taskId + "）");
                 }
             }
+            default -> throw new IllegalArgumentException(
+                    "未支持的交接结果，无法校验字段完整性：" + handoverResult + "（taskId=" + taskId + "）");
 
         }
         if (escortTimeCost != null && escortTimeCost < 0) {

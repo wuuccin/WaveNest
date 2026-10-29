@@ -53,10 +53,6 @@ public final class RendezvousSolver {
 
         long tLo = request.nowMs();
         long tHi = Math.min(request.deadlineMs(), points.get(points.size() - 1).t());
-        if (tHi < tLo) {
-            return B_RendezvousSolution.unsolvable(solutionId, request.comboId(),
-                    NoSolutionReason.OTHER, snapshotVersion);
-        }
 
         // 有效速度：沿「巢 → 锚点」方位，代表风况修正，首版单次取值。
         // 锚点＝调用方给定船当前状态（6a 重算路径，《81》§2.5）；缺省回落到快照在求解
@@ -79,8 +75,9 @@ public final class RendezvousSolver {
 
         double t;
         if (tLo == tHi) {
-            // 零时长窗口：仅当船此刻恰在巢位（d==0）才即刻会面；近似重合不在此分支
-            if (gapMeters(request, tLo, tLo, v) > 0) {
+            // 零时长窗口：仅当船此刻恰在巢位（d≈0）才即刻会面；近似重合的容差与上方
+            // 「船已在巢位」的判据保持一致，避免浮点噪声把重合判成追不上
+            if (gapMeters(request, tLo, tLo, v) > 1e-9) {
                 return B_RendezvousSolution.unsolvable(solutionId, request.comboId(),
                         NoSolutionReason.CANNOT_CATCH, snapshotVersion);
             }
@@ -92,8 +89,9 @@ public final class RendezvousSolver {
             if (!(t <= tHi)) {
                 t = Double.NaN;
             }
-            // 只容许毫秒取整带来的亚毫米级数值残差，不因迭代阈值放宽「可行性」
-            if (!Double.isNaN(t) && gapMeters(request, Math.round(t), tLo, v) > 1e-6) {
+            // 毫秒取整会移动求值点，间距残差量级为 v×0.5 ms；容差须随之缩放，
+            // 否则真根会被误弃，并触发一次无谓的全量重扫
+            if (!Double.isNaN(t) && gapMeters(request, Math.round(t), tLo, v) > v * 1e-3) {
                 t = Double.NaN;
             }
             long bisectUpper = Double.isNaN(t) ? tHi : Math.min(tHi, (long) Math.ceil(t));
@@ -145,11 +143,12 @@ public final class RendezvousSolver {
         if (gapMeters(request, tLo, tLo, v) <= 0) {
             return tLo;
         }
-        long span = tHi - tLo;
         long upper = tHi;
         double earliest = Double.NaN;
         for (int steps : COARSE_SCAN_STEPS) {
-            long step = Math.max(1L, span / steps);
+            // 首级找到根后 upper 会收紧，步长必须按收紧后的窗宽重算；
+            // 沿用原始 span 会让后续级的首个探测点直接越过 upper，整级退化成一次二分
+            long step = Math.max(1L, (upper - tLo) / steps);
             double root = scanFirstCrossing(request, tLo, upper, v, step);
             if (!Double.isNaN(root)) {
                 earliest = root;

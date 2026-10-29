@@ -135,14 +135,21 @@ public record MissionTrackCommand(
         if (takeoffMs > MissionTrackCommand.MAX_EPOCH_MS) {
             throw new IllegalArgumentException("起飞时刻超出合理纪元上界，实际 " + takeoffMs);
         }
-        double totalSec = GeoApprox.distanceM(nestLon, nestLat, meetLon, meetLat) / outboundSpeedMs
-                + GeoApprox.distanceM(meetLon, meetLat, handoverEndLon, handoverEndLat) / terminalSpeedMs
-                + GeoApprox.distanceM(handoverEndLon, handoverEndLat, returnTargetLon, returnTargetLat) / returnSpeedMs;
-        long totalMs = Math.round(totalSec * 1000.0);
-        if (!Double.isFinite(totalSec)
-                || totalMs > MissionTrackCommand.MAX_EPOCH_MS - takeoffMs) {
+        double outboundSec = GeoApprox.distanceM(nestLon, nestLat, meetLon, meetLat) / outboundSpeedMs;
+        double terminalSec = GeoApprox.distanceM(meetLon, meetLat, handoverEndLon, handoverEndLat) / terminalSpeedMs;
+        double returnSec = GeoApprox.distanceM(handoverEndLon, handoverEndLat, returnTargetLon, returnTargetLat) / returnSpeedMs;
+        if (!Double.isFinite(outboundSec) || !Double.isFinite(terminalSec) || !Double.isFinite(returnSec)) {
+            throw new IllegalArgumentException("三段航程累计时长不可计算，实际各段秒数 "
+                                                       + outboundSec + "／" + terminalSec + "／" + returnSec);
+        }
+        // 与 TrackGenerator#generate 同口径：每段先按整秒取整，且时长至少 1 s，
+        // 三段顺序累加才是生成侧真实的末点时刻；一次四舍五入会低估累计误差
+        long totalMs = (Math.max(1L, Math.round(outboundSec))
+                + Math.max(1L, Math.round(terminalSec))
+                + Math.max(1L, Math.round(returnSec))) * 1000L;
+        if (totalMs > MissionTrackCommand.MAX_EPOCH_MS - takeoffMs) {
             throw new IllegalArgumentException("三段航程累计结束时刻超出合理纪元上界，实际起飞时刻 " + takeoffMs
-                                                       + "、累计时长秒 " + totalSec);
+                                                       + "、累计时长毫秒 " + totalMs);
         }
     }
 

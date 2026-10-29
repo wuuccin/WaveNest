@@ -16,14 +16,18 @@ wavenest:
       noise: 0.00005
     uav:
       count: 4
-      center-lon: 115.857500    # 两机巢连线中点
-      center-lat: 28.670000
-      radius-deg: 0.0020        # ≈222 m，不出江面
-      # 相位步进须与 speed-ms 自洽：半径约 222 m 时，弧长速度 ≈ radius × step。
-      # 历史教训：原值 0.35 → 实际位移约 108 m/s，而上报 speed-ms 只有 12，
+      # 每架机绕自己的机巢巡航。巡航中心若取两巢连线中点，遥测会离「机巢到会面点」的
+      # 偏航基线数百米，M4 会逐帧判偏航并触发重调度。
+      nest-south-lon: 115.8480000    # NEST-01
+      nest-south-lat: 28.6420000
+      nest-north-lon: 115.8670000    # NEST-02
+      nest-north-lat: 28.6980000
+      radius-deg: 0.00025       # 约 27.8 m，小于偏航预警阈值 50 m
+      # 相位步进须与 speed-ms 自洽：弧长速度约等于 radius × step。
+      # 历史教训：原值 0.35 使实际位移约 108 m/s，而上报 speed-ms 只有 12，
       # M4 清洗按「位置差／时间差」反算会判 POSITION_JUMP、清空经纬度，
-      # 导致回放帧坐标变成 NaN（实测 76 帧中 63 帧失效）。
-      phase-step: 0.054         # 222 m × 0.054 ≈ 12 m/s
+      # 导致回放帧坐标变成 NaN。
+      phase-step: 0.43          # 27.8 m × 0.43 ≈ 12 m/s
       speed-ms: 12.0
       noise: 0.00002
     weather:

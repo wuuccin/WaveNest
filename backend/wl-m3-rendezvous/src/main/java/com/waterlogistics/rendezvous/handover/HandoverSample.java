@@ -14,7 +14,8 @@ package com.waterlogistics.rendezvous.handover;
  * @param shipLon     船位经度
  * @param shipLat     船位纬度
  * @param windSpeedMs 当时风况（风速），m/s——交接时刻须满足交接风阈值
- * @param dropDone    投放机构反馈完成标记（首版简化）
+ * @param dropDone    投放机构反馈完成标记（首版简化）；只在该投放拍为 {@code true}，
+ *                    生产方不得把一次投放闩锁成后续每拍都为 {@code true}，否则风况失败后的重投判据会失真
  */
 @SuppressWarnings("MissingJavadoc")
 public record HandoverSample(

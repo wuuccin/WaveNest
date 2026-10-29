@@ -98,9 +98,10 @@ public record RendezvousCommand(
         if (!Double.isFinite(convergeEpsilonSec) || !(convergeEpsilonSec > (double) 0)) {
             throw new IllegalArgumentException("收敛阈值必须为正的有限数，实际 " + convergeEpsilonSec);
         }
-        if (convergeEpsilonSec * 1000.0 * 1000.0 >= (double) (deadlineMs - nowMs)) {
-            throw new IllegalArgumentException("收敛阈值须小于求解时域的千分之一，实际 epsilonSec="
-                                                       + convergeEpsilonSec + ", 时域毫秒=" + (deadlineMs - nowMs));
+        if (convergeEpsilonSec > RendezvousSolveRequest.MAX_CONVERGE_EPSILON_SEC) {
+            throw new IllegalArgumentException("收敛阈值须在 (0, "
+                                                       + RendezvousSolveRequest.MAX_CONVERGE_EPSILON_SEC + "] 秒内，实际 "
+                                                       + convergeEpsilonSec);
         }
         if (maxIterations <= 0 || maxIterations > RendezvousSolveRequest.MAX_ITERATIONS) {
             throw new IllegalArgumentException(

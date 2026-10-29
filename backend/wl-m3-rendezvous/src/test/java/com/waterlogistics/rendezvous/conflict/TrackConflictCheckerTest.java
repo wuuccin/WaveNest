@@ -134,6 +134,30 @@ class TrackConflictCheckerTest {
                 () -> new ConflictParams(100, 25, Long.MAX_VALUE), "超出合理上界的采样步长应拒绝");
     }
 
+    /** 超长窗口：自适应放大步长后区间仍须按有效步长外扩，不得少报；首段冲突后不再并入后续冲突段。 */
+    @Test
+    void disjointEpisodes_shouldReportFirstEpisodeOnly() {
+        B_FlyableRoute east = new B_FlyableRoute("RT-A", "RV-A", "combo-1",
+                List.of(new Waypoint(lonAt(0), LAT0, 60.0, 15.0, T0),
+                        new Waypoint(lonAt(18_000), LAT0, 60.0, 15.0, T0 + 1_200_000L)),
+                1_200, 0.0, 0.0, List.of(), List.of());
+        B_FlyableRoute zigzag = new B_FlyableRoute("RT-B", "RV-B", "combo-1",
+                List.of(new Waypoint(lonAt(0), LAT0, 60.0, 15.0, T0),
+                        new Waypoint(lonAt(0), LAT0, 60.0, 15.0, T0 + 200_000L),
+                        new Waypoint(lonAt(4_500), LAT0, 60.0, 15.0, T0 + 300_000L),
+                        new Waypoint(lonAt(4_500), LAT0, 60.0, 15.0, T0 + 400_000L),
+                        new Waypoint(lonAt(9_000), LAT0, 60.0, 15.0, T0 + 600_000L)),
+                600, 0.0, 0.0, List.of(), List.of());
+
+        B_ConflictResult res = TrackConflictChecker.detect(east, zigzag, PARAMS);
+
+        assertTrue(res.conflictFlag(), "首段相交应判冲突");
+        assertTrue(res.conflictSpaceTime().tEnd() <= T0 + 8_000L,
+                "区间不得并入后续冲突段，实际 tEnd=" + res.conflictSpaceTime().tEnd());
+        assertTrue(res.conflictSpaceTime().tEnd() >= T0 + 6_000L,
+                "区间须按有效步长外扩到最后一个冲突采样点，实际 tEnd=" + res.conflictSpaceTime().tEnd());
+    }
+
     // ===== 夹具 =====
 
     /** 东西向基准航迹：宽 2×9630 m，经 LON0 中点，速度 15 m/s、5 航点 */

@@ -165,15 +165,17 @@ class SimCoordinatesNanchangSegmentTest {
         List<UavTelemetry> sent = publisher.telemetry();
         assertEquals(4, sent.size(), "机队规模应与台账四架对齐（否则出现没有遥测的幽灵机）");
 
-        // 巡航中心取两巢中点：任一架到两巢的距离都应在 3.5 km 以内
-        // （沿用旧的航段中点 115.8685/28.6815 时，到南巢会到 4.9 km，此断言即红）
-        for (UavTelemetry m : sent) {
+        // 每架机绕自己的机巢巡航：前两架在南巢，后两架在北巢。
+        // 巡航中心若取两巢中点，遥测会离「机巢到会面点」的偏航基线数百米，逐帧误报偏航。
+        for (int i = 0; i < sent.size(); i++) {
+            UavTelemetry m = sent.get(i);
             assertInBox("遥测 " + m.uavId(), m.lon(), m.lat());
             assertNotNull(m.uavId());
-            double dSouthKm = Math.hypot(m.lon() - SOUTH_LON, m.lat() - SOUTH_LAT) * 111.32;
-            double dNorthKm = Math.hypot(m.lon() - NORTH_LON, m.lat() - NORTH_LAT) * 111.32;
-            assertTrue(dSouthKm < 3.5 && dNorthKm < 3.5,
-                    m.uavId() + " 应巡航在两巢之间（距南巢 " + dSouthKm + " km、北巢 " + dNorthKm + " km）");
+            double nestLon = i < 2 ? SOUTH_LON : NORTH_LON;
+            double nestLat = i < 2 ? SOUTH_LAT : NORTH_LAT;
+            double dNestKm = Math.hypot(m.lon() - nestLon, m.lat() - nestLat) * 111.32;
+            assertTrue(dNestKm < 0.1,
+                    m.uavId() + " 应巡航在自己的机巢附近（距巢 " + dNestKm + " km）");
         }
     }
 

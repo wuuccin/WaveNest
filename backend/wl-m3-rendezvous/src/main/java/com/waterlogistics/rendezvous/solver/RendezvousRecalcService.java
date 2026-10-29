@@ -11,6 +11,7 @@ import com.waterlogistics.rendezvous.port.DroneContextUnavailableException;
 import com.waterlogistics.rendezvous.port.SnapshotUnavailableException;
 import com.waterlogistics.rendezvous.port.SnapshotVersionMismatchException;
 import com.waterlogistics.rendezvous.port.TrajectorySnapshotPort;
+import com.waterlogistics.rendezvous.support.WireText;
 
 import java.util.Objects;
 
@@ -67,25 +68,33 @@ public class RendezvousRecalcService {
     public RendezvousRecalcResult recompute(RendezvousRecalcRequest request, RecalcOptions options) {
         Objects.requireNonNull(request, "request 不能为空");
         Objects.requireNonNull(options, "options 不能为空");
+        // 先做纯内存校验，非法请求不产生数据库读取，也不会被台账异常掩盖
+        RecalcStateSnapshot state = request.stateSnapshot();
+        if (options.deadlineMs() < state.shipStateT()) {
+            throw new IllegalArgumentException("最晚会面时刻不得早于船状态时刻，实际 deadlineMs="
+                                                       + options.deadlineMs() + ", shipStateT=" + state.shipStateT());
+        }
+
         DroneContext context = this.droneContextPort.resolve(request.droneId());
         if (context == null) {
             throw new DroneContextUnavailableException(request.droneId());
+        }
+        if (!request.droneId().equals(context.droneId())) {
+            throw new IllegalArgumentException("执行机台账归属不符：请求 droneId="
+                                                       + WireText.escapeForLog(request.droneId())
+                                                       + ", 台账 droneId="
+                                                       + WireText.escapeForLog(context.droneId()));
         }
 
         ShipTrackSnapshot snapshot = SnapshotGate.fetchVerified(
                 this.snapshotPort, request.shipMmsi(), request.snapshotVersion()
                                                                );
 
-        RecalcStateSnapshot state = request.stateSnapshot();
         long snapshotStartT = snapshot.points().get(0).t();
         long snapshotEndT = snapshot.points().get(snapshot.points().size() - 1).t();
         if (state.shipStateT() < snapshotStartT || state.shipStateT() > snapshotEndT) {
             throw new IllegalArgumentException("船状态时刻超出快照覆盖范围，实际 shipStateT="
                                                        + state.shipStateT() + ", 快照区间=[" + snapshotStartT + ", " + snapshotEndT + "]");
-        }
-        if (options.deadlineMs() < state.shipStateT()) {
-            throw new IllegalArgumentException("最晚会面时刻不得早于船状态时刻，实际 deadlineMs="
-                                                       + options.deadlineMs() + ", shipStateT=" + state.shipStateT());
         }
         B_RendezvousSolution solution = RendezvousSolver.solve(new RendezvousSolveRequest(
                 context.comboId(), context.nestLon(), context.nestLat(), context.cruiseSpeedMs(),

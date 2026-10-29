@@ -32,11 +32,12 @@ import java.util.Objects;
  * <p>坐标处理：以<b>被查航迹首点</b>为原点做局部米制平移（同 {@code GeoApprox} 近似），
  * 两航迹共用同一原点——包围盒、距离与 CPA 全部在米制下计算。
  *
- * <p>冲突区间口径：{@code conflictSpaceTime} 取首末冲突采样点，<b>两端边界向内量化</b>，
- * 真实起点最多晚报、终点最多早报一个采样步长；中间空档可能被并段扩大。消费方须向两端
- * 各外扩一个 {@code sampleStepMs} 后再使用，不得按边界直接错峰。
+ * <p>冲突区间口径：{@code conflictSpaceTime} 取第一段冲突的首末采样点，并向两端各外扩
+ * <b>实际生效</b>的采样步长后返回，因此长窗口自动放大步长时也不会少报；中间空档与后续冲突段
+ * 不并入本区间，消费方看到的是一段连续冲突。首版不给出离散冲突段的数量，需要完整分段时
+ * 应在精算版补。
  *
- * <p>检出限制：判据只在离散采样时刻求值，基准最短可检冲突时长＝{@code sampleStepMs}；<b>长窗口会按 20 万采样上限自适应放大步长</b>，实际分辨率与边界外扩量以放大后的有效步长为准——
+ * <p>检出限制：判据只在离散采样时刻求值，基准最短可检冲突时长＝{@code sampleStepMs}；<b>长窗口会按 20 万采样上限自适应放大步长</b>，
  * 更短且恰好落在两采样点之间的冲突会漏检（区间本身仍只会被保守扩大）。经度方向的米/度
  * 比例取两航迹首点纬度的均值，适用于十公里级、纬向跨度不大的作业区。
  *
@@ -154,6 +155,10 @@ public final class TrackConflictChecker {
                 }
                 lastConflictT = t;
                 bestConflict.consider(d3, t, pa, pb);
+            } else if (anyConflict) {
+                // 第一段冲突已经结束：后续再进入的冲突段不并入本区间，
+                // 否则中间无冲突的时段会被当成连续冲突
+                break;
             }
 
             if (t == tEnd) {
@@ -162,8 +167,10 @@ public final class TrackConflictChecker {
             t = (tEnd - t <= step) ? tEnd : t + step;
         }
 
+        // 结果区间按实际生效的步长向两端外扩，调用方无需知道内部是否放大过步长
         ConflictSpaceTime interval = anyConflict
-                ? new ConflictSpaceTime(null, firstConflictT, lastConflictT)
+                ? new ConflictSpaceTime(null, Math.max(tStart, firstConflictT - step),
+                                        Math.min(tEnd, lastConflictT + step))
                 : null;
         return new SamplingResult(anyConflict ? bestConflict : bestAny, interval);
     }

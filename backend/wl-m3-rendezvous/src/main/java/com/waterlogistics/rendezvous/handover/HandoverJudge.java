@@ -64,7 +64,7 @@ public final class HandoverJudge {
         HandoverParams params = cmd.params();
 
         HandoverSample origin = samples.get(0);
-        double cosLat = Math.cos(Math.toRadians(origin.droneLat()));
+        double cosLat = HandoverJudge.cosLatOf(origin);
 
         HandoverPhase phase = HandoverPhase.APPROACH;
         Long stableSince = null;
@@ -87,7 +87,9 @@ public final class HandoverJudge {
             HandoverSample sample = samples.get(i);
             long dtMs = sample.t() - samples.get(i - 1).t();
 
-            double dx = HandoverJudge.relativeX(sample, cosLat);
+            // 每拍按「机位与船位的中纬」重算经度缩放，不能沿用首拍的余弦
+            double sampleCosLat = HandoverJudge.cosLatOf(sample);
+            double dx = HandoverJudge.relativeX(sample, sampleCosLat);
             double dy = HandoverJudge.relativeY(sample);
             double dist = Math.hypot(dx, dy);
             double relSpeed = Math.hypot(dx - prevDx, dy - prevDy) / ((double) dtMs / 1000.0);
@@ -126,6 +128,8 @@ public final class HandoverJudge {
 
             // 有意落穿：MATCH 段在上方补满稳定窗口后同拍进入 TRANSFER，
             // 允许在该过渡拍即刻接受投放反馈（见 HandoverJudgeTest 同拍投放用例）。
+            // 投放标记只在真实投放的那一拍为 true；本拍不满足风况或稳定性时，
+            // 后续样本须以新的投放拍重试，生产方不得把一次投放闩锁到后续每一拍。
             if (phase == HandoverPhase.TRANSFER && sample.dropDone()) {
                 if (stable && sample.windSpeedMs() <= params.windLimitMs()) {
                     success = true;
@@ -165,11 +169,20 @@ public final class HandoverJudge {
 
 
 
+    /** 经度缩放的余弦值：取机位与船位的中纬，与 {@code GeoApprox} 的距离口径一致。 */
+    private static double cosLatOf(HandoverSample sample) {
+        return Math.cos(Math.toRadians((sample.droneLat() + sample.shipLat()) / 2.0));
+    }
+
+
+
+
+
     private static double relativeX(HandoverSample sample, double cosLat) {
         double dLon = sample.droneLon() - sample.shipLon();
         if (dLon > 180.0) {
             dLon -= 360.0;
-        } else if (dLon < -180.0) {
+        } else if (dLon <= -180.0) {
             dLon += 360.0;
         }
         return dLon * HandoverJudge.METERS_PER_DEG * cosLat;

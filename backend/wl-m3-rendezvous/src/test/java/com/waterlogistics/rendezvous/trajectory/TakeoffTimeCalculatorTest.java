@@ -73,6 +73,17 @@ class TakeoffTimeCalculatorTest {
         assertTrue(r.feasible(), "判等即可行");
     }
 
+    /** 对齐后早于当前时刻：即使未对齐值仍在未来，也不得顺延到下一格，必须判不可行。 */
+    @Test
+    void compute_shouldFlagInfeasible_whenAlignedValueBeforeNow() {
+        B_TakeoffTimeResult r = TakeoffTimeCalculator.compute(
+                new TakeoffTimeCommand("combo-1", T0 + 21_500L, 20, T0 + 1_500L, 1_000L));
+
+        assertEquals(T0 + 1_000L, r.takeoffT(), "对齐到整秒后为 +1 s");
+        assertFalse(r.feasible(), "对齐值早于当前 +1.5 s，应判不可行");
+        assertEquals(TakeoffInfeasibleReason.BEFORE_NOW, r.infeasibleReason());
+    }
+
     /** 入参校验：时长负数、粒度非正一律拒绝。 */
     @Test
     void compute_shouldRejectInvalidInputs() {
