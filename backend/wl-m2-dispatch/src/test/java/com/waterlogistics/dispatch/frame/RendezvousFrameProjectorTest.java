@@ -62,11 +62,11 @@ class RendezvousFrameProjectorTest {
     }
 
     private static CandidateVerdict feasible(String model, String droneId) {
-        return new CandidateVerdict("C-" + droneId, model, "N1", droneId, Verdict.FEASIBLE, List.of());
+        return new CandidateVerdict("C-" + droneId, model, "N1", droneId, 3.5, Verdict.FEASIBLE, List.of());
     }
 
     private static CandidateVerdict infeasible(String model, String droneId, String... reasons) {
-        return new CandidateVerdict("C-" + droneId, model, "N1", droneId,
+        return new CandidateVerdict("C-" + droneId, model, "N1", droneId, 2.8,
                 Verdict.INFEASIBLE, List.of(reasons));
     }
 }
