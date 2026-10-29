@@ -9,13 +9,17 @@ function validNest(nest) {
   return Boolean(nest?.nestId) && Number.isFinite(Number(nest.lon)) && Number.isFinite(Number(nest.lat))
 }
 
-export function drawNests(group, nests, debug = false) {
+export function drawNests(group, nests, assessment = null, debug = false) {
   group.clearLayers()
+  const rejectedNestIds = new Set((assessment?.rows || []).filter(row => !row.feasible || row.reasons?.length).map(row => row.nestId).filter(Boolean))
   for (const nest of nests.filter(validNest)) {
     const point = systemMapPoint(nest)
+    const selected = assessment?.chosenNestId === nest.nestId
+    const rejected = rejectedNestIds.has(nest.nestId)
+      || (assessment?.chosenNestId && !assessment?.rows?.length && !selected)
     const marker = L.marker([point.lat, point.lon], {
       icon: L.divIcon({
-        className: 'nest-pin',
+        className: `nest-pin${selected ? ' candidate-selected' : ''}${rejected ? ' candidate-rejected' : ''}`,
         html: `<span>⌂</span><b class="nest-marker-label">${escapeHtml(nest.nestId)}</b>`,
         iconSize: [38, 42],
         iconAnchor: [19, 21]

@@ -10,7 +10,7 @@ export function createRealtime() {
   let ws, sse, poll, retry, scriptTimer, generation = 0, buffered = [], priming = false, mockStep = 0
   const status = reactive({ mode: 'live', connection: '未连接', error: '' })
   const listeners = new Set(), recording = []
-  const clearLiveMap = () => { ship.apply(null); drone.apply(null); orders.rendezvous = null; alert.clear() }
+  const clearLiveMap = () => { ship.apply(null); drone.apply(null); orders.applyRendezvous(null); alert.clear() }
   const subscribe = fn => { listeners.add(fn); return () => listeners.delete(fn) }
   const emit = (type, data, replay = false) => {
     if (priming && !replay) { buffered.push({ type, data }); return }
@@ -19,7 +19,7 @@ export function createRealtime() {
     if (!isRenderableFrame(type, data)) return
     if (type === 'ship_traj') ship.apply(data)
     else if (type === 'drone_state') drone.apply(data)
-    else if (type === 'rendezvous') orders.rendezvous = data
+    else if (type === 'rendezvous') orders.applyRendezvous(data)
     else if (type === 'alarm') alert.apply(data)
     else if (type === 'order_state') { if (!orders.apply(data)) return }
     else return
