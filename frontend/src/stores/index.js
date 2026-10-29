@@ -1,7 +1,20 @@
 import { defineStore } from 'pinia'
 import { ORDER_STATES, normalizeOrder, displayEnum } from '../api/adapter'
 
-export const useShipStore = defineStore('ship', { state: () => ({ current: null }), actions: { apply(data) { this.current = data } } })
+export const useShipStore = defineStore('ship', {
+  state: () => ({ current: null, actualTrack: [] }),
+  actions: {
+    apply(data) {
+      if (!data) { this.current = null; this.actualTrack = []; return }
+      if (!Number.isFinite(data.lon) || !Number.isFinite(data.lat)) return
+      const point = { lon: data.lon, lat: data.lat, ts: data.t0 ?? data.eventTs ?? Date.now() }
+      const last = this.actualTrack.at(-1)
+      if (!last || point.ts > last.ts || point.lon !== last.lon || point.lat !== last.lat) this.actualTrack.push(point)
+      if (this.actualTrack.length > 900) this.actualTrack.shift()
+      this.current = data
+    }
+  }
+})
 export const useNestStore = defineStore('nest', {
   state: () => ({ items: [], loaded: false, error: '' }),
   actions: {
@@ -55,7 +68,7 @@ export const useAlertStore = defineStore('alert', { state: () => ({ items: [] })
 export const useEventStore = defineStore('event', { state: () => ({ items: [] }), actions: { add(type, data) { this.items.unshift({ type, data, ts: data?.eventTs || Date.now() }); this.items = this.items.slice(0, 120) }, clear() { this.items = [] } } })
 export const useWeatherStore = defineStore('weather', { state: () => ({ current: null }), actions: { apply(data) { this.current = data } } })
 export const useOrderStore = defineStore('order', {
-  state: () => ({ byId: {}, timeline: {}, gate: { gateStatus: '正常', gateSources: [] }, rendezvous: null, replaying: false }),
+  state: () => ({ byId: {}, timeline: {}, gate: { gateStatus: '正常', gateSources: [] }, rendezvous: null, previousRendezvous: null, replaying: false }),
   getters: { orders: state => Object.values(state.byId).sort((a,b) => b.eventTs - a.eventTs) },
   actions: {
     apply(data) {
@@ -79,6 +92,15 @@ export const useOrderStore = defineStore('order', {
       for (const order of payload.orders) this.apply(normalizeOrder(order))
       if (payload.dispatchGate) this.gate = { ...payload.dispatchGate, gateStatus: displayEnum(payload.dispatchGate.gateStatus), gateSources: payload.dispatchGate.gateSources?.map(displayEnum) || [] }
     },
-    reset() { this.gate = { gateStatus: '未知', gateSources: [] }; this.byId = {}; this.timeline = {}; this.rendezvous = null; this.replaying = false }
+    applyRendezvous(data) {
+      if (!data) { this.rendezvous = null; this.previousRendezvous = null; return }
+      const current = this.rendezvous
+      const sameOrder = current?.orderId && current.orderId === data.orderId
+      const moved = sameOrder && Number.isFinite(current.lon) && Number.isFinite(current.lat)
+        && (Math.abs(current.lon - data.lon) > 0.00001 || Math.abs(current.lat - data.lat) > 0.00001)
+      this.previousRendezvous = moved ? current : (sameOrder ? this.previousRendezvous : null)
+      this.rendezvous = data
+    },
+    reset() { this.gate = { gateStatus: '未知', gateSources: [] }; this.byId = {}; this.timeline = {}; this.rendezvous = null; this.previousRendezvous = null; this.replaying = false }
   }
 })

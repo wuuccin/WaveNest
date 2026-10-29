@@ -9,8 +9,9 @@ import { drawAlerts } from '../layers/alertLayer'
 import { drawNests } from '../layers/nestLayer'
 import { drawFleet, drawStaticFeatures } from '../layers/staticFeatureLayer'
 import { systemMapPoint, toMapLatLng } from '../map/coordinates'
+import { candidateAssessment } from '../realtime/candidateAssessment'
 
-const props = defineProps({ comparison: { type: Object, default: null }, branchRoute: { type: Object, default: null }, focusRoute: { type: Boolean, default: false }, droneId: { type: String, default: '' } })
+const props = defineProps({ comparison: { type: Object, default: null }, branchRoute: { type: Object, default: null }, focusRoute: { type: Boolean, default: false }, droneId: { type: String, default: '' }, orderId: { type: String, default: '' }, connectionError: { type: String, default: '' } })
 const ship = useShipStore(), drone = useDroneStore(), order = useOrderStore(), alert = useAlertStore(), nest = useNestStore(), fleet = useFleetStore(), airspace = useAirspaceStore()
 let map, staticGroup, comparisonGroup, shipGroup, meetingGroup, droneGroup, branchGroup, alertGroup, nestGroup, fleetGroup, debugReferenceGroup
 let activeBaseLayer = null, activeBaseType = 'imagery'
@@ -18,6 +19,13 @@ const valid = point => point && Number.isFinite(point.lat) && Number.isFinite(po
 const visibleDrone = computed(() => props.droneId ? (drone.byId[props.droneId] || null) : drone.current)
 const displayNests = computed(() => nest.items.filter(item => inServiceArea(item)))
 const displayAirspace = computed(() => airspace.items.filter(item => item.kind !== 'bridge' || inServiceArea(item.center)))
+const assignedNestId = computed(() => {
+  const assigned = fleet.items.find(item => item.droneId === props.droneId)
+  return assigned?.currentNestId || assigned?.homeNestId || null
+})
+const assessment = computed(() => candidateAssessment(order.rendezvous, assignedNestId.value))
+const previousMeeting = computed(() => props.comparison?.meeting || order.previousRendezvous)
+const hasComparison = computed(() => Boolean(props.comparison || previousMeeting.value))
 const tileKey = String(import.meta.env.VITE_TIANDITU_KEY || '').trim()
 const tileStatus = ref(tileKey ? 'loading' : 'missing-key')
 const tileCaption = computed(() => tileStatus.value === 'loaded'
@@ -139,7 +147,7 @@ function installBaseLayerControl() {
   control.addTo(map)
 }
 const meetingShiftKm = computed(() => {
-  const before = props.comparison?.meeting
+  const before = previousMeeting.value
   const after = order.rendezvous
   if (!valid(before) || !valid(after)) return null
   const meanLat = (before.lat + after.lat) * Math.PI / 360
@@ -151,7 +159,7 @@ const meetingShiftKm = computed(() => {
 function drawComparison() {
   comparisonGroup.clearLayers()
   const previousShip = props.comparison?.ship
-  const previousMeeting = props.comparison?.meeting
+  const previousMeeting = props.comparison?.meeting || order.previousRendezvous
   if (previousShip?.points?.length) {
     const points = previousShip.points.filter(valid)
     if (points.length > 1) {
@@ -201,19 +209,19 @@ function drawBranchRoute() {
 const update = () => {
   if (!map) return
   drawComparison()
-  drawShip(map, shipGroup, ship.current, debugEnabled)
+  drawShip(map, shipGroup, ship.current, ship.actualTrack, debugEnabled)
   drawMeeting(map, meetingGroup, order.rendezvous)
-  drawDrone(map, droneGroup, visibleDrone.value, debugEnabled)
-  drawNests(nestGroup, displayNests.value, debugEnabled)
+  drawDrone(map, droneGroup, visibleDrone.value, props.orderId || order.rendezvous?.orderId || '', debugEnabled)
+  drawNests(nestGroup, displayNests.value, assessment.value, debugEnabled)
   drawFleet(fleetGroup, fleet.items, displayNests.value)
   drawStaticFeatures(staticGroup, displayAirspace.value)
   drawBranchRoute()
   drawAlerts(map, alertGroup, alert.items, order.orders, visibleDrone.value, ship.current)
   const rawPoints = (props.focusRoute
-    ? [ship.current, visibleDrone.value, order.rendezvous, props.comparison?.meeting, ...(props.branchRoute?.points || [])]
+    ? [ship.current, visibleDrone.value, order.rendezvous, previousMeeting.value, ...(props.branchRoute?.points || [])]
     : [ship.current, ...(ship.current?.points || []), visibleDrone.value,
       ...(visibleDrone.value?.segments || []).flatMap(segment => segment.points || []), order.rendezvous,
-      props.comparison?.ship, ...(props.comparison?.ship?.points || []), props.comparison?.meeting,
+      props.comparison?.ship, ...(props.comparison?.ship?.points || []), previousMeeting.value,
       ...(props.branchRoute?.points || [])]).filter(valid)
 }
 
@@ -257,15 +265,15 @@ onMounted(() => {
   setTimeout(() => { if (map) { map.invalidateSize(); fitServiceArea(); update() } }, 100)
 })
 watch([() => ship.current, () => visibleDrone.value, () => order.rendezvous, () => alert.items.length,
-  () => order.orders, () => props.comparison, () => props.branchRoute, () => props.droneId, () => nest.items,
+  () => order.previousRendezvous, () => order.orders, () => props.comparison, () => props.branchRoute, () => props.droneId, () => props.orderId, () => nest.items,
   () => fleet.items, () => airspace.items], update, { deep: true })
 onUnmounted(() => { if (map && debugEnabled) map.off('click', pickMapPoint); map?.remove(); map = null; activeBaseLayer = null; debugReferenceGroup = null })
 </script>
 
 <template>
-  <div class="map-view" :class="{ 'is-comparison': comparison }">
-    <div v-if="comparison && meetingShiftKm !== null" class="map-change-summary">
-      <div><span>变向前预计会面点</span><strong>{{ comparison.meeting.lon.toFixed(3) }}°E，{{ comparison.meeting.lat.toFixed(3) }}°N</strong></div>
+  <div class="map-view" :class="{ 'is-comparison': hasComparison }">
+    <div v-if="hasComparison && meetingShiftKm !== null" class="map-change-summary">
+      <div><span>更新前会面点</span><strong>{{ previousMeeting.lon.toFixed(3) }}°E，{{ previousMeeting.lat.toFixed(3) }}°N</strong></div>
       <b>→</b>
       <div><span>更新后的候选会面点</span><strong>{{ order.rendezvous.lon.toFixed(3) }}°E，{{ order.rendezvous.lat.toFixed(3) }}°N</strong></div>
       <em>位置变化约 {{ meetingShiftKm }} km</em>
@@ -275,13 +283,15 @@ onUnmounted(() => { if (map && debugEnabled) map.off('click', pickMapPoint); map
       <span><i class="map-symbol map-symbol-ship">船</i> 船舶当前位置</span>
       <span><i class="map-symbol map-symbol-drone">✈</i> 无人机当前位置</span>
       <span><i class="map-symbol map-symbol-meeting">◎</i> 当前会面点</span>
-      <span><i class="map-line map-line-ship"></i> 当前预测航迹</span>
+      <span><i class="map-line map-line-actual"></i> 船舶实测轨迹</span>
+      <span><i class="map-line map-line-ship"></i> 船舶预测轨迹</span>
+      <span><i class="map-symbol map-symbol-ellipse">◯</i> 预测置信椭圆</span>
       <span><i class="map-line map-line-drone"></i> 无人机去程</span>
       <span><i class="map-line map-line-handover"></i> 末段交接</span>
       <span><i class="map-line map-line-return"></i> 无人机返航</span>
-      <span v-if="comparison"><i class="map-line map-line-before"></i> 变向前预测航迹</span>
-      <span v-if="comparison"><i class="map-symbol map-symbol-before">×</i> 原会面点</span>
-      <span v-if="comparison"><i class="map-line map-line-change"></i> 会面点变化</span>
+      <span v-if="hasComparison"><i class="map-line map-line-before"></i> 变向前预测航迹</span>
+      <span v-if="hasComparison"><i class="map-symbol map-symbol-before">×</i> 原会面点</span>
+      <span v-if="hasComparison"><i class="map-line map-line-change"></i> 会面点变化</span>
       <span v-if="displayNests.length"><i class="map-symbol map-symbol-nest">⌂</i> 后端机巢</span>
       <span v-if="fleet.items.length"><i class="map-symbol map-symbol-fleet">机</i> 后端机队</span>
       <span v-if="displayAirspace.some(item => item.kind === 'bridge')"><i class="map-symbol map-symbol-bridge">桥</i> 桥梁净空</span>
@@ -290,8 +300,9 @@ onUnmounted(() => { if (map && debugEnabled) map.off('click', pickMapPoint); map
     </div>
     <div class="map-shell">
       <div id="operations-map"></div>
-      <div class="map-caption"><span class="live-dot"></span>{{ comparison ? '变向前后对照' : `赣江南昌段 · ${tileCaption}` }}</div>
+      <div class="map-caption"><span class="live-dot"></span>{{ hasComparison ? '会面点更新前后对照' : `赣江南昌段 · ${tileCaption}` }}</div>
       <div class="map-scale">系统与底图：CGCS2000 / WGS-84</div>
+      <div v-if="connectionError" class="map-connection-state" role="status"><strong>实时服务暂时断开</strong><span>地图界面仍可操作，实时业务要素已清空；服务恢复后会自动重连。</span></div>
       <section v-if="debugEnabled" class="map-pick-tool" aria-label="开发取点工具" @click.stop @dblclick.stop @mousedown.stop>
         <strong>开发取点 · 系统坐标</strong>
         <span>点击地图取 CGCS2000 / WGS-84 坐标；点击船、无人机或机巢查看 ID。</span>
