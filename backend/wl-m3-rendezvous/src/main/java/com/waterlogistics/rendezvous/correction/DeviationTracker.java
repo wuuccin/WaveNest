@@ -141,6 +141,10 @@ public final class DeviationTracker {
         return lon;
     }
 
+
+
+
+
     /**
      * 校验航迹列规模——长度一致且不少于 2 点，返回点数。
      *

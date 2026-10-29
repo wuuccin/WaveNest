@@ -21,30 +21,37 @@ public class SimUavTelemetryConnector implements DataSourceConnector {
 
     private final MqDataPublisher publisher;
 
-    /** 演示机数量 */
-    @Value("${wavenest.sim.uav.count:2}")
+    /** 演示机数量——与台账机队规模对齐（T1-5 重配后为四架，两巢各两架） */
+    @Value("${wavenest.sim.uav.count:4}")
     private int uavCount;
-    /** 巡航中心（机巢）经度 */
-    @Value("${wavenest.sim.uav.center-lon:114.305000}")
+    /**
+     * 巡航中心经度——两机巢连线中点（2026-10-28 序号 2 放样定稿后同步）。
+     *
+     * <p>定稿机巢：南 (115.848, 28.642)、北 (115.867, 28.698)，间距 6.50 km。
+     * 仿真机队只有一个圆心，取中点 (115.8575, 28.6700) 使两巢距离相等（各 3.25 km）；
+     * 若沿用旧的航段中点 115.8685/28.6815，会离南巢 4.9 km、北巢 1.7 km，
+     * 「机巢→取货点距离」与遥测位置对不上，候选排序会被这个偏差带偏。
+     */
+    @Value("${wavenest.sim.uav.center-lon:115.857500}")
     private double centerLon;
-    /** 巡航中心纬度 */
-    @Value("${wavenest.sim.uav.center-lat:30.605000}")
+    /** 巡航中心纬度——两机巢连线中点 */
+    @Value("${wavenest.sim.uav.center-lat:28.670000}")
     private double centerLat;
-    /** 巡航半径（十进制度，约几百米量级） */
-    @Value("${wavenest.sim.uav.radius-deg:0.0030}")
+    /** 巡航半径（十进制度）——0.002°≈222 m，巡航圈直径约 445 m，不出江面 */
+    @Value("${wavenest.sim.uav.radius-deg:0.0020}")
     private double radiusDeg;
     /**
      * 每节拍相位推进（弧度）。
      *
-     * <p>取值须与 {@code speed-ms} 自洽：实际位移速度 ≈ 半径 × 本值。半径约 310 m 时，
-     * 0.35 rad ⇒ 约 108 m/s，而上报只有 12 m/s，M4 清洗按「位置差／时间差」反算会判
-     * {@code POSITION_JUMP} 并清空经纬度，回放帧坐标随之变成 NaN。取 0.04 ⇒ 约 12.4 m/s。
+     * <p>取值须与 {@code speed-ms} 自洽：实际位移速度 ≈ 半径 × 本值。半径 0.002°≈222 m 时，
+     * 0.054 rad ⇒ 约 12.0 m/s，与上报 12 m/s 一致；M4 清洗按「位置差／时间差」反算
+     * 不会判 {@code POSITION_JUMP}（原 0.35 的教训见 application-m1-sim.yml 注释）。
      *
      * <p>默认值就地修正而非改 {@code application-m1-sim.yml}：该文件名为
      * {@code application-m1-sim.yml}，与激活 profile {@code sim} 不匹配，Spring 从不加载它，
      * 端口外的仿真参数实际全部取自本类的默认值。
      */
-    @Value("${wavenest.sim.uav.phase-step:0.04}")
+    @Value("${wavenest.sim.uav.phase-step:0.054}")
     private double phaseStep;
     /** 巡航速度（m/s，用于上报 speedMs） */
     @Value("${wavenest.sim.uav.speed-ms:12.0}")

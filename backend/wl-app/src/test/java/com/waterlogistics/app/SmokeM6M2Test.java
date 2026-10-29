@@ -42,7 +42,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * ① SysParamLoader 能读到阈值（宋冰鑫 detect/ 依赖）；② 实体能跑通一次读写；
  * ③ 订单走通「待受理 → 待调度 → 调度中 → 已派发」。测试事务回滚，不污染演示库。
  */
-@SpringBootTest(properties = "wavenest.m2.flight-advance-enabled=false")
+@SpringBootTest(properties = {"wavenest.m2.flight-advance-enabled=false",
+        // T1-5 起机巢在南昌航段、仿真器仍在旧域（杨添爻 T1-4 切换前），
+        // 仿真 AIS 流会覆盖本测试手喂的船位快照导致候选全灭——关掉仿真流，测试独占喂数
+        "wavenest.sim.enabled=false"})
 @RecordApplicationEvents
 @Transactional
 class SmokeM6M2Test {
@@ -97,9 +100,10 @@ class SmokeM6M2Test {
     @Test
     void orderStateMachineWalk() {
         // 前置：喂一条 AIS 让该船有预测快照——候选距离过滤（机巢 5km 内）
-        // 与会面求解（船轨迹快照）都以真实船位为前提；船位取在演示机巢旁
+        // 与会面求解（船轨迹快照）都以真实船位为前提；船位取南昌赣江演示航段
+        // 南昌大桥旁（T1-5 起机巢在航段两端，距 NEST-01 约 2.4km、NEST-02 约 4.0km）
         predictionService.refresh(new AisMessage(
-                "123456789", "冒烟测试船", 114.306, 30.606, 5.0, 90.0,
+                "123456789", "冒烟测试船", 115.8590, 28.6630, 5.0, 90.0,
                 System.currentTimeMillis()));
 
         // 下单（C0 自然触发：submit 发事件 → DispatchTrigger 落库＋受理
@@ -175,8 +179,13 @@ class SmokeM6M2Test {
         taskQueueService.startDispatch(orderId);
         taskQueueService.dispatch(orderId, droneId,
                 LocalDateTime.ofInstant(Instant.ofEpochMilli(System.currentTimeMillis() - 7_200_000L),
-                        ZoneId.of("Asia/Shanghai")),
-                meetLon.doubleValue(), meetLat.doubleValue());
+                        ZoneId.of("Asia/Shanghai")));
+        // T1-6：队列侧不再回填会面点坐标（会面帧与坐标回填归编排器统一发布）；
+        // 本冒烟绕开编排器直驱队列，此处模拟编排器把会面点写回，供飞行推进读取。
+        OrderTaskEntity redispatchedOrder = orderTaskMapper.selectById(orderId);
+        redispatchedOrder.setMeetLon(meetLon);
+        redispatchedOrder.setMeetLat(meetLat);
+        orderTaskMapper.updateById(redispatchedOrder);
         flightPhaseAdvancer.tick();
 
         List<TaskLogEntity> secondFlightLogs = taskLogMapper.selectList(

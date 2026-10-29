@@ -42,7 +42,7 @@ public record HandoverSample(
                 || droneLon < -180.0 || droneLon > 180.0 || droneLat < -90.0 || droneLat > 90.0
                 || shipLon < -180.0 || shipLon > 180.0 || shipLat < -90.0 || shipLat > 90.0) {
             throw new IllegalArgumentException("采样坐标必须为有限数且经纬度在合法范围内，实际 droneLon="
-                    + droneLon + ", droneLat=" + droneLat + ", shipLon=" + shipLon + ", shipLat=" + shipLat);
+                                                       + droneLon + ", droneLat=" + droneLat + ", shipLon=" + shipLon + ", shipLat=" + shipLat);
         }
         if (!Double.isFinite(windSpeedMs) || windSpeedMs < 0.0) {
             throw new IllegalArgumentException("风速不能为负或非有限数，实际 " + windSpeedMs);

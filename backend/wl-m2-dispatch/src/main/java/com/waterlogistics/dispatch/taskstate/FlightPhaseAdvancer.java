@@ -10,6 +10,7 @@ import com.waterlogistics.rendezvous.port.DroneContextPort;
 import com.waterlogistics.storage.entity.OrderTaskEntity;
 import com.waterlogistics.storage.entity.TaskLogEntity;
 import com.waterlogistics.storage.param.SysParamLoader;
+import com.waterlogistics.storage.repository.DroneMapper;
 import com.waterlogistics.storage.repository.OrderTaskMapper;
 import com.waterlogistics.storage.repository.TaskLogMapper;
 import jakarta.annotation.PostConstruct;
@@ -87,6 +88,7 @@ public class FlightPhaseAdvancer {
     private final DroneContextPort droneContextPort;
     private final SysParamLoader sysParamLoader;
     private final ApplicationEventPublisher eventPublisher;
+    private final DroneMapper droneMapper;
     private final Clock clock;
     private final Map<String, AtomicLong> fallbackVersions = new ConcurrentHashMap<>();
 
@@ -113,9 +115,10 @@ public class FlightPhaseAdvancer {
             TaskLogMapper taskLogMapper,
             DroneContextPort droneContextPort,
             SysParamLoader sysParamLoader,
-            ApplicationEventPublisher eventPublisher) {
+            ApplicationEventPublisher eventPublisher,
+            DroneMapper droneMapper) {
         this(orderTaskMapper, taskLogMapper, droneContextPort, sysParamLoader,
-                eventPublisher, Clock.systemDefaultZone());
+                eventPublisher, droneMapper, Clock.systemDefaultZone());
     }
 
     FlightPhaseAdvancer(OrderTaskMapper orderTaskMapper,
@@ -124,11 +127,23 @@ public class FlightPhaseAdvancer {
             SysParamLoader sysParamLoader,
             ApplicationEventPublisher eventPublisher,
             Clock clock) {
+        this(orderTaskMapper, taskLogMapper, droneContextPort, sysParamLoader,
+                eventPublisher, null, clock);
+    }
+
+    FlightPhaseAdvancer(OrderTaskMapper orderTaskMapper,
+            TaskLogMapper taskLogMapper,
+            DroneContextPort droneContextPort,
+            SysParamLoader sysParamLoader,
+            ApplicationEventPublisher eventPublisher,
+            DroneMapper droneMapper,
+            Clock clock) {
         this.orderTaskMapper = orderTaskMapper;
         this.taskLogMapper = taskLogMapper;
         this.droneContextPort = droneContextPort;
         this.sysParamLoader = sysParamLoader;
         this.eventPublisher = eventPublisher;
+        this.droneMapper = droneMapper;
         this.clock = clock;
     }
 
@@ -235,13 +250,63 @@ public class FlightPhaseAdvancer {
     }
 
     /**
+     * 按机号查当前在飞订单号（T1-2：实时出口投影用它填 {@code DroneStateFrame.activeOrderId}）。
+     *
+     * <p>取 {@link #cycleStates} 中机号相同、且尚未推进到「已完成」的订单，多条时取
+     * {@code meet_time} 最新的一条——重入队后 {@code create_time} 不变，只有
+     * {@code meet_time} 才标识本派发周期。
+     *
+     * <p><b>为什么不查库</b>：飞行态只写 {@code task_log}，不写 {@code order_task.status}，
+     * 库里订单派发后长期停在「已派发」，按状态查会把已飞完的单重新捞出来；
+     * {@code cycleStates} 的 {@code phase} 是由 {@code task_log} 恢复的真实阶段，判得准。
+     *
+     * <p><b>两条边界</b>：① 缓存由 {@code tick()} 按
+     * {@code wavenest.m2.flight-advance-interval-sec}（默认 2 秒）刷新，派单后到首次 tick
+     * 之前取不到值；② 缺执行机上下文的订单（{@code droneContextPort.resolve} 返回 null）
+     * 在 {@link #advanceOrder} 中直接 return、不建 state，该机永远查不到，与候选链同一数据前提。
+     *
+     * @return 在飞订单号；该机当前无在飞订单时返回 {@code null}（契约允许为空，不算缺值）
+     */
+    public String activeOrderIdOf(String droneId) {
+        if (droneId == null) {
+            return null;
+        }
+        String activeOrderId = null;
+        long latestMeetMs = Long.MIN_VALUE;
+        for (Map.Entry<String, CycleState> entry : cycleStates.entrySet()) {
+            CycleState state = entry.getValue();
+            if (!droneId.equals(state.droneId()) || state.phase() == OrderStatus.FINISHED) {
+                continue;
+            }
+            if (state.meetMs() > latestMeetMs) {
+                latestMeetMs = state.meetMs();
+                activeOrderId = entry.getKey();
+            }
+        }
+        return activeOrderId;
+    }
+
+    /**
      * 按状态链顺序校验并写入一条飞行态审计，随后广播展示视图。
+     *
+     * <p><b>无人机状态同步（10-29 新增）</b>：每次阶段迁移时，同步推进
+     * drone 表的 status / position_type / current_nest_id 三字段（23 §7 状态机）：
+     *
+     * <ul>
+     *   <li>去程中（DISPATCHED→OUTBOUND）：执行任务中，position_type=空中，
+     *       current_nest_id=NULL（已起飞）</li>
+     *   <li>返航中（HANDOVER→RETURNING）：返航中，position_type=空中</li>
+     *   <li>已完成（RETURNING→FINISHED）：空闲，position_type=原巢，
+     *       current_nest_id=homeNestId（已回巢）</li>
+     *   <li>末段交接中（OUTBOUND→HANDOVER）：执行任务中不变，不回写</li>
+     * </ul>
      */
     private void emit(OrderTaskEntity order, OrderStatus from, OrderStatus to,
             String opType, long tsMs) {
         if (rank(to) != rank(from) + 1) {
             throw new IllegalStateException("飞行阶段流转不连续：" + from.getValue() + " → " + to.getValue());
         }
+        syncDroneStatus(order.getDroneId(), from, to);
         TaskLogEntity entry = new TaskLogEntity();
         entry.setOrderId(order.getOrderId());
         entry.setOpType(opType);
@@ -264,6 +329,44 @@ public class FlightPhaseAdvancer {
         }
         log.info("飞行阶段推进：orderId={} {} → {} op={} ts={}",
                 order.getOrderId(), from.getValue(), to.getValue(), opType, tsMs);
+    }
+
+    /** 无人机状态按 23 §7 同步推进。droneMapper 为空（单测未注入）时静默跳过。 */
+    private void syncDroneStatus(String droneId, OrderStatus from, OrderStatus to) {
+        if (droneMapper == null || droneId == null) {
+            return;
+        }
+        var drone = droneMapper.selectById(droneId);
+        if (drone == null) {
+            return;
+        }
+        switch (to) {
+            case OUTBOUND -> {
+                // 起飞 → 执行任务中，已升空
+                drone.setStatus("执行任务中");
+                drone.setPositionType("空中");
+                drone.setCurrentNestId(null);
+            }
+            case HANDOVER -> {
+                // 末段交接中：执行任务中不变，不回写
+                return;
+            }
+            case RETURNING -> {
+                // 返航：返航中，仍在空中
+                drone.setStatus("返航中");
+                drone.setPositionType("空中");
+            }
+            case FINISHED -> {
+                // 已完成：空闲，回原巢
+                drone.setStatus("空闲");
+                drone.setPositionType("原巢");
+                drone.setCurrentNestId(drone.getHomeNestId());
+            }
+            default -> {
+                return; // 非飞行阶段迁移（保险）
+            }
+        }
+        droneMapper.updateById(drone);
     }
 
     /**

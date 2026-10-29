@@ -9,6 +9,7 @@ import com.waterlogistics.contract.mq.TopicName;
 import com.waterlogistics.contract.state.AlertType;
 import com.waterlogistics.dispatch.reschedule.RescheduleService;
 import com.waterlogistics.dispatch.homecoming.HomecomingService;
+import com.waterlogistics.dispatch.taskstate.FlightPhaseAdvancer;
 import com.waterlogistics.storage.entity.OrderTaskEntity;
 import com.waterlogistics.storage.entity.TaskLogEntity;
 import com.waterlogistics.storage.repository.DroneMapper;
@@ -82,6 +83,8 @@ public class AlertDrivenDispatcher {
     private final DroneMapper droneMapper;
     private final TaskLogMapper taskLogMapper;
     private final ApplicationEventPublisher eventPublisher;
+    /** 反查在飞订单（自带「已飞完」判据），口径见 {@link #resolveOrderId}。 */
+    private final FlightPhaseAdvancer flightPhaseAdvancer;
 
     /** 已复核过的告警事件 id（返航复核按 eventId 去重，见类注释） */
     private final Set<String> reviewedEventIds = ConcurrentHashMap.newKeySet();
@@ -92,7 +95,8 @@ public class AlertDrivenDispatcher {
             OrderTaskMapper orderTaskMapper,
             DroneMapper droneMapper,
             TaskLogMapper taskLogMapper,
-            ApplicationEventPublisher eventPublisher) {
+            ApplicationEventPublisher eventPublisher,
+            FlightPhaseAdvancer flightPhaseAdvancer) {
         this.rescheduleService = rescheduleService;
         this.homecomingService = homecomingService;
         this.assembler = assembler;
@@ -100,6 +104,7 @@ public class AlertDrivenDispatcher {
         this.droneMapper = droneMapper;
         this.taskLogMapper = taskLogMapper;
         this.eventPublisher = eventPublisher;
+        this.flightPhaseAdvancer = flightPhaseAdvancer;
     }
 
     /**
@@ -142,20 +147,22 @@ public class AlertDrivenDispatcher {
 
     /** 分派表第 1 行：偏航 → 重调度（重入队 ＋ 派发编排）。 */
     private void handleDeviation(AlertEventMessage message) {
-        if (isBlank(message.orderId())) {
-            log.warn("偏航告警缺订单号，无法重调度：eventId={} droneId={}",
+        String orderId = resolveOrderId(message);
+        if (orderId == null) {
+            log.warn("偏航告警缺订单号（消息未带且按机号反查未命中），无法重调度：eventId={} droneId={}",
                     message.eventId(), message.droneId());
             return;
         }
-        String droneId = rescheduleService.reschedule(message.orderId());
+        String newDroneId = rescheduleService.reschedule(orderId);
         log.info("偏航告警触发重调度完成：orderId={} 新机={} eventId={}",
-                message.orderId(), droneId, message.eventId());
+                orderId, newDroneId, message.eventId());
     }
 
     /** 分派表第 2 行：低电量／失联 → 返航复核（决策落审计 ＋ 广播，下游不接实）。 */
     private void handleHomecoming(AlertEventMessage message) {
-        if (isBlank(message.orderId())) {
-            log.warn("告警缺订单号（失联早于订单绑定属正常），无法返航复核：eventId={} type={}",
+        String orderId = resolveOrderId(message);
+        if (orderId == null) {
+            log.warn("告警缺订单号（失联早于订单绑定属正常；按机号反查亦未命中），无法返航复核：eventId={} type={}",
                     message.eventId(), message.alertType());
             return;
         }
@@ -163,10 +170,10 @@ public class AlertDrivenDispatcher {
             log.info("同一告警事件已复核过，去重跳过：eventId={}", message.eventId());
             return;
         }
-        OrderTaskEntity order = orderTaskMapper.selectById(message.orderId());
+        OrderTaskEntity order = orderTaskMapper.selectById(orderId);
         if (order == null) {
             log.warn("返航复核跳过：订单不存在 orderId={} eventId={}",
-                    message.orderId(), message.eventId());
+                    orderId, message.eventId());
             return;
         }
         HomecomingInput input = assembler.build(message, order,
@@ -183,6 +190,39 @@ public class AlertDrivenDispatcher {
                 decision.tier(), decision.targetId(), decision.needSlotRequest(), decision.reason()));
         log.info("告警驱动返航复核完成：orderId={} tier={} eventId={}",
                 order.getOrderId(), decision.tier().getValue(), message.eventId());
+    }
+
+    /**
+     * 解析告警对应的订单号：消息自带优先，为空则按机号反查当前在飞订单。
+     *
+     * <p><b>为什么必须带「是否已飞完」判据</b>：订单派发后状态不再流转，飞完的单仍停在「已派发」、
+     * 机号仍绑着，按状态查库会拿到陈旧单。这里<b>不查库</b>，只调
+     * {@link FlightPhaseAdvancer#activeOrderIdOf(String)}——它走推进器的内存阶段缓存，
+     * 跳过 {@code phase == FINISHED}、按 {@code meet_time} 取本派发周期最新的一条。
+     *
+     * <p><b>两条边界</b>（与候选链同一数据前提）：① 缓存每
+     * {@code wavenest.m2.flight-advance-interval-sec} 秒（默认 2）刷新一次，
+     * 派单后首次刷新前取不到值；② 缺执行机上下文的机（{@code droneContextPort.resolve}
+     * 返回 {@code null}）永远查不到。
+     *
+     * @return 订单号；消息未带且反查未命中时返回 {@code null}，
+     *         由调用方维持既有「缺订单号」告警并放弃动作（不臆造单号）
+     */
+    private String resolveOrderId(AlertEventMessage message) {
+        if (!isBlank(message.orderId())) {
+            return message.orderId();
+        }
+        String droneId = message.droneId();
+        if (isBlank(droneId) || flightPhaseAdvancer == null) {
+            return null;
+        }
+        String activeOrderId = flightPhaseAdvancer.activeOrderIdOf(droneId);
+        if (activeOrderId == null) {
+            return null;
+        }
+        log.info("告警未带订单号，按机号反查到在飞订单：eventId={} type={} droneId={} orderId={}",
+                message.eventId(), message.alertType(), droneId, activeOrderId);
+        return activeOrderId;
     }
 
     /**

@@ -3,12 +3,12 @@ package com.waterlogistics.dispatch.queue;
 import com.waterlogistics.contract.order.OrderView;
 import com.waterlogistics.contract.rest.WaitReason;
 import com.waterlogistics.contract.state.OrderStatus;
-import com.waterlogistics.contract.ws.RendezvousFrame;
 import com.waterlogistics.dispatch.gate.DispatchGateService;
 import com.waterlogistics.dispatch.order.OrderStateChangedEvent;
-import com.waterlogistics.dispatch.rendezvous.RendezvousPlanCommittedEvent;
+import com.waterlogistics.storage.entity.DroneEntity;
 import com.waterlogistics.storage.entity.OrderTaskEntity;
 import com.waterlogistics.storage.entity.TaskLogEntity;
+import com.waterlogistics.storage.repository.DroneMapper;
 import com.waterlogistics.storage.repository.OrderTaskMapper;
 import com.waterlogistics.storage.repository.TaskLogMapper;
 import org.springframework.stereotype.Service;
@@ -39,20 +39,28 @@ public class TaskQueueService {
     private final OrderTaskMapper orderTaskMapper;
     private final TaskLogMapper taskLogMapper;
     private final DispatchGateService dispatchGateService;
+    private final DroneMapper droneMapper;
     private final ApplicationEventPublisher eventPublisher;
     private final Map<String, AtomicLong> fallbackVersions = new ConcurrentHashMap<>();
 
     public TaskQueueService(OrderTaskMapper orderTaskMapper, TaskLogMapper taskLogMapper,
             DispatchGateService dispatchGateService) {
-        this(orderTaskMapper, taskLogMapper, dispatchGateService, event -> { });
+        this(orderTaskMapper, taskLogMapper, dispatchGateService, null, event -> { });
     }
 
     @Autowired
     public TaskQueueService(OrderTaskMapper orderTaskMapper, TaskLogMapper taskLogMapper,
             DispatchGateService dispatchGateService, ApplicationEventPublisher eventPublisher) {
+        this(orderTaskMapper, taskLogMapper, dispatchGateService, null, eventPublisher);
+    }
+
+    TaskQueueService(OrderTaskMapper orderTaskMapper, TaskLogMapper taskLogMapper,
+            DispatchGateService dispatchGateService, DroneMapper droneMapper,
+            ApplicationEventPublisher eventPublisher) {
         this.orderTaskMapper = orderTaskMapper;
         this.taskLogMapper = taskLogMapper;
         this.dispatchGateService = dispatchGateService;
+        this.droneMapper = droneMapper;
         this.eventPublisher = eventPublisher;
     }
 
@@ -89,30 +97,30 @@ public class TaskQueueService {
         transition(order, OrderStatus.WAIT_DISPATCH, OrderStatus.DISPATCHING, "组批调度");
     }
 
-    /** 派发：调度中 → 已派发（第 4 步定案 + 第 5 步回填，关联无人机与起飞时刻） */
+    /**
+     * 派发：调度中 → 已派发（第 4 步定案 + 第 5 步回填，关联无人机与起飞时刻）。
+     *
+     * <p><b>T1-6（2026-10-27 口径调整）</b>：会面点坐标回填与会面帧
+     * （{@code RendezvousPlanCommittedEvent}）由编排器统一发布，此处不发——
+     * 队列侧签名没有候选数与淘汰原因，再发一帧只会产生「一条全、一条空」的
+     * 重复帧。原带 meetLon/meetLat 的五参重载无任何调用方（全仓仅编排器调
+     * 本方法），属遗留死代码，已一并清除。
+     *
+     * <p><b>无人机状态回写（10-29 新增）</b>：派单即 L5 占位，
+     * 同时把执行机置为「已预占」（23 §7：L5 占位成功至起飞前的窗口），
+     * 还在原巢上（position_type=原巢，current_nest_id 不变）。后续起飞／返航／
+     * 完成由 {@link com.waterlogistics.dispatch.taskstate.FlightPhaseAdvancer}
+     * 在飞行阶段迁移时点继续推进。
+     */
     @Transactional
     public void dispatch(String orderId, String droneId, LocalDateTime meetTime) {
-        dispatch(orderId, droneId, meetTime, null, null);
-    }
-
-    /** 派发并回填 M2 已求得的组合会面方案。 */
-    @Transactional
-    public void dispatch(String orderId, String droneId, LocalDateTime meetTime,
-            Double meetLon, Double meetLat) {
         OrderTaskEntity order = orderTaskMapper.selectById(orderId);
         requireStatus(order, OrderStatus.DISPATCHING);
         order.setDroneId(droneId);
         order.setMeetTime(meetTime);
-        if (meetLon != null && meetLat != null) {
-            order.setMeetLon(java.math.BigDecimal.valueOf(meetLon));
-            order.setMeetLat(java.math.BigDecimal.valueOf(meetLat));
-        }
         orderTaskMapper.updateById(order);
+        markDronePreoccupied(droneId);
         transition(order, OrderStatus.DISPATCHING, OrderStatus.DISPATCHED, "派发");
-        if (meetLon != null && meetLat != null) {
-            eventPublisher.publishEvent(new RendezvousPlanCommittedEvent(
-                    new RendezvousFrame(orderId, meetLon, meetLat, true)));
-        }
     }
 
     /**
@@ -130,6 +138,10 @@ public class TaskQueueService {
         if (current.isTerminal()) {
             throw new IllegalStateException(
                 "订单 " + orderId + " 已终止（" + current.getValue() + "），不允许重入队");
+        }
+        // 放弃会面 → 执行机释放，状态回空闲（position_type 复位、current_nest_id 不变）
+        if (order.getDroneId() != null) {
+            markDroneIdle(order.getDroneId(), true);
         }
         order.setDroneId(null);
         order.setMeetTime(null);
@@ -176,8 +188,64 @@ public class TaskQueueService {
         OrderStatus current = OrderStatus.fromValue(order.getStatus());
         if (current != expected) {
             throw new IllegalStateException(
-                "订单 " + order.getOrderId() + " 当前状态 " + current.getValue()
+                "订单 " + orderIdSafe(order) + " 当前状态 " + current.getValue()
                     + "，不允许从 " + expected.getValue() + " 流转");
         }
+    }
+
+    private static String orderIdSafe(OrderTaskEntity order) {
+        return order == null ? "(null)" : order.getOrderId();
+    }
+
+    // --------------------------------------------------------------
+    // 无人机状态回写（23 §7 状态机 + DroneEntity 三字段：status /
+    // current_nest_id / position_type）。跨派发、重入队两入口。
+    // FlightPhaseAdvancer 负责后续飞行阶段（起飞→执行中→返航→完成）。
+    // --------------------------------------------------------------
+
+    /**
+     * 派单占位：置为「已预占」，还在原巢上。
+     * 仅当 droneMapper 注入时生效（兼容单测的 mock 构造器）。
+     */
+    private void markDronePreoccupied(String droneId) {
+        if (droneMapper == null || droneId == null) {
+            return;
+        }
+        DroneEntity drone = droneMapper.selectById(droneId);
+        if (drone == null) {
+            return;
+        }
+        drone.setStatus("已预占");
+        drone.setPositionType("原巢");
+        // current_nest_id 不变，仍指向原巢
+        droneMapper.updateById(drone);
+    }
+
+    /**
+     * 释放占位：置为「空闲」，current_nest_id 复位到 homeNestId。
+     *
+     * @param leavePosition 若为 true（重入队路径），仅改 status 与 position_type；
+     *                      若为 false（FlightPhaseAdvancer 完成时调用），
+     *                      current_nest_id 也复归 homeNestId
+     */
+    private void markDroneIdle(String droneId, boolean leavePosition) {
+        if (droneMapper == null || droneId == null) {
+            return;
+        }
+        DroneEntity drone = droneMapper.selectById(droneId);
+        if (drone == null) {
+            return;
+        }
+        drone.setStatus("空闲");
+        drone.setPositionType("原巢");
+        if (!leavePosition) {
+            drone.setCurrentNestId(drone.getHomeNestId());
+        }
+        droneMapper.updateById(drone);
+    }
+
+    /** 供 FlightPhaseAdvancer 复用的包内入口：返航/完成时调用。 */
+    void markDroneFinished(String droneId) {
+        markDroneIdle(droneId, false);
     }
 }

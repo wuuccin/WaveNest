@@ -31,7 +31,7 @@ class SimAisConnectorTest {
     }
 
     @Test
-    @DisplayName("节拍推进：每 tick 发一条，初始航向 90° 时经度增大、纬度基本不变")
+    @DisplayName("节拍推进：每 tick 发一条，初始航向 31.2°（赣江航道南昌→八一走向）时经纬度均增大")
     void advancesAlongHeading() {
         sim.pollOnce(1_000L);
         sim.pollOnce(2_000L);
@@ -41,9 +41,9 @@ class SimAisConnectorTest {
         AisMessage first = sent.get(0);
         AisMessage second = sent.get(1);
 
-        assertEquals(90.0, first.cog(), 1e-9);
-        assertTrue(first.lon() > 114.300000, "正东航向经度应增大");
-        assertEquals(30.600000, first.lat(), 1e-6, "纬度不应漂移");
+        assertEquals(31.2, first.cog(), 1e-9);
+        assertTrue(first.lon() > 115.861100, "向东北（沿赣江航道往八一大桥方向）经度应增大");
+        assertTrue(first.lat() > 28.666000, "向北航向纬度应增大");
         assertTrue(second.lon() > first.lon(), "第二个节拍应继续前进");
     }
 
@@ -52,7 +52,7 @@ class SimAisConnectorTest {
     void turnPersistsAcrossTicks() {
         sim.pollOnce(1_000L);
         double newCog = sim.injectTurn(60.0);
-        assertEquals(150.0, newCog, 1e-9);
+        assertEquals(91.2, newCog, 1e-9);
 
         publisher.clear();
         sim.pollOnce(2_000L);
@@ -62,9 +62,9 @@ class SimAisConnectorTest {
         List<AisMessage> after = publisher.ais();
         assertEquals(3, after.size(), "变向后每个节拍都应继续发数据");
         for (AisMessage m : after) {
-            assertEquals(150.0, m.cog(), 1e-9, "变向必须持续，不能只改一帧");
+            assertEquals(91.2, m.cog(), 1e-9, "变向必须持续，不能只改一帧");
         }
-        assertTrue(after.get(2).lat() < after.get(0).lat(), "150° 航向纬度应递减");
+        assertTrue(after.get(2).lon() > after.get(0).lon(), "91°（近正东）航向经度应递增");
     }
 
     @Test
@@ -77,9 +77,8 @@ class SimAisConnectorTest {
                     "第 " + (i + 1) + " 次注入未生效");
             cog = next;
         }
-        assertEquals(190.0, sim.currentCog(), 1e-9);
+        assertEquals(131.2, sim.currentCog(), 1e-9);
     }
-
     @Test
     @DisplayName("航向归一化：-90° → 270°，450° → 90°")
     void normalizesHeading() {
@@ -95,13 +94,13 @@ class SimAisConnectorTest {
         sim.pollOnce(2_000L);
 
         sim.reset();
-        assertEquals(90.0, sim.currentCog(), 1e-9);
+        assertEquals(31.2, sim.currentCog(), 1e-9);
 
         publisher.clear();
         sim.pollOnce(3_000L);
         AisMessage m = publisher.ais().get(0);
-        assertTrue(Math.abs(m.lon() - 114.300000) < 0.001, "reset 后应从起点附近重新出发");
-        assertEquals(30.600000, m.lat(), 1e-6);
+        assertTrue(Math.abs(m.lon() - 115.861100) < 0.001, "reset 后应从起点附近重新出发");
+        assertTrue(m.lat() >= 28.666000, "reset 后从船起点沿 31.2° 向北（赣江航道）前进");
     }
 
     @Test

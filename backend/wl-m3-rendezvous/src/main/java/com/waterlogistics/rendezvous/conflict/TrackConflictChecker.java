@@ -174,9 +174,6 @@ public final class TrackConflictChecker {
 
 
 
-
-
-
     /**
      * 三维包围盒粗筛——§3.4 步骤 2：水平箱距（二维）与垂直箱隙<b>都</b>小于各自安全
      * 间隔才可能冲突，否则近零成本剔除。箱距是任意轨迹点对距离的下界，故剔除不丢真冲突。
@@ -209,24 +206,28 @@ public final class TrackConflictChecker {
             if (p.t() < tStart || p.t() > tEnd) {
                 continue;
             }
-            box[0] = Math.min(box[0], p.x());
-            box[1] = Math.max(box[1], p.x());
-            box[2] = Math.min(box[2], p.y());
-            box[3] = Math.max(box[3], p.y());
-            box[4] = Math.min(box[4], p.altM());
-            box[5] = Math.max(box[5], p.altM());
+            TrackConflictChecker.expand(box, p);
         }
         // 时间窗端点多落在两个航点之间：补插值端点，避免只用窗内航点收窄过度
-        for (long t : new long[] {tStart, tEnd}) {
+        for (long t : new long[]{tStart, tEnd}) {
             LocalPoint p = TrackConflictChecker.interpolate(points, t);
-            box[0] = Math.min(box[0], p.x());
-            box[1] = Math.max(box[1], p.x());
-            box[2] = Math.min(box[2], p.y());
-            box[3] = Math.max(box[3], p.y());
-            box[4] = Math.min(box[4], p.altM());
-            box[5] = Math.max(box[5], p.altM());
+            TrackConflictChecker.expand(box, p);
         }
         return box;
+    }
+
+
+
+
+
+    /** 用单个点扩张包围盒（逐维取 min/max） */
+    private static void expand(double[] box, LocalPoint p) {
+        box[0] = Math.min(box[0], p.x());
+        box[1] = Math.max(box[1], p.x());
+        box[2] = Math.min(box[2], p.y());
+        box[3] = Math.max(box[3], p.y());
+        box[4] = Math.min(box[4], p.altM());
+        box[5] = Math.max(box[5], p.altM());
     }
 
 

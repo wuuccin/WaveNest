@@ -11,12 +11,14 @@ import com.waterlogistics.contract.ws.WsFrameType;
 import com.waterlogistics.dispatch.order.OrderStateChangedEvent;
 import com.waterlogistics.dispatch.prediction.PredictionUpdatedEvent;
 import com.waterlogistics.dispatch.rendezvous.RendezvousPlanCommittedEvent;
+import com.waterlogistics.dispatch.taskstate.FlightPhaseAdvancer;
 import com.waterlogistics.dispatch.taskstate.FlightPhaseChangedEvent;
 import org.springframework.amqp.core.ExchangeTypes;
 import org.springframework.amqp.rabbit.annotation.Exchange;
 import org.springframework.amqp.rabbit.annotation.Queue;
 import org.springframework.amqp.rabbit.annotation.QueueBinding;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.event.TransactionPhase;
@@ -33,8 +35,18 @@ public final class RealtimeEventBridge {
 
     private final WsPushEndpoint endpoint;
 
+    /** 可为 null：单元测试按旧签名构造时不查在飞订单，{@code activeOrderId} 取 null。 */
+    private final FlightPhaseAdvancer flightPhaseAdvancer;
+
     public RealtimeEventBridge(WsPushEndpoint endpoint) {
+        this(endpoint, null);
+    }
+
+    @Autowired
+    public RealtimeEventBridge(WsPushEndpoint endpoint,
+            FlightPhaseAdvancer flightPhaseAdvancer) {
         this.endpoint = endpoint;
+        this.flightPhaseAdvancer = flightPhaseAdvancer;
     }
 
     /** 等状态事务提交后再发送已确认的订单视图；本层只转发。 */
@@ -74,7 +86,7 @@ public final class RealtimeEventBridge {
     public void onUavTelemetry(UavTelemetry telemetry) {
         endpoint.publish(WsFrameType.DRONE_STATE, new DroneStateFrame(
                 telemetry.uavId(), telemetry.lon(), telemetry.lat(), telemetry.battery(),
-                null, telemetry.ts()));
+                null, telemetry.ts(), telemetry.heading(), activeOrderIdOf(telemetry.uavId())));
     }
 
     /** C5 告警产出走 alert.event；本层只做字段投影与提示语拼装。 */
@@ -92,7 +104,35 @@ public final class RealtimeEventBridge {
                 AlertType.fromValue(event.alertType()),
                 AlertLevel.fromValue(event.level()),
                 event.droneId(),
-                alertMessage(event)));
+                alertMessage(event),
+                // 位置由告警发送侧（T1-3）写上；取不到就原样传 null，不补默认坐标。
+                event.lon(), event.lat(),
+                // 订单号：发送侧带了就用带上的；没带则按机号反查在飞订单（口径见 alertOrderIdOf）。
+                alertOrderIdOf(event),
+                event.eventId()));
+    }
+
+    /**
+     * 告警帧的订单号：消息自带优先，为空则按机号反查当前在飞订单。
+     *
+     * <p>与 M2 侧 {@code AlertDrivenDispatcher} 的解析口径一致（自带优先、为空才反查）：
+     * 发送侧带了就用发送侧的——那是检测层当轮的任务态，最准；没带才反查。
+     * 这样「帧里的单号」与「重调度／返航复核实际用的单号」是同一个，不会各说各话。
+     *
+     * <p>反查只读飞行阶段推进器的内存阶段缓存（跳过已飞完的订单，零 DB 查询）；
+     * 反查未命中时仍传 {@code null}——契约允许为空，不臆造单号。
+     */
+    private String alertOrderIdOf(AlertEventMessage event) {
+        String carried = event.orderId();
+        if (carried != null && !carried.isBlank()) {
+            return carried;
+        }
+        return activeOrderIdOf(event.droneId());
+    }
+
+    /** 按机号查在飞订单号；缺推进器（单测场景）或该机无在飞订单时为 null。 */
+    private String activeOrderIdOf(String droneId) {
+        return flightPhaseAdvancer == null ? null : flightPhaseAdvancer.activeOrderIdOf(droneId);
     }
 
     private static String alertMessage(AlertEventMessage event) {

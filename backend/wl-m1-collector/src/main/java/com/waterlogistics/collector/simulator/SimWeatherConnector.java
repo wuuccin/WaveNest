@@ -25,14 +25,29 @@ public class SimWeatherConnector implements DataSourceConnector {
 
     private final MqDataPublisher publisher;
 
-    /** 网格左下角经度 */
-    @Value("${wavenest.sim.weather.lon0:114.290000}")
+    /**
+     * 网格左下角经度——随航段一起挪（2026-10-28 定稿坐标，南巢 115.848 / 北巢 115.867）。
+     *
+     * <p>取 115.840：定稿航段是<b>西南—东北斜向</b>的，方网格要同时罩住南巢与北巢，
+     * 左下角必须比南巢再往西南退一点，否则北界够、东界不够（反过来同理）。
+     */
+    @Value("${wavenest.sim.weather.lon0:115.840000}")
     private double lon0;
-    /** 网格左下角纬度 */
-    @Value("${wavenest.sim.weather.lat0:30.590000}")
+    /** 网格左下角纬度——定稿南巢 28.642 再往南留余量 */
+    @Value("${wavenest.sim.weather.lat0:28.640000}")
     private double lat0;
-    /** 网格步长（十进制度） */
-    @Value("${wavenest.sim.weather.step:0.010000}")
+    /**
+     * 网格步长（十进制度）——0.058°≈6.5 km。
+     *
+     * <p>定稿航段南北跨 0.056°（28.642 → 28.698），原 0.044° 步长的 2×2 网格只到 28.682，
+     * <b>北巢与船的后半程落在网外</b>——船行至北段时风速取不到，抗风淘汰触发不了。
+     * 这是 T1-4 踩过的同一个坑，坐标一改就要重算，不能沿用手写的旧步长。
+     *
+     * <p><b>已知限制</b>：斜向航段 + 2×2 方网格，四角必然远离航线（实测最远 4.7 km，
+     * 在东北角）。按「离船最近的点」取风，船全程仍有网格点覆盖，不影响抗风判定；
+     * 但四角的风本身只是填充值，不应被当作航段内实测。网格点数若要改密，改 {@code grid}。
+     */
+    @Value("${wavenest.sim.weather.step:0.058000}")
     private double step;
     /** 每轴网格点数 */
     @Value("${wavenest.sim.weather.grid:2}")
