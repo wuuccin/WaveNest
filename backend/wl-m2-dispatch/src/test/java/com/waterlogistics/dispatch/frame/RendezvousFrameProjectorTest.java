@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.waterlogistics.algo.candidate.FeasibilityJudge.Verdict;
+import com.waterlogistics.contract.ws.CandidateView;
 import com.waterlogistics.contract.ws.RendezvousFrame;
 import com.waterlogistics.dispatch.feasibility.CandidateFeasibilityPlanner.CandidateVerdict;
 import com.waterlogistics.dispatch.feasibility.CandidateFeasibilityPlanner.FeasibleSelection;
@@ -48,6 +49,62 @@ class RendezvousFrameProjectorTest {
 
         long expected = MEET.atZone(ZoneId.of("Asia/Shanghai")).toInstant().toEpochMilli();
         assertEquals(expected, frame.etaTs().longValue());
+    }
+
+    /**
+     * 候选对比三项（10-29 第二步）：中选机巢／中选无人机／全量候选必须随帧下发，
+     * 且<b>全量候选含中选者</b>——前端按 {@code selected} 高亮，缺中选者则对比卡无高亮项。
+     */
+    @Test
+    void project_shouldCarryChosenNestAndFullCandidates() {
+        FeasibleSelection selection = new FeasibleSelection(null, List.of(
+                new CandidateVerdict("C-A", "M400", "NEST-01", "UAV-02", 4.57,
+                        Verdict.FEASIBLE, List.of()),
+                new CandidateVerdict("C-B", "M30T", "NEST-02", "UAV-03", 2.19,
+                        Verdict.FEASIBLE, List.of()),
+                new CandidateVerdict("C-C", "M3T", "NEST-02", "UAV-04", 2.19,
+                        Verdict.INFEASIBLE, List.of("载重不足"))));
+
+        List<CandidateView> views =
+                RendezvousFrameProjector.candidateViewsOf(selection, "C-A");
+
+        RendezvousFrame frame = new RendezvousFrameProjector()
+                .project(new RendezvousFrameProjector.Input(
+                        "ORD-1", 115.9, 29.7, true, 3, List.of(), MEET,
+                        "NEST-01", "UAV-02", views));
+
+        // 判据 1：中选机巢与中选无人机随帧下发
+        assertEquals("NEST-01", frame.chosenNestId());
+        assertEquals("UAV-02", frame.chosenDroneId());
+
+        // 判据 2：全量候选（含中选者），不是只列落选
+        assertEquals(3, frame.candidates().size());
+        assertEquals(1, frame.candidates().stream().filter(CandidateView::selected).count());
+        assertEquals("C-A", frame.candidates().stream()
+                .filter(CandidateView::selected).findFirst().orElseThrow().candidateId());
+
+        // 判据 3：可行布尔 + 距离透传；落选项带原因
+        assertTrue(frame.candidates().get(0).feasible());
+        assertEquals(4.57, frame.candidates().get(0).distKm(), 1e-6);
+        assertEquals(List.of("载重不足"), frame.candidates().get(2).reasons());
+        assertEquals(false, frame.candidates().get(2).feasible());
+
+        // 判据 4：候选列表不可变（防御性拷贝，外部改不动）
+        assertThrows(UnsupportedOperationException.class,
+                () -> frame.candidates().add(frame.candidates().get(0)));
+    }
+
+    /** 上游组合缺失时 distKm 为 NaN，必须转成 null 出库——NaN 不是合法 JSON，会让前端整帧解析失败。 */
+    @Test
+    void candidateViewsOf_shouldTurnNanDistKmIntoNull() {
+        FeasibleSelection selection = new FeasibleSelection(null, List.of(
+                new CandidateVerdict("C-A", "M400", "NEST-01", "UAV-02", Double.NaN,
+                        Verdict.FEASIBLE, List.of())));
+
+        List<CandidateView> views =
+                RendezvousFrameProjector.candidateViewsOf(selection, "C-A");
+
+        assertEquals(null, views.get(0).distKm());
     }
 
     /** 淘汰原因文案口径由投影器统一提供，编排器的帧与异常消息都走它，两边不得分叉。 */
