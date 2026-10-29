@@ -35,7 +35,14 @@ class ColdStartBearingRobustnessTest {
 
     private static final long T0 = 1_760_000_000_000L;
 
-    /** 南昌航段起点（T1-4 仿真器真值）与真航向。 */
+    /**
+     * 复现缺陷用的历史航向 21°（T1-4 时的仿真器真值）。
+     *
+     * <p><b>不是当前配置</b>：10-29 序号 1 已把仿真器航向改为 31.2°、起点改为
+     * 115.8611/28.6660。本类的目的是「无论真航向是多少，冷启动都不能被噪声带偏」，
+     * 所以固定一组历史值即可，不必跟随仿真器改；当前航向的包络与框由
+     * {@code PredictionBboxNanchangSegmentTest} 负责。
+     */
     private static final double LON0 = 115.8610;
     private static final double LAT0 = 28.6640;
     private static final double TRUE_COG_DEG = 21.0;
