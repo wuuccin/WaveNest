@@ -27,7 +27,7 @@ import org.junit.jupiter.api.Test;
  * <ul>
  *   <li>南端机巢 (115.8480, 28.6420)</li>
  *   <li>北端机巢 (115.8670, 28.6980)</li>
- *   <li>船舶起点 (115.8630, 28.6680)——两巢连线中点附近（垂距 578 m），距南巢 3.24 km、北巢 3.36 km</li>
+ *   <li>船舶起点 (115.8611, 28.6660)——演示基准定稿，沿程 2.40 km，落在赣江航道上（2026-10-29；作废 115.863/28.668）</li>
  * </ul>
  * 两巢相距 6.50 km（按两中心点球面距离）。<b>注意这不是 73 号文档的 5.78 km</b>，
  * 差异已提给彭紫情确认；若后续口径变更，本测试的常量是唯一需要改的地方。
@@ -44,23 +44,24 @@ class SimCoordinatesNanchangSegmentTest {
     /** 北端机巢（上游） */
     private static final double NORTH_LON = 115.8670;
     private static final double NORTH_LAT = 28.6980;
-    /** 船舶起点 */
-    private static final double SHIP_LON = 115.8630;
-    private static final double SHIP_LAT = 28.6680;
+    /** 船舶起点（演示基准定稿：沿程 2.40 km，2026-10-29） */
+    private static final double SHIP_LON = 115.8611;
+    private static final double SHIP_LAT = 28.6660;
 
     /** 航段外包框（含少量余量，容噪声与巡航半径；仍远小于原仿真域 114.29–114.31）。 */
     private static final double MIN_LON = 115.840;
-    private static final double MAX_LON = 115.880;
+    private static final double MAX_LON = 115.890;
     private static final double MIN_LAT = 28.635;
     private static final double MAX_LAT = 28.705;
 
     /**
      * 船走廊的横向容差（km）。
      *
-     * <p>船起点距两巢连线 578 m，已占去大半；再留 200 m 给噪声与等距直线近似的漂移。
-     * 旧航向 21° 时 5 km 航程会偏出约 1.3 km，必然被这条拦下。
+     * <p><b>2026-10-29 修复</b>：船的参考线是<b>赣江航道折线</b>（朝阳→南昌→八一大桥），
+     * 不是两巢连线——两巢连线只是陆地布点。定稿起点就在航道中心线附近，容差收到 0.35 km；
+     * 旧航向 6.7°（朝陆地机巢）跑 700 秒后离中心线 1149 m，在这条判据下必然判红。
      */
-    private static final double SHIP_CORRIDOR_KM = 0.9;
+    private static final double SHIP_CORRIDOR_KM = 0.35;
 
     /**
      * 气象网格四角的最远容差（km）。
@@ -75,16 +76,27 @@ class SimCoordinatesNanchangSegmentTest {
      */
     private static final double GRID_CORNER_TOLERANCE_KM = 5.0;
 
-    /** 点到航段（南巢—北巢线段）的距离，km（等距圆柱近似，演示精度足够）。 */
+    /** 赣江航道折线（船的参考线）：朝阳洲 → 南昌站 → 八一大桥（2026-10-29 修复方案定稿）。 */
+    private static final double[] CORRIDOR_LON = {115.852, 115.859, 115.879};
+    private static final double[] CORRIDOR_LAT = {28.646, 28.663, 28.692};
+
+    /** 点到赣江航道折线的距离，km（等距圆柱近似，演示精度足够）。 */
     private static double distanceToSegmentKm(double lon, double lat) {
         double kmPerDegLat = 111.32;
         double kmPerDegLon = 111.32 * Math.cos(Math.toRadians(28.67));
-        double bx = (NORTH_LON - SOUTH_LON) * kmPerDegLon;
-        double by = (NORTH_LAT - SOUTH_LAT) * kmPerDegLat;
-        double px = (lon - SOUTH_LON) * kmPerDegLon;
-        double py = (lat - SOUTH_LAT) * kmPerDegLat;
-        double t = Math.max(0.0, Math.min(1.0, (px * bx + py * by) / (bx * bx + by * by)));
-        return Math.hypot(px - t * bx, py - t * by);
+        double px = lon * kmPerDegLon;
+        double py = lat * kmPerDegLat;
+        double best = Double.MAX_VALUE;
+        for (int i = 0; i < CORRIDOR_LON.length - 1; i++) {
+            double ax = CORRIDOR_LON[i] * kmPerDegLon;
+            double ay = CORRIDOR_LAT[i] * kmPerDegLat;
+            double bx = CORRIDOR_LON[i + 1] * kmPerDegLon;
+            double by = CORRIDOR_LAT[i + 1] * kmPerDegLat;
+            double t = Math.max(0.0, Math.min(1.0,
+                    ((px - ax) * (bx - ax) + (py - ay) * (by - ay)) / ((bx - ax) * (bx - ax) + (by - ay) * (by - ay))));
+            best = Math.min(best, Math.hypot(px - (ax + t * (bx - ax)), py - (ay + t * (by - ay))));
+        }
+        return best;
     }
 
     private static void assertInBox(String what, double lon, double lat) {
@@ -105,20 +117,20 @@ class SimCoordinatesNanchangSegmentTest {
         assertInBox("AIS 船位", m.lon(), m.lat());
 
         double dShip = Math.hypot(m.lon() - SHIP_LON, m.lat() - SHIP_LAT);
-        assertTrue(dShip < 0.0005, "起点应贴近放样定稿值 (115.863, 28.668)，实际偏差 " + dShip);
-        assertTrue(m.lat() > SHIP_LAT, "应向北上（上游）推进：纬度应增大");
+        assertTrue(dShip < 0.0005, "起点应贴近演示基准定稿值 (115.8611, 28.6660)，实际偏差 " + dShip);
+        assertTrue(m.lat() > SHIP_LAT, "31.2° 航向应向北（沿赣江航道往八一大桥方向）推进：纬度应增大");
     }
 
     @Test
-    @DisplayName("船：跑完整段航程（到北巢为止）仍在航段走廊内")
+    @DisplayName("船：跑 700 个节拍（演示全程）仍不出赣江航道走廊")
     void shipStaysInsideCorridorForWholeRoute() {
         RecordingPublisher publisher = new RecordingPublisher();
         SimAisConnector sim = new SimAisConnector(publisher);
         FieldInjector.applySimDefaults(sim);
         sim.start();
 
-        // 船起点 (28.668) 到北巢 (28.698) 纬度差 0.030°，cog 6.7° 下每节拍约 0.00408°
-        // ⇒ 约 736 个节拍到北巢，取 700 个节拍（演示里船到港即结束，不会继续往北漂）
+        // 定稿起点 + 31.2° 航向下：700 秒时船在 (115.8764, 28.6883)，距航道中心线约 5 m；
+        // 到八一大桥约 821 秒、越 MAX_LON 约 866 秒，700 个节拍即演示全程（船到港即结束）
         for (int i = 0; i < 700; i++) {
             sim.pollOnce(1_000L);
         }
@@ -136,7 +148,7 @@ class SimCoordinatesNanchangSegmentTest {
             }
         }
         assertTrue(worstKm <= SHIP_CORRIDOR_KM,
-                "航程内船应不出航段走廊（≤" + SHIP_CORRIDOR_KM + " km），实际最远 "
+                "航程内船应不出赣江航道走廊（≤" + SHIP_CORRIDOR_KM + " km），实际最远 "
                         + String.format("%.2f", worstKm) + " km，位置 ("
                         + worst.lon() + ", " + worst.lat() + ")");
     }

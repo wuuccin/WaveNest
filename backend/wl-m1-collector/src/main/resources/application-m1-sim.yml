@@ -7,9 +7,9 @@ wavenest:
     enabled: true          # 联调期可改 false 停发数据
     tick-millis: 1000      # 采集节拍（AIS 推进步长与它同键，改一处即同步）
     ais:
-      start-lon: 115.863000     # 放样定稿船起点（2026-10-28 序号 2）
-      start-lat: 28.668000
-      start-cog: 6.7       # 初始航向（船起点 → 北巢，朝上游）
+      start-lon: 115.861100     # 演示基准定稿船起点（2026-10-29，沿程 2.40 km，以放样为准）
+      start-lat: 28.666000
+      start-cog: 31.2      # 初始航向（赣江航道南昌→八一大桥段走向；旧值 6.7° 朝陆地机巢，作废）
       sog-knots: 8.0
       ship-name: SIM-SHIP-01
       mmsi: "123456789"
