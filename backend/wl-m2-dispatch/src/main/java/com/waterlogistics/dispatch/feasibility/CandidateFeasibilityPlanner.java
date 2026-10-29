@@ -91,12 +91,18 @@ public class CandidateFeasibilityPlanner {
      *
      * <p>原因文案沿用 {@link FeasibilityJudge} 原文（机型抗风不足、电量不足等），<b>未改一字</b>；
      * 机型单独成列是为了让「落选机型」能直接被看到——原因句里有机型，但结构化字段更稳。
+     *
+     * <p><b>10-29 新增 {@code distKm}</b>：机巢到取货点距离（km，与组合上的粗估直线同口径），
+     * 从 {@link CandidateGenerator.CandidateCombo#distKm()} 原样透传——演示讲解时
+     * 「为什么选它」除了可行性结论还应能报出「离船多远」，结构化字段比拼原因句可靠。
      */
     public record CandidateVerdict(
             String comboId,
             String model,
             String nestId,
             String droneId,
+            /** 机巢到取货点距离（km，粗估直线，与组合同口径；组合缺失时 {@code NaN}） */
+            double distKm,
             FeasibilityJudge.Verdict verdict,
             List<String> reasons) {
 
@@ -197,6 +203,7 @@ public class CandidateFeasibilityPlanner {
                     combo != null ? combo.type() : null,
                     combo != null ? combo.nestId() : null,
                     combo != null ? combo.droneId() : null,
+                    combo != null ? combo.distKm() : Double.NaN,
                     result.verdict(),
                     result.reasons()));
         }

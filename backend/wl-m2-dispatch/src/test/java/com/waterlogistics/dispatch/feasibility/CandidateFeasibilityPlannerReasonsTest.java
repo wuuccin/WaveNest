@@ -125,6 +125,8 @@ class CandidateFeasibilityPlannerReasonsTest {
         assertEquals(2, selection.candidates().size(), "两个候选都应有判定条目");
         for (CandidateFeasibilityPlanner.CandidateVerdict v : selection.candidates()) {
             assertNotNull(v.model(), "每个候选都应带机型");
+            // 10-29：distKm 从组合原样透传（桩里机巢与取货点同坐标 ⇒ 0.0）
+            assertEquals(0.0, v.distKm(), 1e-9, "每个候选都应带机巢到取货点距离（km）");
             if ("M30T".equals(v.model())) {
                 assertFalse(v.feasible(), "M30T（抗风 10.0）在 11 m/s 下应落选");
                 assertTrue(v.reasons().stream().anyMatch(r ->

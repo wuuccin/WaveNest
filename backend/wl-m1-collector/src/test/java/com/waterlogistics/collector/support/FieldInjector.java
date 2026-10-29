@@ -25,9 +25,9 @@ public final class FieldInjector {
         String cls = target.getClass().getSimpleName();
         switch (cls) {
             case "SimAisConnector" -> {
-                set(target, "startLon", 115.863000);   // 序号 2 放样定稿的船舶起点
-                set(target, "startLat", 28.668000);
-                set(target, "startCog", 6.7);          // 船起点 → 北巢（上游）方位角
+                set(target, "startLon", 115.861100);   // 演示基准定稿船起点（沿程 2.40 km，以放样为准）
+                set(target, "startLat", 28.666000);
+                set(target, "startCog", 31.2);         // 赣江航道南昌→八一大桥段走向（6.7° 朝陆地机巢，作废）
                 set(target, "sogKnots", 8.0);
                 set(target, "shipName", "SIM-SHIP-01");
                 set(target, "mmsi", "123456789");
