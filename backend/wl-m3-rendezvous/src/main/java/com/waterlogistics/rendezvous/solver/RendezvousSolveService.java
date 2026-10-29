@@ -45,7 +45,7 @@ public class RendezvousSolveService {
      *
      * @param cmd 组合级求解命令
      * @return 会面点解（有解／无解均属正常返回；追不上等无解走 {@code hasSolution=false}）
-     * @throws SnapshotUnavailableException     端口查无该船快照——数据前置缺失，拒绝求解
+     * @throws SnapshotUnavailableException     端口查无该船快照或快照已过有效期，数据前置缺失，拒绝求解
      * @throws SnapshotVersionMismatchException 期望版本与快照实际版本不一致——拒绝求解
      * @throws IllegalArgumentException         命令入参非法；同轮多候选的版本一致性由调用方锚定并下发
      *                                          （《81》§2.1 硬要求 1：本轮调度多候选须共用同一版本）
@@ -56,6 +56,10 @@ public class RendezvousSolveService {
                 this.snapshotPort, cmd.shipMmsi(), cmd.snapshotVersion());
         long snapshotStartT = snapshot.points().get(0).t();
         long snapshotEndT = snapshot.points().get(snapshot.points().size() - 1).t();
+        long validUntilT = snapshot.t0() + (long) snapshot.validitySec() * 1000L;
+        if (cmd.nowMs() > validUntilT) {
+            throw SnapshotUnavailableException.expired(cmd.shipMmsi(), cmd.nowMs(), validUntilT);
+        }
         if (cmd.nowMs() < snapshotStartT || cmd.nowMs() > snapshotEndT) {
             throw new IllegalArgumentException("求解时刻超出快照覆盖范围，实际 nowMs=" + cmd.nowMs()
                                                        + ", 快照区间=[" + snapshotStartT + ", " + snapshotEndT + "]");

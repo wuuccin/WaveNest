@@ -46,5 +46,9 @@ public record SegmentedTrack(
             prevSegment = segment;
             first = false;
         }
+        // 三段航迹必须完整收尾：只有去程或去程加末段交接的截断航迹不得流入大屏
+        if (prevSegment != TrackSegment.RETURN.rank()) {
+            throw new IllegalArgumentException("三段航迹须以返程段收尾，实际末段秩为 " + prevSegment);
+        }
     }
 }

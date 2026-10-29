@@ -94,6 +94,21 @@ class RendezvousFacadeTest {
                 "期望版本缺失在命令构造期即拒绝");
     }
 
+    /** 快照过期：点列仍覆盖求解时刻，但已超过有效期，服务层必须拒绝求解。 */
+    @Test
+    void solve_shouldReject_whenSnapshotExpired() {
+        StubSnapshotPort port = new StubSnapshotPort();
+        port.put(new ShipTrackSnapshot(VERSION, MMSI, NOW, 10, snapshot().points()));
+        RendezvousFacade facade = new RendezvousFacade(port, droneId -> null);
+        RendezvousCommand expired = new RendezvousCommand(
+                "combo-1", MMSI, VERSION,
+                nestLon(), LAT0, 15.0, new Wind(0, 0, 0),
+                NOW + 20_000L, NOW + 3_600_000L, 30, 0.01, 50);
+
+        assertThrows(SnapshotUnavailableException.class, () -> facade.solve(expired),
+                "超过有效期的快照必须拒绝求解");
+    }
+
     /** 数据缺失：端口查无该船快照 → 拒绝求解（与「算法无解」区分），异常信息带船号。 */
     @Test
     void solve_shouldReject_whenSnapshotAbsent() {

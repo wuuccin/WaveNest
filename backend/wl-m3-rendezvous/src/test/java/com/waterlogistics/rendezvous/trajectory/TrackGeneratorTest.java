@@ -154,6 +154,28 @@ class TrackGeneratorTest {
         }
     }
 
+    /** 截断航迹：只有去程段，或去程加末段交接，都不得冒充三段航迹。 */
+    @Test
+    void segmentedTrack_shouldRejectTruncatedTrack() {
+        List<SegmentedWaypoint> outboundOnly = List.of(
+                new SegmentedWaypoint(
+                        new Waypoint(lonAt(0), LAT0, 60.0, 15.0, T0), TrackSegment.OUTBOUND),
+                new SegmentedWaypoint(
+                        new Waypoint(lonAt(100), LAT0, 60.0, 15.0, T0 + 10_000L), TrackSegment.OUTBOUND));
+
+        assertThrows(IllegalArgumentException.class, () -> new SegmentedTrack(outboundOnly),
+                "只有去程段的航迹必须拒绝");
+
+        List<SegmentedWaypoint> withoutReturn = List.of(
+                new SegmentedWaypoint(
+                        new Waypoint(lonAt(0), LAT0, 60.0, 15.0, T0), TrackSegment.OUTBOUND),
+                new SegmentedWaypoint(
+                        new Waypoint(lonAt(100), LAT0, 60.0, 15.0, T0 + 10_000L), TrackSegment.TERMINAL));
+
+        assertThrows(IllegalArgumentException.class, () -> new SegmentedTrack(withoutReturn),
+                "末段不是返程的航迹必须拒绝");
+    }
+
     // ===== 夹具 =====
 
     /** 以东向米偏移量构造经度（与 GeoApprox 同一近似） */

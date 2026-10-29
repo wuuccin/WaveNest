@@ -57,15 +57,33 @@ class SimUavTelemetryConnectorTest {
     }
 
     @Test
-    @DisplayName("圆周巡航：到巢心距离 ≈ 配置半径")
+    @DisplayName("圆周巡航：到所属机巢的距离约等于配置半径")
     void orbitsAtConfiguredRadius() {
         sim.pollOnce(1_000L);
-        UavTelemetry m = publisher.telemetry().get(0);
+        List<UavTelemetry> sent = publisher.telemetry();
 
-        double dLon = m.lon() - 115.857500;
-        double dLat = m.lat() - 28.670000;
-        double distDeg = Math.hypot(dLon, dLat);
-        assertEquals(0.0020, distDeg, 1e-6, "应落在半径 0.002° 的圆上");
+        double south = degDistance(sent.get(0), 115.8480000, 28.6420000);
+        double north = degDistance(sent.get(2), 115.8670000, 28.6980000);
+        assertEquals(0.00025, south, 1e-6, "UAV-01 应绕南巢半径 0.00025° 巡航");
+        assertEquals(0.00025, north, 1e-6, "UAV-03 应绕北巢半径 0.00025° 巡航");
+    }
+
+    @Test
+    @DisplayName("停巢巡航：四架机始终在各自机巢 50 m 内，不越过偏航预警阈值")
+    void parkedFleetStaysWithinDeviationThreshold() {
+        for (int i = 0; i < 60; i++) {
+            sim.pollOnce(i * 1_000L);
+        }
+
+        for (UavTelemetry m : publisher.telemetry()) {
+            boolean north = m.uavId().compareTo("UAV-02") > 0;
+            double nestLon = north ? 115.8670000 : 115.8480000;
+            double nestLat = north ? 28.6980000 : 28.6420000;
+            double dx = (m.lon() - nestLon) * 111_320.0 * Math.cos(Math.toRadians(nestLat));
+            double dy = (m.lat() - nestLat) * 111_320.0;
+            assertTrue(Math.hypot(dx, dy) < 50.0,
+                    m.uavId() + " 距机巢应小于偏航预警阈值 50 m，实际 " + Math.hypot(dx, dy));
+        }
     }
 
     @Test
@@ -91,5 +109,10 @@ class SimUavTelemetryConnectorTest {
 
         connector.pollOnce(1_000L);
         assertEquals(4, fresh.telemetry().size(), "懒初始化后应正常产出");
+    }
+
+    /** 遥测点到给定坐标的十进制度平面距离，仅用于断言巡航半径。 */
+    private static double degDistance(UavTelemetry m, double lon, double lat) {
+        return Math.hypot(m.lon() - lon, m.lat() - lat);
     }
 }

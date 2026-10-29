@@ -75,6 +75,22 @@ class RendezvousRecalcTest {
                 "版本不一致必须拒绝求解");
     }
 
+    /** 台账归属：反查结果必须是请求的那架机，串号即拒绝求解。 */
+    @Test
+    void recompute_shouldReject_whenLedgerDroneMismatches() {
+        ShipTrackSnapshot snapshot = snapshot(LON0, LAT0, 5, 90);
+        RendezvousFacade facade = new RendezvousFacade(
+                mmsi -> snapshot,
+                id -> new DroneContext("UAV-99", "NEST-1",
+                        LON0 - GAP_M / mPerDegLon(LAT0), LAT0, 15.0, "combo-1"));
+
+        assertThrows(IllegalArgumentException.class,
+                () -> facade.recompute(
+                        request(VERSION, NOW + 100_000L, LON0 + 500 / mPerDegLon(LAT0), LAT0),
+                        options(new Wind(0, 0, 0), NOW + 3_600_000L)),
+                "台账串号必须拒绝求解");
+    }
+
     /** 版本闸门 fail-closed（重算侧）：快照版本缺失（null）仍由服务层拒绝；期望版本缺失在构造期即拒绝。 */
     @Test
     void recompute_shouldReject_whenVersionMissing() {

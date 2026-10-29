@@ -36,10 +36,12 @@ public final class FieldInjector {
             }
             case "SimUavTelemetryConnector" -> {
                 set(target, "uavCount", 4);
-                set(target, "centerLon", 115.857500);  // 两机巢连线中点
-                set(target, "centerLat", 28.670000);
-                set(target, "radiusDeg", 0.0020);
-                set(target, "phaseStep", 0.054);       // 222 m × 0.054 ≈ 12 m/s，与 speed-ms 自洽
+                set(target, "southNestLon", 115.8480000);  // NEST-01
+                set(target, "southNestLat", 28.6420000);
+                set(target, "northNestLon", 115.8670000);  // NEST-02
+                set(target, "northNestLat", 28.6980000);
+                set(target, "radiusDeg", 0.00025);          // 约 27.8 m，小于偏航预警阈值 50 m
+                set(target, "phaseStep", 0.43);             // 27.8 m × 0.43 ≈ 12 m/s，与 speed-ms 自洽
                 set(target, "speedMs", 12.0);
                 set(target, "noise", 1e-9);
             }
