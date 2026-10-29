@@ -141,7 +141,12 @@ public class DispatchOrchestrator {
                         orderId, plan.meetLon(), plan.meetLat(), true,
                         selection.candidates().size(),
                         RendezvousFrameProjector.reasonsOf(selection),
-                        plan.takeoffTime()))));
+                        plan.takeoffTime(),
+                        // 候选对比三项（10-29 第二步）：中选机巢／中选无人机／全量候选。
+                        // 全量候选含中选者本身（selected=true），前端据此高亮中选、置灰落选。
+                        best.nestId(),
+                        best.droneId(),
+                        RendezvousFrameProjector.candidateViewsOf(selection, best.comboId())))));
 
         log.info("派发编排完成：orderId={} droneId={} comboId={} 会面点={},{} 起飞={} 解={} 快照版本={}",
                 orderId, best.droneId(), best.comboId(), plan.meetLon(), plan.meetLat(),

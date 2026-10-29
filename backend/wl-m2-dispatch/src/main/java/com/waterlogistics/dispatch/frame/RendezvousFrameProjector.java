@@ -1,5 +1,6 @@
 package com.waterlogistics.dispatch.frame;
 
+import com.waterlogistics.contract.ws.CandidateView;
 import com.waterlogistics.contract.ws.RendezvousFrame;
 import com.waterlogistics.dispatch.feasibility.CandidateFeasibilityPlanner.CandidateVerdict;
 import com.waterlogistics.dispatch.feasibility.CandidateFeasibilityPlanner.FeasibleSelection;
@@ -38,6 +39,9 @@ public final class RendezvousFrameProjector {
      * @param candidateCount   本轮候选数
      * @param rejectionReasons 逐条淘汰原因；传 {@code null} 按空列表处理（不产出原因，也不让下游 NPE）
      * @param meetTime         会面时刻（LocalDateTime）
+     * @param chosenNestId     中选机巢；未选出时为 {@code null}
+     * @param chosenDroneId    中选无人机；未选出时为 {@code null}
+     * @param candidates       全量候选视图（含中选者）；传 {@code null} 按空列表处理
      */
     public record Input(
             String orderId,
@@ -46,7 +50,20 @@ public final class RendezvousFrameProjector {
             boolean locked,
             int candidateCount,
             List<String> rejectionReasons,
-            LocalDateTime meetTime) {
+            LocalDateTime meetTime,
+            String chosenNestId,
+            String chosenDroneId,
+            List<CandidateView> candidates) {
+
+        /**
+         * 兼容构造器：保留扩字段前的七参签名，候选对比三项留空（队列侧与旧测试仍可用）。
+         */
+        public Input(String orderId, double meetLon, double meetLat, boolean locked,
+                     int candidateCount, List<String> rejectionReasons,
+                     LocalDateTime meetTime) {
+            this(orderId, meetLon, meetLat, locked, candidateCount, rejectionReasons,
+                    meetTime, null, null, null);
+        }
     }
 
     public RendezvousFrame project(Input input) {
@@ -60,7 +77,10 @@ public final class RendezvousFrameProjector {
                 List.copyOf(input.rejectionReasons() == null
                         ? List.of()
                         : input.rejectionReasons()),
-                toEpochMs(input.meetTime()));
+                toEpochMs(input.meetTime()),
+                input.chosenNestId(),
+                input.chosenDroneId(),
+                List.copyOf(input.candidates() == null ? List.of() : input.candidates()));
     }
 
     /**
@@ -79,6 +99,42 @@ public final class RendezvousFrameProjector {
                     + String.join("；", verdict.reasons()));
         }
         return reasons;
+    }
+
+    /**
+     * 全量候选逐条成视图（10-29 候选可观测性第二步）：把实现层的 {@link CandidateVerdict}
+     * 映射成契约层的 {@link CandidateView}，供前端画候选对比卡。
+     *
+     * <p><b>含中选者，不只列落选</b>：中选者 {@code selected=true}，前端据此高亮；
+     * 落选者 {@code selected=false} 且带原因，前端据此置灰。<b>与 {@link #reasonsOf} 不是替代关系</b>——
+     * {@code reasonsOf} 只有落选项的文案串（前端第一步已在消费），本方法给的是全量结构化列表。
+     *
+     * <p><b>{@code distKm} 的 NaN 处理</b>：上游组合缺失时判定端写的是 {@code Double.NaN}，
+     * 而 NaN 不是合法 JSON、会让前端整帧解析失败，故此处转成 {@code null} 出库。
+     *
+     * @param selection      候选判定结果；传 {@code null} 返回空列表（不发帧的调用点不 NPE）
+     * @param chosenComboId  中选组合标识；传 {@code null} 则无人被标中选
+     * @return 不可变列表，顺序与判定端一致
+     */
+    public static List<CandidateView> candidateViewsOf(FeasibleSelection selection,
+                                                       String chosenComboId) {
+        if (selection == null) {
+            return List.of();
+        }
+        List<CandidateView> views = new ArrayList<>();
+        for (CandidateVerdict verdict : selection.candidates()) {
+            double distKm = verdict.distKm();
+            views.add(new CandidateView(
+                    verdict.comboId(),
+                    verdict.model(),
+                    verdict.nestId(),
+                    verdict.droneId(),
+                    Double.isNaN(distKm) ? null : distKm,
+                    verdict.feasible(),
+                    verdict.reasons(),
+                    chosenComboId != null && chosenComboId.equals(verdict.comboId())));
+        }
+        return List.copyOf(views);
     }
 
     private static Long toEpochMs(LocalDateTime time) {
