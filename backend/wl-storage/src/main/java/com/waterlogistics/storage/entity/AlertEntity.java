@@ -40,4 +40,16 @@ public class AlertEntity {
 
     /** 处置记录：处理人、动作、时间 */
     private String handleRecord;
+
+    /** 告警目标位置-经度（失联取最后一次真实上报；无则 null） */
+    private Double lon;
+
+    /** 告警目标位置-纬度 */
+    private Double lat;
+
+    /** 当前检测值（偏航距离 m / 电量 % / 风速 m/s；失联时为 null） */
+    private Double currentValue;
+
+    /** 阈值（与 currentValue 同量纲） */
+    private Double thresholdValue;
 }

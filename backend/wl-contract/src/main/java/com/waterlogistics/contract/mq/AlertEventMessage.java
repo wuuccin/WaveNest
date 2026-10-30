@@ -31,10 +31,11 @@ import com.waterlogistics.contract.state.AlertType;
  *
  * <h3>落库口径（与消息口径的差异）</h3>
  *
- * <p>{@code alert} 表只有八列，<b>不含</b> {@code duration}／{@code currentValue}／{@code thresholdValue}
- * 三列——这三字段只随本消息携带，<b>不落库、不拼文本序列化</b>。落库侧按
+ * <p>{@code alert} 表经 006 扩列后含 {@code lon}／{@code lat}／{@code currentValue}／
+ * {@code thresholdValue} 四列，RAISED 时随 alert 行一并写入；<b>不含</b> {@code duration}
+ * 列——该字段只随本消息携带，<b>不落库、不拼文本序列化</b>。落库侧按
  * {@code alert_id} 复用 {@code eventId}，{@code trigger_time} 由 {@code timestamp} 按
- * Asia/Shanghai 折算，{@code handle_status} 取「未处理」。
+ * Asia/Shanghai 折算，{@code handle_status} 取「未处理」。</p>
  *
  * @param eventId        告警事件唯一标识（UUID），同一告警贯穿始终
  * @param alertType      告警类型（{@link AlertType} 中文取值：失联／低电量／偏航／气象超限／链路异常）

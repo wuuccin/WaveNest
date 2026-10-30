@@ -29,7 +29,8 @@ import java.util.concurrent.CopyOnWriteArrayList;
  *
  * <p>职责：</p>
  * <ul>
- *   <li>写 alert 表（37 §5.12 八列；经 wl-storage {@link AlertMapper}，M6 不做业务判断）</li>
+ *   <li>写 alert 表（37 §5.12 八列 ＋ 006 扩列 lon/lat/current_value/threshold_value；
+ *       经 wl-storage {@link AlertMapper}，M6 不做业务判断）</li>
  *   <li>发 alert.event（MQ 推 M2，帧交给 wl-app/push 推 WS）</li>
  * </ul>
  *
@@ -37,8 +38,10 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * {@code alert_id} 复用事件 eventId（UUID ≤ 64 字符），类型/级别取契约中文枚举值，
  * {@code trigger_time} 取检测层首次触发时刻（Asia/Shanghai），{@code handle_status=未处理}；
  * LEVEL_CHANGED 按 alert_id update level（G-4：级别字段可更新）。
- * duration/current_value/threshold_value 三字段只随 alert.event 消息携带（G-2 九字段），
- * alert 表无此三列，不写入、不拼文本序列化。CLEARED/失联恢复只做内存去重复位，
+ * {@code lon}/{@code lat}/{@code current_value}/{@code threshold_value} 四列由 006 扩列补入，
+ * RAISED 时一并写入（失联 current_value 恒为 null；无最后已知位置时 lon/lat 为 null）；
+ * 唯 {@code duration} 只随 alert.event 消息携带（G-2 九字段），alert 表无此列，不写入、不拼文本序列化。
+ * CLEARED/失联恢复只做内存去重复位，
  * 不改 handle_status（23 §10 四态无「已清除」，处置状态由人工/处置链推进）。</p>
  *
  * <p>去重与事件身份口径（86 G-01/G-4，2026-10-16 失联裁决方案 B）：按「无人机 ＋ 告警类型」追踪一条活跃告警——
@@ -190,6 +193,11 @@ public class AlertRecorder {
                 entity.setTriggerTime(LocalDateTime.ofInstant(
                         Instant.ofEpochMilli(event.timestamp()), DB_ZONE));
                 entity.setHandleStatus("未处理");
+                // 006 扩列：位置 ＋ 检测值随告警行持久化，重启后历史告警仍可定位
+                entity.setLon(event.lon());
+                entity.setLat(event.lat());
+                entity.setCurrentValue(event.currentValue());
+                entity.setThresholdValue(event.thresholdValue());
                 alertMapper.insert(entity);
             } else if (!previous.level().getValue().equals(event.level())) {
                 // 列名照 37 §5.12 DDL；用字面量列名而非 Lambda 包装器——
