@@ -15,6 +15,7 @@ const props = defineProps({ comparison: { type: Object, default: null }, branchR
 const ship = useShipStore(), drone = useDroneStore(), order = useOrderStore(), alert = useAlertStore(), nest = useNestStore(), fleet = useFleetStore(), airspace = useAirspaceStore()
 let map, staticGroup, comparisonGroup, shipGroup, meetingGroup, droneGroup, branchGroup, alertGroup, nestGroup, fleetGroup, debugReferenceGroup
 let activeBaseLayer = null, activeBaseType = 'imagery'
+let tileFailure = false
 const valid = point => point && Number.isFinite(point.lat) && Number.isFinite(point.lon)
 const visibleDrone = computed(() => props.droneId ? (drone.byId[props.droneId] || null) : drone.current)
 const displayNests = computed(() => nest.items.filter(item => inServiceArea(item)))
@@ -109,8 +110,9 @@ function createBaseLayer(type, name) {
     subdomains: '01234567', maxZoom: 18, tileSize: 256, attribution: '© 国家地理信息公共服务平台 · 天地图'
   })
   for (const layer of [first, annotation]) {
-    layer.on('load', () => { if (activeBaseType === (type === 'img' ? 'imagery' : 'vector')) tileStatus.value = 'loaded' })
-    layer.on('tileerror', () => { if (activeBaseType === (type === 'img' ? 'imagery' : 'vector')) tileStatus.value = 'tile-error' })
+    const active = () => activeBaseType === (type === 'img' ? 'imagery' : 'vector')
+    layer.on('tileload', () => { if (active() && !tileFailure) tileStatus.value = 'loaded' })
+    layer.on('tileerror', () => { if (active()) { tileFailure = true; tileStatus.value = 'tile-error' } })
   }
   const group = L.layerGroup([first, annotation])
   group.options.attribution = `${escapeHtml(name)} · © 国家地理信息公共服务平台`
@@ -125,6 +127,7 @@ function setBaseLayer(type) {
   if (!map || !tileKey || !baseLayers[type]) return
   if (activeBaseLayer) map.removeLayer(activeBaseLayer)
   activeBaseType = type
+  tileFailure = false
   activeBaseLayer = baseLayers[type].addTo(map)
   tileStatus.value = 'loading'
 }

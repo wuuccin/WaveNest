@@ -11,7 +11,8 @@
     "test:replay": "node tests/replay-model.mjs && node tests/replay-browser.mjs",
     "test:map": "node tests/map-coordinates.mjs && node tests/map-debug-tool.mjs && node tests/map-display.mjs",
     "test:t3": "node tests/t3-visualization.mjs",
-    "test:t3:browser": "node tests/t3-browser.mjs"
+    "test:t3:browser": "node tests/t3-browser.mjs",
+    "test:t4:outage": "node tests/t4-outage-browser.mjs"
   },
   "dependencies": {
     "echarts": "6.1.0",
