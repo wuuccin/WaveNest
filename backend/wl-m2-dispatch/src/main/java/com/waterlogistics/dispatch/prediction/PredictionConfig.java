@@ -88,7 +88,8 @@ public class PredictionConfig {
      * （朝阳大桥 {@code 28.646/115.852} → 八一大桥 {@code 28.692/115.879}，全长 5.78 km）
      * 加航向侧一个预测时域的前伸，落点是 {@code application.yml} 的
      * {@code wavenest.m2.prediction.bbox.*}（{@code 115.857–115.921 × 28.660–28.767}，
-     * 按定稿船起点 {@code 115.863/28.668} 实测包络 ＋ 0.5 km 缓冲定）。
+     * 按定稿船起点 {@code 115.8611/28.6660}（10-29 序号 2 沿程 2.40 km）实测包络 ＋ 0.5 km 缓冲定，
+     * 包络取航段方位角 {@code 27.24°} 与仿真器现值 {@code 31.2°} 两条航向的并集）。
      * 四个值的推导与实测包络见 {@code PredictionBboxNanchangSegmentTest} 的类注释，
      * 该类有「配置与常量同值」的强制守卫，改一处不改另一处会红。
      *
