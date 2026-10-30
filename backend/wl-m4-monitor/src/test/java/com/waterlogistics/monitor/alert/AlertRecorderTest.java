@@ -193,7 +193,7 @@ class AlertRecorderTest {
     }
 
     @Test
-    void 首次触发落库insert级别变化update且仅八列口径() {
+    void 首次触发落库insert级别变化update且落库十二列口径() {
         MapperRecorder mr = new MapperRecorder();
         AlertRecorder recorder = new AlertRecorder(new RecordingPublisher(), mr.proxy());
         LowBatteryDetector det = new LowBatteryDetector(params());
@@ -210,6 +210,11 @@ class AlertRecorderTest {
         assertEquals("未处理", row.getHandleStatus());
         assertNotNull(row.getTriggerTime());
         assertNull(row.getHandleRecord(), "处置记录落库时为空");
+        // 006 扩列四字段：无 FlightRecordStore 时位置留空，检测值照写
+        assertNull(row.getLon(), "无最后已知位置时经度留空");
+        assertNull(row.getLat(), "无最后已知位置时纬度留空");
+        assertEquals(15.0, row.getCurrentValue(), "当前电量值随告警行落库");
+        assertEquals(20.0, row.getThresholdValue(), "低电量阈值随告警行落库");
 
         // 升级严重 → update level（同一 alertId），不得再 insert
         AlertEventMessage crit = recorder.record(det.feed(5.0, 2_000), "uav-6", "order-6");
@@ -273,6 +278,28 @@ class AlertRecorderTest {
         assertEquals("失联", event.alertType());
         assertEquals(115.9100, event.lon(), "失联只能取最后一次真实上报值");
         assertEquals(28.7100, event.lat());
+    }
+
+    @Test
+    void 位置与检测值随首次触发一并落库() {
+        // 同时接 MapperRecorder（验落库）与 FlightRecordStore（验非空坐标）
+        MapperRecorder mr = new MapperRecorder();
+        FlightRecordStore store = new FlightRecordStore();
+        AlertRecorder recorder = new AlertRecorder(new RecordingPublisher(), mr.proxy(), store);
+        LowBatteryDetector det = new LowBatteryDetector(params());
+
+        store.append(state("uav-10", 115.8800, 28.6800, 1_000, false));
+
+        AlertEventMessage event = recorder.record(det.feed(15.0, 2_000), "uav-10", "order-10");
+
+        assertEquals(1, mr.inserts.size(), "首次触发 insert 一行");
+        AlertEntity row = mr.inserts.get(0);
+        assertEquals(event.lon(), row.getLon(), "经度随告警行落库");
+        assertEquals(event.lat(), row.getLat(), "纬度随告警行落库");
+        assertEquals(115.8800, row.getLon());
+        assertEquals(28.6800, row.getLat());
+        assertEquals(15.0, row.getCurrentValue(), "当前值随告警行落库");
+        assertEquals(20.0, row.getThresholdValue(), "阈值随告警行落库");
     }
 
     @Test
