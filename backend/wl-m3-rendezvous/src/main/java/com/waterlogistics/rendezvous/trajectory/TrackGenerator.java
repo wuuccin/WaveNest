@@ -2,6 +2,7 @@ package com.waterlogistics.rendezvous.trajectory;
 
 import com.waterlogistics.algo.meeting.GeoApprox;
 import com.waterlogistics.algo.meeting.model.B_FlyableRoute;
+import com.waterlogistics.algo.meeting.model.EpochMillis;
 import com.waterlogistics.algo.meeting.model.Waypoint;
 
 import java.nio.charset.StandardCharsets;
@@ -87,12 +88,16 @@ public final class TrackGenerator {
             double lat = first ? cmd.startLat()
                     : last ? cmd.endLat()
                     : cmd.startLat() + frac * (cmd.endLat() - cmd.startLat());
+            long waypointT = cmd.startMs() + Math.round(frac * (double) tauFine * 1000.0);
+            if (!EpochMillis.isValid(waypointT)) {
+                throw new IllegalArgumentException("航点时刻超出合法 Unix 毫秒范围，实际 " + waypointT);
+            }
             waypoints.add(new Waypoint(
                     lon,
                     lat,
                     cmd.cruiseAltM(),
                     cmd.speedMs(),
-                    cmd.startMs() + Math.round(frac * (double) tauFine * 1000.0)));
+                    waypointT));
         }
         return waypoints;
     }

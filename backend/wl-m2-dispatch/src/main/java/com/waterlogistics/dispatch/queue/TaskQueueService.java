@@ -48,13 +48,13 @@ public class TaskQueueService {
         this(orderTaskMapper, taskLogMapper, dispatchGateService, null, event -> { });
     }
 
-    @Autowired
     public TaskQueueService(OrderTaskMapper orderTaskMapper, TaskLogMapper taskLogMapper,
             DispatchGateService dispatchGateService, ApplicationEventPublisher eventPublisher) {
         this(orderTaskMapper, taskLogMapper, dispatchGateService, null, eventPublisher);
     }
 
-    TaskQueueService(OrderTaskMapper orderTaskMapper, TaskLogMapper taskLogMapper,
+    @Autowired
+    public TaskQueueService(OrderTaskMapper orderTaskMapper, TaskLogMapper taskLogMapper,
             DispatchGateService dispatchGateService, DroneMapper droneMapper,
             ApplicationEventPublisher eventPublisher) {
         this.orderTaskMapper = orderTaskMapper;

@@ -18,8 +18,8 @@ import org.springframework.stereotype.Component;
  * {@code prediction/TrajectorySnapshotAdapter} 是 M2 侧仅有的两个向 M3 暴露的出口。
  *
  * <p><b>归属口径</b>：按《23-状态机定义》§7 约定 3，<b>飞行中归属不变</b>——
- * 迫停只改 {@code currentNestId}，{@code homeNestId} 不动。故求解起点取
- * {@code homeNestId}，与 {@link DroneContext} 的 javadoc 一致。
+ * 迫停只改 {@code currentNestId}，{@code homeNestId} 不动。求解起点取
+ * {@code currentNestId}，与 {@link DroneContext} 的 javadoc 一致。
  *
  * <p><b>巡航速度的口径说明（重要，勿当硬编码）</b>：
  * {@code drone} 表<b>没有</b>巡航速度列（只有 {@code model} 与
@@ -71,7 +71,15 @@ public class DroneContextAdapter implements DroneContextPort {
         if (drone == null || drone.getHomeNestId() == null || drone.getHomeNestId().isBlank()) {
             return null;
         }
-        NestEntity nest = nestMapper.selectById(drone.getHomeNestId());
+        String currentNestId = drone.getCurrentNestId();
+        if (currentNestId == null || currentNestId.isBlank()) {
+            currentNestId = drone.getHomeNestId();
+        }
+        NestEntity nest = nestMapper.selectById(currentNestId);
+        if (nest == null || nest.getLon() == null || nest.getLat() == null) {
+            currentNestId = drone.getHomeNestId();
+            nest = nestMapper.selectById(currentNestId);
+        }
         if (nest == null || nest.getLon() == null || nest.getLat() == null) {
             return null;
         }
@@ -79,6 +87,7 @@ public class DroneContextAdapter implements DroneContextPort {
         return new DroneContext(
                 drone.getDroneId(),
                 drone.getHomeNestId(),
+                currentNestId,
                 nest.getLon().doubleValue(),
                 nest.getLat().doubleValue(),
                 cruiseSpeedMs,

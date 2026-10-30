@@ -7,11 +7,11 @@ public final class EpochMillis {
 
     /**
      * 合法 Unix 毫秒下界：2001-09-09T01:46:40Z，低于此值基本可判为秒级时间戳误传。
-     * 合法值需满足 {@code timestamp >= MIN_VALID_MS}。
+     * 合法值需满足 {@link #isValid(long)}，即闭区间 [MIN_VALID_MS, MAX_VALID_MS]。
      */
     public static final long MIN_VALID_MS = 1_000_000_000_000L;
 
-    /** 合法 Unix 毫秒上界：2100-01-01T00:00:00Z，防止时刻加法溢出 */
+    /** 合法 Unix 毫秒上界：2100-01-01T00:00:00Z；运算后的时刻需重新用 {@link #isValid(long)} 校验 */
     public static final long MAX_VALID_MS = 4_102_444_800_000L;
 
     /**

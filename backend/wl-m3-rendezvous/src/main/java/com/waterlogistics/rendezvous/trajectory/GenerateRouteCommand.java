@@ -1,6 +1,7 @@
 package com.waterlogistics.rendezvous.trajectory;
 
 import com.waterlogistics.algo.meeting.GeoApprox;
+import com.waterlogistics.rendezvous.support.WireText;
 
 import java.util.List;
 import java.util.Objects;
@@ -71,6 +72,11 @@ public record GenerateRouteCommand(
 
     private static final int MAX_ANNOTATION_IDS = 512;
 
+    private static final int MAX_ID_LENGTH = 64;
+
+    /** 巡航高度上界，米（工程护栏，防量纲误传） */
+    private static final double MAX_CRUISE_ALT_M = 10_000.0;
+
     /** 起点时刻上界：2100-01-01T00:00:00Z，为防止后续时刻加法溢出 */
     private static final long MAX_START_MS = 4_102_444_800_000L;
 
@@ -79,11 +85,8 @@ public record GenerateRouteCommand(
 
 
     public GenerateRouteCommand {
-        Objects.requireNonNull(comboId, "comboId 不能为空");
-        Objects.requireNonNull(routeId, "routeId 不能为空");
-        if (comboId.isBlank() || routeId.isBlank()) {
-            throw new IllegalArgumentException("comboId/routeId 不能为空白字符串");
-        }
+        comboId = WireText.requireIdentifier(comboId, "comboId", GenerateRouteCommand.MAX_ID_LENGTH);
+        routeId = WireText.requireIdentifier(routeId, "routeId", GenerateRouteCommand.MAX_ID_LENGTH);
         Objects.requireNonNull(landingPointsAlong, "landingPointsAlong 不能为空");
         Objects.requireNonNull(avoidZones, "avoidZones 不能为空");
         for (String annotationId : landingPointsAlong) {
@@ -117,8 +120,8 @@ public record GenerateRouteCommand(
                 || endLon < -180.0 || endLon > 180.0 || endLat < -90.0 || endLat > 90.0) {
             throw new IllegalArgumentException("起终点经纬度超出地理范围");
         }
-        // 微米级容差是几何退化的数值保护，不是可配置业务阈值
-        if (GeoApprox.distanceM(startLon, startLat, endLon, endLat) < 1e-6) {
+        // 毫米级容差是几何退化的数值保护，不是可配置业务阈值
+        if (GeoApprox.distanceM(startLon, startLat, endLon, endLat) < 1e-3) {
             throw new IllegalArgumentException("起终点不能重合（零长度航迹）");
         }
         if (waypointCount < 2 || waypointCount > GenerateRouteCommand.MAX_WAYPOINT_COUNT) {
@@ -133,8 +136,10 @@ public record GenerateRouteCommand(
             throw new IllegalArgumentException("速度须在 [" + GenerateRouteCommand.MIN_SPEED_MS + ", "
                                                        + GenerateRouteCommand.MAX_SPEED_MS + "] m/s 内，实际 " + speedMs);
         }
-        if (!Double.isFinite(cruiseAltM) || cruiseAltM <= 0.0) {
-            throw new IllegalArgumentException("巡航高度必须为正的有限数，实际 " + cruiseAltM);
+        if (!Double.isFinite(cruiseAltM) || cruiseAltM <= 0.0
+                || cruiseAltM > GenerateRouteCommand.MAX_CRUISE_ALT_M) {
+            throw new IllegalArgumentException("巡航高度须在 (0, "
+                                                       + GenerateRouteCommand.MAX_CRUISE_ALT_M + "] 米内，实际 " + cruiseAltM);
         }
         if (!Double.isFinite(energyRatePerSecPct) || energyRatePerSecPct < 0.0
                 || energyRatePerSecPct > 10.0) {

@@ -89,7 +89,7 @@ class RendezvousFacadeTest {
         assertThrows(IllegalArgumentException.class,
                 () -> new ShipTrackSnapshot(null, MMSI, NOW, 86_400, points),
                 "快照版本缺失在模型构造期即拒绝");
-        assertThrows(NullPointerException.class,
+        assertThrows(IllegalArgumentException.class,
                 () -> command(null),
                 "期望版本缺失在命令构造期即拒绝");
     }

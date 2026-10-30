@@ -131,6 +131,8 @@ public final class TrackConflictChecker {
         long firstConflictT = 0L;
         long lastConflictT = 0L;
         boolean anyConflict = false;
+        boolean inConflict = false;
+        boolean firstSegmentEnded = false;
 
         long window = tEnd - tStart;
         long maxSamples = 200_000L;
@@ -153,12 +155,16 @@ public final class TrackConflictChecker {
                     firstConflictT = t;
                     anyConflict = true;
                 }
-                lastConflictT = t;
+                if (!firstSegmentEnded) {
+                    lastConflictT = t;
+                }
                 bestConflict.consider(d3, t, pa, pb);
-            } else if (anyConflict) {
-                // 第一段冲突已经结束：后续再进入的冲突段不并入本区间，
-                // 否则中间无冲突的时段会被当成连续冲突
-                break;
+                inConflict = true;
+            } else {
+                if (inConflict && !firstSegmentEnded) {
+                    firstSegmentEnded = true;
+                }
+                inConflict = false;
             }
 
             if (t == tEnd) {

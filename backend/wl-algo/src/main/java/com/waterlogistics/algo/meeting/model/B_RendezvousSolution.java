@@ -94,8 +94,11 @@ public record B_RendezvousSolution(
                 throw new IllegalArgumentException("无解时会面字段必须为 null");
             }
         }
-        if (comboId != null && comboId.isBlank()) {
-            throw new IllegalArgumentException("comboId 只能为 null 或非空白字符串");
+        if (comboId != null) {
+            comboId = comboId.strip();
+            if (comboId.isEmpty()) {
+                comboId = null;
+            }
         }
     }
 

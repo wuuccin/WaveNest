@@ -45,9 +45,10 @@ public record HandoverCommand(
         if (taskId.isEmpty() || droneId.isEmpty()) {
             throw new IllegalArgumentException("taskId/droneId 不能为空白字符串");
         }
-        if (plannedMeetT < EpochMillis.MIN_VALID_MS) {
-            throw new IllegalArgumentException("计划会面时刻须为 Unix 毫秒值（下界 "
-                                                       + EpochMillis.MIN_VALID_MS + "），实际 " + plannedMeetT);
+        if (!EpochMillis.isValid(plannedMeetT)) {
+            throw new IllegalArgumentException("计划会面时刻须为 Unix 毫秒值（范围 ["
+                                                       + EpochMillis.MIN_VALID_MS + ", "
+                                                       + EpochMillis.MAX_VALID_MS + "]），实际 " + plannedMeetT);
         }
         if (!Double.isFinite(plannedMeetLon) || !Double.isFinite(plannedMeetLat)
                 || plannedMeetLon < -180.0 || plannedMeetLon > 180.0

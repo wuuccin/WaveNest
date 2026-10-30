@@ -1,5 +1,6 @@
 package com.waterlogistics.rendezvous.solver;
 
+import com.waterlogistics.algo.meeting.model.EpochMillis;
 import com.waterlogistics.algo.meeting.model.RendezvousSolveRequest;
 import com.waterlogistics.algo.meeting.model.Wind;
 
@@ -37,8 +38,8 @@ public record RecalcOptions(
 
     public RecalcOptions {
         Objects.requireNonNull(representativeWind, "representativeWind 不能为空");
-        if (deadlineMs <= 0L) {
-            throw new IllegalArgumentException("最晚会面时刻必须为正，实际 " + deadlineMs);
+        if (!EpochMillis.isValid(deadlineMs)) {
+            throw new IllegalArgumentException("最晚会面时刻须为合法的 Unix 毫秒值，实际 " + deadlineMs);
         }
         if (meetWindowMarginSec < 0 || meetWindowMarginSec > RendezvousSolveRequest.MAX_WINDOW_MARGIN_SEC) {
             throw new IllegalArgumentException(

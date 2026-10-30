@@ -65,13 +65,15 @@ public record B_HandoverConfirmation(
             throw new IllegalArgumentException("实际会面点经度与纬度须同时存在或同时为空");
         }
         requireCoordinate(plannedMeetLon, plannedMeetLat, "planned");
-        if (plannedMeetT < EpochMillis.MIN_VALID_MS) {
-            throw new IllegalArgumentException("计划会面时刻须为正的 Unix 毫秒值，实际 " + plannedMeetT);
+        if (!EpochMillis.isValid(plannedMeetT)) {
+            throw new IllegalArgumentException("计划会面时刻须为 Unix 毫秒值（范围 ["
+                    + EpochMillis.MIN_VALID_MS + ", " + EpochMillis.MAX_VALID_MS + "]），实际 "
+                    + plannedMeetT);
         }
         if (actualMeetLon != null) {
             requireCoordinate(actualMeetLon, actualMeetLat, "actual");
         }
-        if (handoverDoneT != null && handoverDoneT <= 0L) {
+        if (handoverDoneT != null && !EpochMillis.isValid(handoverDoneT.longValue())) {
             throw new IllegalArgumentException("交接完成时刻须为有效的 Unix 毫秒值，实际 handoverDoneT="
                     + handoverDoneT + "（taskId=" + taskId + "）");
         }
@@ -104,8 +106,11 @@ public record B_HandoverConfirmation(
             throw new IllegalArgumentException("交接时间开销不得为负，实际 " + handoverTimeCost);
         }
         if (energyCost != null
-                && (!Double.isFinite(energyCost) || energyCost < 0.0 || energyCost > 100.0)) {
+                && (!Double.isFinite(energyCost) || energyCost < 0.0 || energyCost > 100.0 + 1.0e-6)) {
             throw new IllegalArgumentException("能耗开销须在 [0,100]，实际 " + energyCost);
+        }
+        if (energyCost != null && energyCost > 100.0) {
+            energyCost = 100.0;
         }
     }
 
