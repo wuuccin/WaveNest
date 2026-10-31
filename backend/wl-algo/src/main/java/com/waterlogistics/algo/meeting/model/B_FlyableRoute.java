@@ -69,9 +69,12 @@ public record B_FlyableRoute(
                 throw new IllegalArgumentException("waypoints 须按时刻严格升序，下标 " + i + " 处不满足");
             }
         }
-        landingPointsAlong = Objects.requireNonNull(landingPointsAlong,
-                "landingPointsAlong 不能为空，无标注时请传 List.of()");
-        avoidZones = Objects.requireNonNull(avoidZones, "avoidZones 不能为空，无避让时请传 List.of()");
+        if (landingPointsAlong == null) {
+            throw new IllegalArgumentException("landingPointsAlong 不能为空，无标注时请传 List.of()");
+        }
+        if (avoidZones == null) {
+            throw new IllegalArgumentException("avoidZones 不能为空，无避让时请传 List.of()");
+        }
         try {
             landingPointsAlong = List.copyOf(landingPointsAlong);
             avoidZones = List.copyOf(avoidZones);
@@ -91,5 +94,7 @@ public record B_FlyableRoute(
         if (!Double.isFinite(pathRisk) || pathRisk < 0.0 || pathRisk > 1.0) {
             throw new IllegalArgumentException("路径风险须在 [0,1]，实际 " + pathRisk);
         }
+        energyExact += 0.0;
+        pathRisk += 0.0;
     }
 }

@@ -37,13 +37,15 @@ public record ShipPoint(
             throw new IllegalArgumentException(
                     "预测点经纬度必须为有限数且在合法范围内，实际 lon=" + lon + ", lat=" + lat);
         }
+        lon += 0.0;
+        lat += 0.0;
         if (!Double.isFinite(cog) || cog < 0.0 || cog > 360.0) {
             throw new IllegalArgumentException("航迹方位必须为 [0, 360] 内的有限数，实际 " + cog);
         }
         if (cog == 360.0) {
             cog = 0.0;
         }
-        cog = cog == 0.0 ? 0.0 : cog;
+        cog += 0.0;
         if (!Double.isFinite(sigmaAlong) || sigmaAlong < 0.0
                 || !Double.isFinite(sigmaCross) || sigmaCross < 0.0) {
             throw new IllegalArgumentException(

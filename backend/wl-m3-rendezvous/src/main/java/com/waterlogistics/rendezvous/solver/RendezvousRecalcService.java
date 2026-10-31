@@ -90,6 +90,10 @@ public class RendezvousRecalcService {
                 this.snapshotPort, request.shipMmsi(), request.snapshotVersion()
                                                                );
 
+        long validUntilT = snapshot.t0() + (long) snapshot.validitySec() * 1000L;
+        if (state.shipStateT() > validUntilT) {
+            throw SnapshotUnavailableException.expired(request.shipMmsi(), state.shipStateT(), validUntilT);
+        }
         long snapshotStartT = snapshot.points().get(0).t();
         long snapshotEndT = snapshot.points().get(snapshot.points().size() - 1).t();
         if (state.shipStateT() < snapshotStartT || state.shipStateT() > snapshotEndT) {

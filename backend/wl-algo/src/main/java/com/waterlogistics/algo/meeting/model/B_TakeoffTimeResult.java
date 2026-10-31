@@ -53,4 +53,26 @@ public record B_TakeoffTimeResult(
             throw new IllegalArgumentException("不可行结果必须给出不可行原因");
         }
     }
+
+    @Override
+    public boolean equals(Object other) {
+        if (this == other) {
+            return true;
+        }
+        if (!(other instanceof B_TakeoffTimeResult that)) {
+            return false;
+        }
+        return this.feasible == that.feasible
+                && this.tauCoarseUsed == that.tauCoarseUsed
+                && Objects.equals(this.comboId, that.comboId)
+                && this.infeasibleReason == that.infeasibleReason
+                && (!this.feasible || this.takeoffT == that.takeoffT);
+    }
+
+    @Override
+    public int hashCode() {
+        int result = Objects.hash(this.comboId, Boolean.valueOf(this.feasible),
+                this.infeasibleReason, Integer.valueOf(this.tauCoarseUsed));
+        return this.feasible ? 31 * result + Long.hashCode(this.takeoffT) : result;
+    }
 }

@@ -55,7 +55,7 @@ public record RendezvousRecalcRequest(
 
     private static final Pattern MMSI_PATTERN = Pattern.compile("[0-9]{9}");
 
-    private static final Pattern UNSAFE = Pattern.compile("[\\p{Cntrl}\\p{Cf}\\p{Zl}\\p{Zp}]");
+    private static final Pattern UNSAFE = Pattern.compile("[\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}]");
 
     private static final int MAX_ID_LENGTH = 64;
 
@@ -85,16 +85,20 @@ public record RendezvousRecalcRequest(
                 "snapshotVersion",
                 RendezvousRecalcRequest.MAX_ID_LENGTH);
         shipMmsi = RendezvousRecalcRequest.trimSpaces(shipMmsi);
+        if (shipMmsi.isEmpty()) {
+            throw new IllegalArgumentException("shipMmsi 不能为空白字符串");
+        }
         orderId = RendezvousRecalcRequest.blankToNull(orderId);
         triggerReason = RendezvousRecalcRequest.blankToNull(triggerReason);
         if (requestId.isEmpty() || droneId.isEmpty() || snapshotVersion.isEmpty()) {
             throw new IllegalArgumentException("requestId/droneId/snapshotVersion 不能为空白字符串");
         }
         if (orderId != null) {
-            RendezvousRecalcRequest.safeIdentifier(orderId, "orderId", RendezvousRecalcRequest.MAX_ID_LENGTH);
+            orderId = RendezvousRecalcRequest.safeIdentifier(orderId, "orderId", RendezvousRecalcRequest.MAX_ID_LENGTH);
         }
         if (triggerReason != null) {
-            RendezvousRecalcRequest.safeIdentifier(triggerReason, "triggerReason", RendezvousRecalcRequest.MAX_REASON_LENGTH);
+            triggerReason = RendezvousRecalcRequest.safeText(triggerReason, "triggerReason",
+                    RendezvousRecalcRequest.MAX_REASON_LENGTH);
         }
         if (!RendezvousRecalcRequest.MMSI_PATTERN.matcher(shipMmsi).matches()) {
             throw new IllegalArgumentException("shipMmsi 须为 9 位数字，实际长度 " + shipMmsi.length()
@@ -131,6 +135,22 @@ public record RendezvousRecalcRequest(
 
 
     private static String safeIdentifier(String value, String field, int maxLength) {
+        if (value == null) {
+            throw new IllegalArgumentException(field + " 不能为空");
+        }
+        if (value.isEmpty() || value.length() > maxLength
+                || RendezvousRecalcRequest.UNSAFE.matcher(value).find()
+                || value.chars().anyMatch(Character::isWhitespace)
+                || value.chars().anyMatch(Character::isSpaceChar)) {
+            throw new IllegalArgumentException(field + " 非法：长度、空白或字符不在允许范围内");
+        }
+        return value;
+    }
+
+    private static String safeText(String value, String field, int maxLength) {
+        if (value == null) {
+            return null;
+        }
         if (value.length() > maxLength || RendezvousRecalcRequest.UNSAFE.matcher(value).find()) {
             throw new IllegalArgumentException(field + " 非法：长度或字符不在允许范围内");
         }

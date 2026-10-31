@@ -1,5 +1,7 @@
 package com.waterlogistics.algo.meeting.model;
 
+import java.util.regex.Pattern;
+
 /**
  * 无解原因——照《81-B组算法方案》§2.3 第（1）项，取值不得自造。
  *
@@ -17,6 +19,8 @@ public enum NoSolutionReason {
 
     /** 其他（含入参退化：点列为空、可求解时间窗为空） */
     OTHER("其他");
+
+    private static final Pattern UNSAFE = Pattern.compile("[\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}]");
 
     private final String value;
 
@@ -50,6 +54,6 @@ public enum NoSolutionReason {
                 return reason;
             }
         }
-        throw new IllegalArgumentException("未知无解原因：" + value);
+        throw new IllegalArgumentException("未知无解原因：" + NoSolutionReason.UNSAFE.matcher(value).replaceAll("?"));
     }
 }

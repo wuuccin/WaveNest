@@ -74,9 +74,11 @@ public class SnapshotUnavailableException extends RuntimeException {
      * @return 归属不符异常（与「查无快照」区分，避免误导排障）
      */
     public static SnapshotUnavailableException ownershipMismatch(String shipMmsi, String actualShipMmsi) {
-        String actual = actualShipMmsi == null || actualShipMmsi.isBlank() ? "<unknown>" : actualShipMmsi;
         return new SnapshotUnavailableException(shipMmsi,
-                                                "快照归属与目标船不符（实际归属 " + actual + "），拒绝求解", true, actual);
+                                                "快照归属与目标船不符（实际归属 "
+                                                        + SnapshotUnavailableException.display(actualShipMmsi)
+                                                        + "），拒绝求解",
+                                                true, actualShipMmsi);
     }
 
 

@@ -49,6 +49,7 @@ public class RendezvousSolveService {
      * @throws SnapshotVersionMismatchException 期望版本与快照实际版本不一致——拒绝求解
      * @throws IllegalArgumentException         命令入参非法；同轮多候选的版本一致性由调用方锚定并下发
      *                                          （《81》§2.1 硬要求 1：本轮调度多候选须共用同一版本）
+     * @throws IllegalStateException            快照覆盖不足，求解时刻超出快照点列范围
      */
     public B_RendezvousSolution solve(RendezvousCommand cmd) {
         Objects.requireNonNull(cmd, "cmd 不能为空");
@@ -61,8 +62,8 @@ public class RendezvousSolveService {
             throw SnapshotUnavailableException.expired(cmd.shipMmsi(), cmd.nowMs(), validUntilT);
         }
         if (cmd.nowMs() < snapshotStartT || cmd.nowMs() > snapshotEndT) {
-            throw new IllegalArgumentException("求解时刻超出快照覆盖范围，实际 nowMs=" + cmd.nowMs()
-                                                       + ", 快照区间=[" + snapshotStartT + ", " + snapshotEndT + "]");
+            throw new IllegalStateException("快照覆盖不足，求解时刻超出快照覆盖范围，实际 nowMs=" + cmd.nowMs()
+                                                    + ", 快照区间=[" + snapshotStartT + ", " + snapshotEndT + "]");
         }
         return RendezvousSolver.solve(new RendezvousSolveRequest(
                 cmd.comboId(), cmd.nestLon(), cmd.nestLat(), cmd.cruiseSpeedMs(),

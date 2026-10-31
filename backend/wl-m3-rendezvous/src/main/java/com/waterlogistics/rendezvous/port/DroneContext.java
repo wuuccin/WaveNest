@@ -1,5 +1,7 @@
 package com.waterlogistics.rendezvous.port;
 
+import com.waterlogistics.algo.meeting.model.ShipState;
+
 import java.util.Objects;
 
 
@@ -13,9 +15,10 @@ import java.util.Objects;
  *
  * @param droneId       执行机实例
  * @param homeNestId    归属机巢标识
- * @param nestLon       归属机巢经度（6a 求解起点仍是机巢）
- * @param nestLat       归属机巢纬度
- * @param cruiseSpeedMs 机型巡航速度，m/s（须为正的有限数）
+ * @param currentNestId 当前所在机巢标识（迫停后可不同于归属机巢）
+ * @param nestLon       当前所在机巢经度（6a 求解起点）
+ * @param nestLat       当前所在机巢纬度
+ * @param cruiseSpeedMs 机型巡航速度，m/s（须在 (0, ShipState.MAX_SOG_MS] 内）
  * @param comboId       当前任务回溯的组合标识；取不到为 {@code null}（透传进返回结果）
  */
 @SuppressWarnings("MissingJavadoc")
@@ -24,6 +27,8 @@ public record DroneContext(
         String droneId,
 
         String homeNestId,
+
+        String currentNestId,
 
         double nestLon,
 
@@ -41,10 +46,12 @@ public record DroneContext(
     public DroneContext {
         Objects.requireNonNull(droneId, "droneId 不能为空");
         Objects.requireNonNull(homeNestId, "homeNestId 不能为空");
+        Objects.requireNonNull(currentNestId, "currentNestId 不能为空");
         droneId = droneId.strip();
         homeNestId = homeNestId.strip();
-        if (droneId.isEmpty() || homeNestId.isEmpty()) {
-            throw new IllegalArgumentException("droneId/homeNestId 不能为空白字符串");
+        currentNestId = currentNestId.strip();
+        if (droneId.isEmpty() || homeNestId.isEmpty() || currentNestId.isEmpty()) {
+            throw new IllegalArgumentException("droneId/homeNestId/currentNestId 不能为空白字符串");
         }
         if (comboId != null) {
             comboId = comboId.strip();
@@ -56,9 +63,10 @@ public record DroneContext(
                 || nestLon < -180.0 || nestLon > 180.0 || nestLat < -90.0 || nestLat > 90.0) {
             throw new IllegalArgumentException("机巢坐标必须为有限数且经纬度在合法范围内");
         }
-        if (!Double.isFinite(cruiseSpeedMs) || cruiseSpeedMs <= 0.0) {
+        if (!Double.isFinite(cruiseSpeedMs) || cruiseSpeedMs <= 0.0
+                || cruiseSpeedMs > ShipState.MAX_SOG_MS) {
             throw new IllegalArgumentException(
-                    "机型巡航速度必须为正的有限数，实际 " + cruiseSpeedMs);
+                    "机型巡航速度须在 (0, " + ShipState.MAX_SOG_MS + "] m/s 内，实际 " + cruiseSpeedMs);
         }
     }
 }

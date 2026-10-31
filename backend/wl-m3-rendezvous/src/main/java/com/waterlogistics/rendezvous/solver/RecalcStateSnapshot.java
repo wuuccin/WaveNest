@@ -15,7 +15,7 @@ import com.waterlogistics.algo.meeting.model.ShipState;
  *
  * @param shipLon      船位经度（求解必需）
  * @param shipLat      船位纬度（求解必需）
- * @param shipCogDeg   船航向，度（求解必需）
+ * @param shipCogDeg   船航向，度（有限时须为 [0,360)；停船时可传 NaN 表示不可用）
  * @param sogMs        船航速，m/s（求解必需）
  * @param shipStateT   船状态时刻，Unix 毫秒（求解必需；6a 以此为求解起点）
  * @param droneLon     机位经度（非必需，追溯用）
@@ -53,19 +53,19 @@ public record RecalcStateSnapshot(
             throw new IllegalArgumentException("船速须在 [0, " + ShipState.MAX_SOG_MS + "] m/s，实际 " + sogMs);
         }
         sogMs = sogMs == 0.0 ? 0.0 : sogMs;
-        if (sogMs > 0.0) {
-            if (!Double.isFinite(shipCogDeg) || shipCogDeg < 0.0 || shipCogDeg >= 360.0) {
-                throw new IllegalArgumentException("船航向非法：shipCogDeg=" + shipCogDeg);
+        if (Double.isNaN(shipCogDeg)) {
+            if (sogMs > 0.0) {
+                throw new IllegalArgumentException("船速为正时航向不可为 NaN");
             }
-            shipCogDeg = ((shipCogDeg % 360.0) + 360.0) % 360.0;
+        } else if (!Double.isFinite(shipCogDeg) || shipCogDeg < 0.0 || shipCogDeg >= 360.0) {
+            throw new IllegalArgumentException("船航向非法：shipCogDeg=" + shipCogDeg);
         } else {
-            shipCogDeg = Double.isFinite(shipCogDeg)
-                    ? ((shipCogDeg % 360.0) + 360.0) % 360.0
-                    : Double.NaN;
+            shipCogDeg = ((shipCogDeg % 360.0) + 360.0) % 360.0;
         }
-        if (shipStateT < EpochMillis.MIN_VALID_MS) {
-            throw new IllegalArgumentException("船状态时刻须为 Unix 毫秒值（下界 "
-                                                       + EpochMillis.MIN_VALID_MS + "），实际 " + shipStateT);
+        if (!EpochMillis.isValid(shipStateT)) {
+            throw new IllegalArgumentException("船状态时刻须为 Unix 毫秒值（范围 ["
+                                                       + EpochMillis.MIN_VALID_MS + ", "
+                                                       + EpochMillis.MAX_VALID_MS + "]），实际 " + shipStateT);
         }
         boolean droneAllNull = droneLon == null && droneLat == null && droneBattery == null && droneStateT == null;
         boolean droneAllSet = droneLon != null && droneLat != null && droneBattery != null && droneStateT != null;
@@ -84,9 +84,10 @@ public record RecalcStateSnapshot(
                     droneBattery.doubleValue() > 100.0) {
                 throw new IllegalArgumentException("机侧状态字段非法：经纬度或电量越界，或不是有限数");
             }
-            if (droneStateT.longValue() < EpochMillis.MIN_VALID_MS) {
-                throw new IllegalArgumentException("机状态时刻须为 Unix 毫秒值（下界 "
-                                                           + EpochMillis.MIN_VALID_MS + "），实际 " + droneStateT);
+            if (!EpochMillis.isValid(droneStateT.longValue())) {
+                throw new IllegalArgumentException("机状态时刻须为 Unix 毫秒值（范围 ["
+                                                           + EpochMillis.MIN_VALID_MS + ", "
+                                                           + EpochMillis.MAX_VALID_MS + "]），实际 " + droneStateT);
             }
         }
     }

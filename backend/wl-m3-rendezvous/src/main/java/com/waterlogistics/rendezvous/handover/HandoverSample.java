@@ -1,5 +1,7 @@
 package com.waterlogistics.rendezvous.handover;
 
+import com.waterlogistics.algo.meeting.model.EpochMillis;
+
 /**
  * 末段采样——判据推进的输入单元（《81-B组算法方案》§3.6）。
  *
@@ -8,7 +10,7 @@ package com.waterlogistics.rendezvous.handover;
  * 时间须<b>严格升序</b>（单样本无法自校验，由 {@code HandoverCommand} 构造期拒绝非增时间），
  * 相对速度由相邻样本差分得出，故相邻样本 dt 须为严格正值。
  *
- * @param t           采样时刻，Unix 毫秒（须为正）
+ * @param t           采样时刻，Unix 毫秒（须落在 EpochMillis 合法区间）
  * @param droneLon    机位经度
  * @param droneLat    机位纬度
  * @param shipLon     船位经度
@@ -35,8 +37,8 @@ public record HandoverSample(
         boolean dropDone) {
 
     public HandoverSample {
-        if (t <= 0L) {
-            throw new IllegalArgumentException("采样时刻必须为正的 Unix 毫秒值，实际 " + t);
+        if (!EpochMillis.isValid(t)) {
+            throw new IllegalArgumentException("采样时刻须为合法的 Unix 毫秒值，实际 " + t);
         }
         if (!Double.isFinite(droneLon) || !Double.isFinite(droneLat)
                 || !Double.isFinite(shipLon) || !Double.isFinite(shipLat)

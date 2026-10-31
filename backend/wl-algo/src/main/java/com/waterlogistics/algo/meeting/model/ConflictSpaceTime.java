@@ -26,9 +26,10 @@ public record ConflictSpaceTime(
                 zone = null;
             }
         }
-        if (tBegin < EpochMillis.MIN_VALID_MS || tEnd < EpochMillis.MIN_VALID_MS) {
-            throw new IllegalArgumentException("冲突区间时刻须为 Unix 毫秒值（下界 "
-                    + EpochMillis.MIN_VALID_MS + "），实际 tBegin=" + tBegin + ", tEnd=" + tEnd);
+        if (!EpochMillis.isValid(tBegin) || !EpochMillis.isValid(tEnd)) {
+            throw new IllegalArgumentException("冲突区间时刻须为 Unix 毫秒值（范围 ["
+                    + EpochMillis.MIN_VALID_MS + ", " + EpochMillis.MAX_VALID_MS
+                    + "]），实际 tBegin=" + tBegin + ", tEnd=" + tEnd);
         }
         if (tBegin > tEnd) {
             throw new IllegalArgumentException(

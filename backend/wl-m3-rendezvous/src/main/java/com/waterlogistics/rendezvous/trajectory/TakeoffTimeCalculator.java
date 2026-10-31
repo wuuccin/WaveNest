@@ -23,6 +23,8 @@ import java.util.Objects;
  */
 public final class TakeoffTimeCalculator {
 
+    private static final long CIVIL_OFFSET_MS = 8L * 3_600_000L;
+
     private TakeoffTimeCalculator() {
     }
 
@@ -43,7 +45,9 @@ public final class TakeoffTimeCalculator {
         // rawT 可能为负（会面时刻早于精算时长）：floorMod 向负无穷取整，takeoffT 仅作追溯留痕，
         // 下游不得直接当作合法 epoch 时刻使用
         long rawT = cmd.meetMs() - (long) cmd.tauFineSec() * 1000L;
-        long takeoffT = rawT - Math.floorMod(rawT, cmd.timeGridMs());
+        long shifted = rawT + TakeoffTimeCalculator.CIVIL_OFFSET_MS;
+        long takeoffT = shifted - Math.floorMod(shifted, cmd.timeGridMs())
+                - TakeoffTimeCalculator.CIVIL_OFFSET_MS;
         // 判定基准必须是实际返回的对齐值。对齐后早于当前时刻即不可行，
         // 不得顺延到下一格：顺延会让到达时刻晚于会面时刻，粗粒度下甚至晚于会面本身
         boolean feasible = takeoffT >= cmd.nowMs();

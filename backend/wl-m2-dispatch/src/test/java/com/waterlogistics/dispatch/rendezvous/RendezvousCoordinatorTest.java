@@ -56,7 +56,7 @@ class RendezvousCoordinatorTest {
     }
 
     private static DroneContext droneContext() {
-        return new DroneContext("DRONE-1", "NEST-A", 120.10, 30.20, 12.0, null);
+        return new DroneContext("DRONE-1", "NEST-A", "NEST-A", 120.10, 30.20, 12.0, null);
     }
 
     /** 有解时的正常路径：会面点、起飞时刻、解标识、快照版本都要回传给调度链 */
@@ -227,7 +227,7 @@ class RendezvousCoordinatorTest {
     }
 
     private static DroneContext droneContextAt(double cruiseMs) {
-        return new DroneContext("DRONE-1", "NEST-A",
+        return new DroneContext("DRONE-1", "NEST-A", "NEST-A",
                 LON0 - GAP_M / mPerDegLon(LAT0), LAT0, cruiseMs, null);
     }
 

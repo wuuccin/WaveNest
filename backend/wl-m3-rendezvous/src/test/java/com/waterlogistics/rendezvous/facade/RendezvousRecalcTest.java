@@ -81,7 +81,7 @@ class RendezvousRecalcTest {
         ShipTrackSnapshot snapshot = snapshot(LON0, LAT0, 5, 90);
         RendezvousFacade facade = new RendezvousFacade(
                 mmsi -> snapshot,
-                id -> new DroneContext("UAV-99", "NEST-1",
+                id -> new DroneContext("UAV-99", "NEST-1", "NEST-1",
                         LON0 - GAP_M / mPerDegLon(LAT0), LAT0, 15.0, "combo-1"));
 
         assertThrows(IllegalArgumentException.class,
@@ -210,7 +210,7 @@ class RendezvousRecalcTest {
     }
 
     private static DroneContext context(String comboId, double cruiseMs) {
-        return new DroneContext(DRONE, "NEST-1",
+        return new DroneContext(DRONE, "NEST-1", "NEST-1",
                 LON0 - GAP_M / mPerDegLon(LAT0), LAT0, cruiseMs, comboId);
     }
 

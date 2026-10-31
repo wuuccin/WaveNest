@@ -58,7 +58,7 @@ public final class DeviationTracker {
      * @param xtlM         当前航段走廊半宽（米），<b>由调用方按航段类型从 {@code sys_param} 选定</b>
      * @return 前提成立性判定结果
      * @throws NullPointerException     航迹列为 null
-     * @throws IllegalArgumentException 航迹列长度不一致、点数不足、含非法数值或跨 ±180° 经线；走廊半宽非正
+     * @throws IllegalArgumentException 航迹列长度不一致、点数不足、含非法数值、跨 ±180° 经线、所有段均退化；走廊半宽非正
      */
     public static PremiseVerdict track(double shipLon, double shipLat,
                                        List<Double> forecastLons, List<Double> forecastLats, double xtlM) {
@@ -82,8 +82,8 @@ public final class DeviationTracker {
         double absXte = Math.abs(signedXte);
         boolean outside = CrossTrackError.outsideCorridor(absXte, xtlM);
 
-        String absXteText = String.format(Locale.ROOT, "%.3f", Double.valueOf(absXte));
-        String xtlText = String.format(Locale.ROOT, "%.3f", Double.valueOf(xtlM));
+        String absXteText = String.format(Locale.ROOT, "%.4f", Double.valueOf(absXte));
+        String xtlText = String.format(Locale.ROOT, "%.4f", Double.valueOf(xtlM));
         return new PremiseVerdict(!outside, absXte, signedXte, xtlM, outside
                 ? "偏出走廊：|XTE|=" + absXteText + "m > XTL=" + xtlText
                 + "m，船不再沿预测航迹行驶，会面前提失效"
@@ -119,6 +119,13 @@ public final class DeviationTracker {
             if (Math.abs(forecastLons.get(i).doubleValue() - forecastLons.get(i - 1).doubleValue()) >= 180.0) {
                 throw new IllegalArgumentException(
                         "预测航迹跨 ±180° 经线，请先归一化经度：index " + (i - 1) + " -> " + i);
+            }
+        }
+        double originLon = forecastLons.get(0).doubleValue();
+        for (int i = 1; i < pointCount; i++) {
+            if (Math.abs(forecastLons.get(i).doubleValue() - originLon) >= 180.0) {
+                throw new IllegalArgumentException(
+                        "预测航迹整体跨 ±180° 经线，请先归一化经度：index 0 -> " + i);
             }
         }
     }

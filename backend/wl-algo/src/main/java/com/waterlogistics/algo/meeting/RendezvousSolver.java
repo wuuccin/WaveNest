@@ -75,8 +75,8 @@ public final class RendezvousSolver {
 
         double t;
         if (tLo == tHi) {
-            // 零时长窗口：仅当船此刻恰在巢位（d≈0）才即刻会面；近似重合的容差与上方
-            // 「船已在巢位」的判据保持一致，避免浮点噪声把重合判成追不上
+            // 零时长窗口：仅当船此刻恰在巢位（d≈0）才即刻会面；
+            // 1e-9 m 只用于排除浮点噪声，与下方非零窗口的验收容差不是同一判据
             if (gapMeters(request, tLo, tLo, v) > 1e-9) {
                 return B_RendezvousSolution.unsolvable(solutionId, request.comboId(),
                         NoSolutionReason.CANNOT_CATCH, snapshotVersion);
@@ -89,9 +89,10 @@ public final class RendezvousSolver {
             if (!(t <= tHi)) {
                 t = Double.NaN;
             }
-            // 毫秒取整会移动求值点，间距残差量级为 v×0.5 ms；容差须随之缩放，
-            // 否则真根会被误弃，并触发一次无谓的全量重扫
-            if (!Double.isNaN(t) && gapMeters(request, Math.round(t), tLo, v) > v * 1e-3) {
+            // 验收容差须覆盖毫秒取整与不动点迭代收敛误差两部分：
+            // 取整移动量级为 v×0.5 ms，迭代停止量级为 v×ε_t。
+            double acceptanceM = v * Math.max(1e-3, request.convergeEpsilonSec());
+            if (!Double.isNaN(t) && gapMeters(request, Math.round(t), tLo, v) > acceptanceM) {
                 t = Double.NaN;
             }
             long bisectUpper = Double.isNaN(t) ? tHi : Math.min(tHi, (long) Math.ceil(t));

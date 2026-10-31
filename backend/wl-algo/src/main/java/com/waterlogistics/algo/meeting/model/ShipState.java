@@ -11,7 +11,7 @@ package com.waterlogistics.algo.meeting.model;
  *
  * @param lon    船位经度，十进制度（项目基准坐标系）
  * @param lat    船位纬度，十进制度（项目基准坐标系）
- * @param cogDeg 航向，度（航速为正时须为 [0,360) 的有限数；停船时可不可用）
+ * @param cogDeg 航向，度（有限时须为 [0,360)；停船时可传 NaN 表示不可用）
  * @param sogMs  航速，m/s（0 至 {@link #MAX_SOG_MS}）
  * @param t      状态时刻，Unix 毫秒（6a 中与求解起点 nowMs 同值，两者须保持一致）
  */
@@ -31,6 +31,8 @@ public record ShipState(
     public static final double MAX_SOG_MS = 100.0;
 
     public ShipState {
+        lon += 0.0;
+        lat += 0.0;
         if (!Double.isFinite(lon) || !Double.isFinite(lat)
                 || lon < -180.0 || lon > 180.0 || lat < -90.0 || lat > 90.0) {
             throw new IllegalArgumentException("船位非法：lon=" + lon + ", lat=" + lat);
@@ -38,21 +40,19 @@ public record ShipState(
         if (!Double.isFinite(sogMs) || sogMs < 0.0 || sogMs > MAX_SOG_MS) {
             throw new IllegalArgumentException("航速须在 [0, " + MAX_SOG_MS + "] m/s，实际 " + sogMs);
         }
-        sogMs += 0.0;
-        if (sogMs > 0.0) {
-            if (!Double.isFinite(cogDeg) || cogDeg < 0.0 || cogDeg > 360.0) {
-                throw new IllegalArgumentException("航向非法：cogDeg=" + cogDeg);
+        sogMs = sogMs == 0.0 ? 0.0 : sogMs;
+        if (Double.isNaN(cogDeg)) {
+            if (sogMs > 0.0) {
+                throw new IllegalArgumentException("航速为正时航向不可为 NaN");
             }
-            cogDeg = ((cogDeg % 360.0) + 360.0) % 360.0 + 0.0;
+        } else if (!Double.isFinite(cogDeg) || cogDeg < 0.0 || cogDeg >= 360.0) {
+            throw new IllegalArgumentException("航向非法：cogDeg=" + cogDeg);
         } else {
-            // 停船：航向不可用时统一记为 NaN，避免 NaN／±Infinity 多种哨兵并存
-            cogDeg = Double.isFinite(cogDeg)
-                    ? ((cogDeg % 360.0) + 360.0) % 360.0 + 0.0
-                    : Double.NaN;
+            cogDeg = ((cogDeg % 360.0) + 360.0) % 360.0 + 0.0;
         }
-        if (t < EpochMillis.MIN_VALID_MS) {
-            throw new IllegalArgumentException("状态时刻须为 Unix 毫秒值（下界 "
-                    + EpochMillis.MIN_VALID_MS + "），实际 " + t);
+        if (!EpochMillis.isValid(t)) {
+            throw new IllegalArgumentException("状态时刻须为 Unix 毫秒值（范围 ["
+                    + EpochMillis.MIN_VALID_MS + ", " + EpochMillis.MAX_VALID_MS + "]），实际 " + t);
         }
     }
 
