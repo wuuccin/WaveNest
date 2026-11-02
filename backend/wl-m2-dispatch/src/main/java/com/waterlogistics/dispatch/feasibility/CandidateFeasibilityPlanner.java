@@ -4,6 +4,8 @@ import com.waterlogistics.algo.candidate.CandidateGenerator;
 import com.waterlogistics.algo.candidate.CandidateInput;
 import com.waterlogistics.algo.candidate.FeasibilityJudge;
 import com.waterlogistics.algo.selection.FeasibleCandidatePicker;
+import com.waterlogistics.dispatch.candidate.CandidateInputAssembler;
+import com.waterlogistics.dispatch.candidate.CandidateQueries;
 import com.waterlogistics.dispatch.candidate.CandidateService;
 import com.waterlogistics.dispatch.weather.WeatherSnapshotStore;
 import com.waterlogistics.dispatch.weather.WeatherSettings;
@@ -15,7 +17,6 @@ import com.waterlogistics.storage.repository.DroneMapper;
 import com.waterlogistics.storage.repository.NestMapper;
 import java.math.BigDecimal;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -37,15 +38,14 @@ import org.springframework.stereotype.Service;
  *
  * <h3>★ 为什么本类自己读一次台账（而不是调 {@code selectBest}）</h3>
  * <p>要退到次优就必须拿到<b>全部</b>候选，而 {@code CandidateSelector.selectBest} 只返回一个，
- * 其 {@code buildInput} 又是 private——本组不改他人子包，故在本类里做一次
- * 「实体 → {@link CandidateInput}」的映射，再调 {@code CandidateService.generate}
- * （<b>public，可直接用</b>）。
+ * 其 {@code buildInput} 又是 private——本组不改他人子包，故在本类里读一次台账，
+ * 再调 {@code CandidateService.generate}（<b>public，可直接用</b>）。
  *
- * <p><b>代价与消除条件（必须写清，否则会烂成两份真相）</b>：本类的
- * {@link #buildInput} 与 {@code CandidateSelector.buildInput} <b>同源同口径</b>
- * （含「抗风/巡航未登记 → {@code NaN} 而不是 0」这条关键口径，写错会把风况闸变成永真）。
- * 一旦 {@code CandidateSelector} 暴露「返回全部候选」的方法，本类应删掉 {@link #buildInput}
- * 改为直接调用——届时只改本类，调用方零改动。
+ * <p><b>组装口径已收敛（Open CodeReview 修）</b>：「实体 → {@link CandidateInput}」的映射
+ * 统一由 {@code CandidateInputAssembler} 提供，本类与 {@code CandidateSelector} 都只做
+ * mapper 查询（含 health/status 过滤口径）再委托它。<b>不存在两份同源副本了</b>——
+ * 尤其「抗风/巡航未登记 → {@code NaN} 而不是 0」这条口径只需改一处，
+ * 不会出现「改一边漏一边」把风况闸变成永真。
  *
  * <h3>无新鲜风况时的兜底（清单硬要求：不得给 0）</h3>
  * <p>走 {@code worstWindMsOrDefault(now, warningWindMs)}，兜底值取 {@code sys_param} 已登记的
@@ -57,14 +57,8 @@ public class CandidateFeasibilityPlanner {
 
     private static final Logger log = LoggerFactory.getLogger(CandidateFeasibilityPlanner.class);
 
-    /** 无人机「空闲」状态词（照 23 §7；与 {@code CandidateSelector} 同口径）。 */
-    private static final String STATUS_IDLE = "空闲";
-
-    /** 机巢「可用」状态词（与 {@code CandidateSelector} 同口径）。 */
-    private static final String NEST_AVAILABLE = "可用";
-
-    /** 无人机「健康」状态词（照 {@code 001_init.sql} 列注释「健康/告警」，与 CandidateSelector 同口径）。 */
-    private static final String STATUS_HEALTH_OK = "健康";
+    // 状态词不在这里定义：查询条件统一由 CandidateQueries 提供（逐字审查），
+    // 避免「本类一份、Selector 一份」的状态词副本各自漂移。
 
     // 以下两个能耗标定值在 sys_param 中无对应键，按纪律不臆造键名，
     // 沿用 FeasibilityJudge.Params.defaults() 的演示标定值（1.5 %/km、0.2 %/kg）。
@@ -240,8 +234,9 @@ public class CandidateFeasibilityPlanner {
                     weatherSettings.ttlMs(), fallbackWindMs);
         }
 
-        double payloadKg = order.getGoodsWeight() != null
-                ? order.getGoodsWeight().doubleValue() : 0.0;
+        // 载荷直接取组装产物（Open CodeReview：这里原有一份独立的 0.0 兜底，
+        // 与 buildInput 的守卫重复且会漂移——单一事实源是 CandidateInput.payloadKg()）
+        double payloadKg = input.payloadKg();
 
         FeasibleCandidatePicker.Selection selection = FeasibleCandidatePicker.pick(
                 combos, worstWindMs, payloadKg, judgeParams(input));
@@ -311,77 +306,22 @@ public class CandidateFeasibilityPlanner {
     }
 
     /**
-     * 读空闲无人机与可用机巢，组装 {@link CandidateInput}。
+     * 读空闲无人机与可用机巢，委托 {@code CandidateInputAssembler} 组装 {@link CandidateInput}。
      *
-     * <p><b>与 {@code CandidateSelector.buildInput} 同源同口径</b>：状态词、载荷、电量、
+     * <p><b>组装口径只有一份</b>（{@code CandidateInputAssembler}）：状态词、载荷、电量、
      * 机巢允许机型都按同一套取；尤其
      * <b>抗风/巡航未登记时必须给 {@code NaN}（＝未登记），不得给 0</b>——
      * 0 会被 {@code FeasibilityJudge} 当成「完全不能吹风」，把所有该机型判死；
      * 填默认值则造假机型差异。详见 {@link CandidateInput.DroneView#windLimitMs()}。
      */
     private CandidateInput buildInput(OrderTaskEntity order) {
-        List<DroneEntity> drones = droneMapper.selectList(
-                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<DroneEntity>()
-                        .eq(DroneEntity::getStatus, STATUS_IDLE)
-                        // 健康状态过滤（评审 HIGH.6）：与 CandidateSelector 同口径，
-                        // 只放行「健康」，NULL／「告警」一律不进候选
-                        .eq(DroneEntity::getHealthStatus, STATUS_HEALTH_OK));
-        List<NestEntity> nests = nestMapper.selectList(
-                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<NestEntity>()
-                        .eq(NestEntity::getStatus, NEST_AVAILABLE));
+        List<DroneEntity> drones = droneMapper.selectList(CandidateQueries.idleAndHealthyDrones());
+        List<NestEntity> nests = nestMapper.selectList(CandidateQueries.availableNests());
 
-        double pickupLon = order.getShipLon() != null ? order.getShipLon().doubleValue() : 0.0;
-        double pickupLat = order.getShipLat() != null ? order.getShipLat().doubleValue() : 0.0;
-        double payloadKg = order.getGoodsWeight() != null
-                ? order.getGoodsWeight().doubleValue() : 0.0;
-
-        List<CandidateInput.NestView> nestViews = new ArrayList<>();
-        for (NestEntity nest : nests) {
-            nestViews.add(new CandidateInput.NestView(
-                    nest.getNestId(),
-                    nest.getLon() != null ? nest.getLon().doubleValue() : 0.0,
-                    nest.getLat() != null ? nest.getLat().doubleValue() : 0.0,
-                    splitModels(nest.getSupportedModels())));
-        }
-
-        List<CandidateInput.DroneView> droneViews = new ArrayList<>();
-        for (DroneEntity drone : drones) {
-            droneViews.add(new CandidateInput.DroneView(
-                    drone.getDroneId(),
-                    drone.getCurrentNestId() != null ? drone.getCurrentNestId() : drone.getHomeNestId(),
-                    drone.getModel(),
-                    drone.getStatus(),
-                    drone.getBattery() != null ? drone.getBattery().doubleValue() : 0.0,
-                    drone.getMaxPayload() != null ? drone.getMaxPayload().doubleValue() : 0.0,
-                    optionalDouble(drone.getWindLimitMs()),
-                    optionalDouble(drone.getCruiseSpeedMs())));
-        }
-
-        return new CandidateInput(pickupLon, pickupLat, payloadKg, nestViews, droneViews);
-    }
-
-    /** {@code BigDecimal} → {@code double}；为 {@code null} 时给 {@code NaN}（＝未登记，不是 0）。 */
-    private static double optionalDouble(BigDecimal value) {
-        return value != null ? value.doubleValue() : Double.NaN;
-    }
-
-    /**
-     * 机巢允许机型串 → 机型列表：逐个 {@code trim} 并滤掉空串（评审 MEDIUM.18）。
-     *
-     * <p><b>为什么必须滤</b>：{@code CandidateGenerator} 用 {@code List.contains} +
-     * {@code String.equals} 做机型匹配。<b>未登记与登记成空串必须语义一致</b>——
-     * 台账里写 {@code "M30T, M400"}（逗号后带空格）时，{@code " M400"} 与机型名
-     * {@code "M400"} 不相等，该机型会被静默排除，现场表现为「机巢明明支持却不出候选」。
-     * 全空串（如 {@code ""}）拆出的是 {@code [""]}，会让「空 → 放行全部」和
-     * 「空 → 一个都不放行」两种口径打架，这里统一归一为<b>空列表＝未登记＝不限制机型</b>。
-     */
-    static List<String> splitModels(String supportedModels) {
-        if (supportedModels == null || supportedModels.isBlank()) {
-            return List.of();
-        }
-        return Arrays.stream(supportedModels.split(","))
-                .map(String::trim)
-                .filter(s -> !s.isEmpty())
-                .toList();
+        // 组装逻辑收敛到 CandidateInputAssembler（Open CodeReview：两份同源副本
+        // 必须收敛成一份）。mapper 查询口径（空闲＋健康 / 巢可用）由 CandidateQueries
+        // 统一提供（逐字审查：条件不再两处各写一遍，新入口只能拿到同一份）。
+        // MEDIUM.13 守卫（缺经纬度/载重即抛）随组装器生效——生产主路径由此受保护。
+        return CandidateInputAssembler.assemble(order, drones, nests);
     }
 }

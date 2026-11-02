@@ -90,6 +90,11 @@ public final class RendezvousFrameProjector {
      * 否则候选链后续改动会污染已经发出去的帧。
      */
     public static List<String> reasonsOf(FeasibleSelection selection) {
+        // 与 candidateViewsOf 对称（Open CodeReview）：null 返回空列表而非 NPE，
+        // 两个姊妹方法对同一入参类型必须同一契约——"不发帧的调用点不炸"
+        if (selection == null) {
+            return List.of();
+        }
         List<String> reasons = new ArrayList<>();
         for (CandidateVerdict verdict : selection.candidates()) {
             if (verdict.feasible()) {

@@ -7,6 +7,8 @@ import com.waterlogistics.storage.entity.NestEntity;
 import com.waterlogistics.storage.param.SysParamLoader;
 import com.waterlogistics.storage.repository.DroneMapper;
 import com.waterlogistics.storage.repository.NestMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /**
@@ -32,6 +34,8 @@ import org.springframework.stereotype.Component;
  */
 @Component
 public class DroneContextAdapter implements DroneContextPort {
+
+    private static final Logger log = LoggerFactory.getLogger(DroneContextAdapter.class);
 
     /** 巡航速度参数键；缺省值与 M1 仿真器 {@code wavenest.sim.uav.speed-ms} 对齐 */
     public static final String CRUISE_SPEED_KEY = "droneCruiseSpeedMs";
@@ -71,6 +75,13 @@ public class DroneContextAdapter implements DroneContextPort {
         if (drone == null || drone.getHomeNestId() == null || drone.getHomeNestId().isBlank()) {
             return null;
         }
+        // 主键一致性自检（逐字审查）：selectById 出来的行，drone_id 理应等于入参。
+        // 若不等（主键被改过／触发器等历史数据问题），以<b>已校验的入参</b>为准——
+        // 身份字段不能取自库值，否则会把 A 机的上下文挂到 B 机上。
+        if (drone.getDroneId() != null && !droneId.equals(drone.getDroneId())) {
+            log.warn("drone 台账主键不一致：入参 {}，查询结果为 {}——以入参为准，请核对主键数据",
+                    droneId, drone.getDroneId());
+        }
         String currentNestId = drone.getCurrentNestId();
         if (currentNestId == null || currentNestId.isBlank()) {
             currentNestId = drone.getHomeNestId();
@@ -81,17 +92,32 @@ public class DroneContextAdapter implements DroneContextPort {
                 && !currentNestId.equals(drone.getHomeNestId())) {
             nest = nestMapper.selectById(drone.getHomeNestId());
         }
-        // 机巢查不到或坐标缺失 ⇒ 返回 null（评审 HIGH.9）：
-        // 原实现在「当前巢缺坐标」时会静默回落到原巢再查一次，等于把求解起点
-        // 悄悄换成原巢——起点与执行机实际位置不符，会面点会算到错的地方。
-        // 宁可拒绝求解（端口契约允许 null），也不拿一个"看起来合理"的错起点继续算。
+        // 机巢坐标缺失时的口径（评审 HIGH.9，回执 §二：保留一次性回落为有意设计）：
+        // 当前巢缺坐标且不在原巢时，回退原巢查一次——机可能已完成调度回巢但
+        // current_nest_id 尚未更新，此时原巢就是它的真实位置；
+        // 当前巢就是原巢时绝不重复查同一行；两次都取不到坐标 ⇒ 返回 null 拒绝求解
+        // （端口契约允许 null），不拿一个"看起来合理"的错起点继续算。
         if (nest == null || nest.getLon() == null || nest.getLat() == null) {
             return null;
         }
         double cruiseSpeedMs = sysParamLoader.getDouble(CRUISE_SPEED_KEY, DEFAULT_CRUISE_SPEED_MS);
+        // 配置值自检（Open CodeReview）：sys_param 配成 0/负/±Infinity 时，
+        // DroneContext 规范构造器会抛 IllegalArgumentException——但按端口契约那是
+        // 「调用方缺陷」信号，配置错误冒充调用方错误会把排障带错方向。
+        // 故在此校验并回落默认值，留 warn 指明坏键，让配置问题在配置层显形。
+        if (!Double.isFinite(cruiseSpeedMs) || cruiseSpeedMs <= 0.0) {
+            log.warn("sys_param 中 {} 取值非法（{}），回落默认 {} m/s——请修正配置",
+                    CRUISE_SPEED_KEY, cruiseSpeedMs, DEFAULT_CRUISE_SPEED_MS);
+            cruiseSpeedMs = DEFAULT_CRUISE_SPEED_MS;
+        }
         return new DroneContext(
-                drone.getDroneId(),
+                // 身份字段取<b>已校验的入参</b>，不取库值（逐字审查）：
+                // 入参在上面已判空/空白，是可信来源；库值未经校验，
+                // 万一为空会把一个 null 的 droneId 透给 M3 的求解键。
+                droneId,
                 drone.getHomeNestId(),
+                // currentNestId 用上面已归一的局部量（库值为空时已回落原巢），
+                // 不直接用 drone.getCurrentNestId()——那会把空串透给 M3 的求解起点
                 currentNestId,
                 nest.getLon().doubleValue(),
                 nest.getLat().doubleValue(),

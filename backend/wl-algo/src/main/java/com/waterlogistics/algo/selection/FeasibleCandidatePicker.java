@@ -17,7 +17,8 @@ import java.util.List;
  * <ol>
  *   <li><b>逐个判定</b>：对候选列表里每个组合调 {@link FeasibilityJudge#judge}，
  *       距离取组合自带的 {@link CandidateGenerator.CandidateCombo#distKm()}
- *       （机巢→取货点单程；判定内部按往返 2× 粗估），载荷取订单载荷；</li>
+ *       （机巢→取货点单程；判定内部按 <b>巢↔取 + 取↔交</b> 两段往返粗估，
+ *       即 {@code 2×(taskDistKm + combo.distKm())}——三段里程口径）；</li>
  *   <li><b>过滤不可飞</b>：风况闸／电量闸任一不过即淘汰，并保留逐条中文原因（可解释性优先）；</li>
  *   <li><b>择优</b>：在<b>可行</b>候选里取 {@link CandidateGenerator} 排好的第一个
  *       ——生成端已按距离升序，故「第一个可行者」即「最近的可飞候选」，
@@ -109,12 +110,13 @@ public final class FeasibleCandidatePicker {
         if (params == null) {
             throw new IllegalArgumentException("判定参数不得为 null");
         }
-        if (Double.isNaN(worstWindMs) || worstWindMs < 0.0) {
-            throw new IllegalArgumentException("最不利风速必须为非负有限值：" + worstWindMs);
-        }
-        if (Double.isNaN(payloadKg) || payloadKg < 0.0) {
-            throw new IllegalArgumentException("载荷必须为非负有限值：" + payloadKg);
-        }
+        // 用 isFinite 而不是 isNaN（逐字审查，与 MEDIUM.19 同源缺陷）：
+        // 只判 isNaN 会放过 ±Infinity——
+        //  +Infinity 风速：{@code Infinity > 抗风上限} 恒真，"大风"方向尚算安全；
+        //  −Infinity 风速：恒 false ⇒ 风况闸全部放行，是危险方向。
+        // 入口一处判掉，比在每个闸里补判更可靠（判定层仍有同样的守卫，双保险）。
+        requireFiniteNonNegative("worstWindMs", worstWindMs);
+        requireFiniteNonNegative("payloadKg", payloadKg);
         if (combos == null || combos.isEmpty()) {
             return new Selection(null, List.of());
         }
@@ -131,5 +133,14 @@ public final class FeasibleCandidatePicker {
             }
         }
         return new Selection(chosen, evaluated);
+    }
+
+    /** 非有限值（{@code NaN}／±Infinity）与负值一律拒绝——与判定层同一口径。 */
+    private static void requireFiniteNonNegative(String name, double value) {
+        if (!Double.isFinite(value) || value < 0.0) {
+            throw new IllegalArgumentException(
+                    name + " 必须为非负有限值：" + value
+                            + "——NaN/Infinity 会让可行性判定全部静默通过（NaN 参与比较恒为 false）");
+        }
     }
 }

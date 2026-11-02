@@ -6,6 +6,7 @@ import com.waterlogistics.algo.candidate.FeasibilityJudge;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.Objects;
 
 /**
  * 模块二·候选生成与可行性服务（杨添爻，dispatch.candidate）。
@@ -43,7 +44,11 @@ public class CandidateService {
      * 生成候选并对每个组合做简化可行性判断（10-16 成对口径）。
      *
      * @param input        候选生成输入
-     * @param taskDistKm   本次任务主航段距离（km，取货点→交货点，调用方按订单给）
+     * @param taskDistKm   本次任务主航段距离（km，取货点→交货点，调用方按订单给）。
+     *                    <p><b>口径（已修，原为文档-实现错位）</b>：{@link FeasibilityJudge#judge}
+     *                    现按三段估算总里程——{@code 2×taskDistKm}（取↔交）＋
+     *                    {@code 2×combo.distKm()}（巢↔取，由生成器用 haversine 算好随组合透传）。
+     *                    交货→巢按保守上界并入，不再漏算机巢段。
      * @param worstWindMs  现场最不利风速（m/s，取自 data.weather 按位置取最不利）
      * @param genParams    候选生成参数
      * <p><b>入口非有限值守卫（评审 HIGH.8 · 硬判据 3）</b>：{@code taskDistKm} 与
@@ -66,7 +71,14 @@ public class CandidateService {
                                                                      FeasibilityJudge.Params judgeParams) {
         requireFiniteNonNegative("taskDistKm", taskDistKm);
         requireFiniteNonNegative("worstWindMs", worstWindMs);
-        List<CandidateGenerator.CandidateCombo> combos = generator.generate(input, genParams);
+        // 显式 null 守卫（Open CodeReview）：坏 null 在入口报错并指名参数，
+        // 不让它落到算法层变成来历不明的 NPE
+        Objects.requireNonNull(input, "input 不能为 null");
+        Objects.requireNonNull(genParams, "genParams 不能为 null");
+        Objects.requireNonNull(judgeParams, "judgeParams 不能为 null");
+        // 委托本类 generate（不走 generator 直调）：将来在 generate 上加的横切行为
+        // （校验/缓存/指标）才会同时作用于判定路径，避免长出两条分叉管线
+        List<CandidateGenerator.CandidateCombo> combos = generate(input, genParams);
         return combos.stream()
                 .map(c -> judge.judge(c, taskDistKm, worstWindMs, input.payloadKg(), judgeParams))
                 .toList();
