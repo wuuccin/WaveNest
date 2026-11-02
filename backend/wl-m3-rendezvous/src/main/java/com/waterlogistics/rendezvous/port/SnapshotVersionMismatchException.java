@@ -59,13 +59,13 @@ public class SnapshotVersionMismatchException extends RuntimeException {
                                             Throwable cause) {
         super("快照版本不一致，拒绝求解：船 "
                       + com.waterlogistics.rendezvous.support.WireText.escapeForLog(
-                              shipMmsi == null || shipMmsi.isBlank() ? "<unknown>" : shipMmsi)
+                shipMmsi == null || shipMmsi.isBlank() ? "<unknown>" : shipMmsi)
                       + "，期望版本 "
                       + com.waterlogistics.rendezvous.support.WireText.escapeForLog(
-                              expected == null || expected.isBlank() ? "<none>" : expected)
+                expected == null || expected.isBlank() ? "<none>" : expected)
                       + "，实际版本 "
                       + com.waterlogistics.rendezvous.support.WireText.escapeForLog(
-                              actual == null || actual.isBlank() ? "<none>" : actual), cause);
+                actual == null || actual.isBlank() ? "<none>" : actual), cause);
         this.shipMmsi = shipMmsi;
         this.expected = expected;
         this.actual = actual;

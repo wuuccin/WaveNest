@@ -19,7 +19,7 @@ import java.util.List;
  * 淘汰原因与会面时刻，<b>不要求调用方持有候选判定</b>——编排器（T1-2）与队列侧（T1-6）
  * 都能构造，故两侧可以共用这一份投影口径，不会各写一套、信号分叉。
  *
- * <p><b>etaTs 按 {@code meet_time} 口径</b>：取会面时刻（{@code MeetPlan.takeoffTime()}），
+ * <p><b>etaTs 按 {@code meet_time} 口径</b>：取会面时刻（{@code MeetPlan.meetTime()}），
  * 该字段名沿用早期命名，其值来自求解结果的 {@code meetTMin}（即会面时刻），并非起飞时刻；
  * 真起飞时刻由 {@code FlightPhaseTimeline} 另算（会面时刻 − 去程时长）。
  * 时区与 {@code TaskQueueService}、{@code FlightPhaseAdvancer} 一致

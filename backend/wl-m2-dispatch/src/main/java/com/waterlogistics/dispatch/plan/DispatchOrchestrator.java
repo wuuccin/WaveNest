@@ -1,8 +1,8 @@
 package com.waterlogistics.dispatch.plan;
 
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.waterlogistics.algo.candidate.CandidateGenerator;
 import com.waterlogistics.contract.state.OrderStatus;
-import com.waterlogistics.dispatch.candidate.CandidateSelector;
 import com.waterlogistics.dispatch.feasibility.CandidateFeasibilityPlanner;
 import com.waterlogistics.dispatch.frame.RendezvousFrameProjector;
 import com.waterlogistics.dispatch.queue.TaskQueueService;
@@ -60,7 +60,6 @@ public class DispatchOrchestrator {
     private static final Logger log = LoggerFactory.getLogger(DispatchOrchestrator.class);
 
     private final TaskQueueService taskQueueService;
-    private final CandidateSelector candidateSelector;
     private final RendezvousCoordinator rendezvous;
     private final OrderTaskMapper orderTaskMapper;
     private final ApplicationEventPublisher eventPublisher;
@@ -74,13 +73,11 @@ public class DispatchOrchestrator {
     private final CandidateFeasibilityPlanner candidateFeasibilityPlanner;
 
     public DispatchOrchestrator(TaskQueueService taskQueueService,
-            CandidateSelector candidateSelector,
             RendezvousCoordinator rendezvous,
             OrderTaskMapper orderTaskMapper,
             CandidateFeasibilityPlanner candidateFeasibilityPlanner,
             ApplicationEventPublisher eventPublisher) {
         this.taskQueueService = taskQueueService;
-        this.candidateSelector = candidateSelector;
         this.rendezvous = rendezvous;
         this.orderTaskMapper = orderTaskMapper;
         this.candidateFeasibilityPlanner = candidateFeasibilityPlanner;
@@ -101,7 +98,7 @@ public class DispatchOrchestrator {
         taskQueueService.startDispatch(orderId);
 
         OrderTaskEntity order = orderTaskMapper.selectById(orderId);
-        if (!OrderStatus.DISPATCHING.getValue().equals(order.getStatus())) {
+        if (OrderStatus.ACCEPTED_WAIT_WAKE.getValue().equals(order.getStatus())) {
             // 熔断延后：本轮编排到此为止，不选机、不求解、不派发
             log.info("订单 {} 闸门熔断延后（已受理待唤醒），待闸门解除后重入队再编排", orderId);
             return null;
@@ -127,30 +124,36 @@ public class DispatchOrchestrator {
         RendezvousCoordinator.MeetPlan plan = rendezvous.solveFor(order, best.comboId(), best.droneId());
 
         // 第 4 步：派发（调度中 → 已派发，回填 droneId + meetTime）
-        taskQueueService.dispatch(orderId, best.droneId(), plan.takeoffTime());
+        taskQueueService.dispatch(orderId, best.droneId(), plan.meetTime());
 
-        // 第 5 步：会面点坐标回填
-        order.setMeetLon(BigDecimal.valueOf(plan.meetLon()));
-        order.setMeetLat(BigDecimal.valueOf(plan.meetLat()));
-        orderTaskMapper.updateById(order);
+        // 第 5 步：会面点坐标回填。只定点更新会面点两列，不用开头读到的陈旧实体整行覆盖，
+        // 避免把并发写入的无人机占位或状态回写冲掉。
+        int rows = orderTaskMapper.update(null, new LambdaUpdateWrapper<OrderTaskEntity>()
+                .eq(OrderTaskEntity::getOrderId, orderId)
+                .eq(OrderTaskEntity::getStatus, OrderStatus.DISPATCHED.getValue())
+                .set(OrderTaskEntity::getMeetLon, BigDecimal.valueOf(plan.meetLon()))
+                .set(OrderTaskEntity::getMeetLat, BigDecimal.valueOf(plan.meetLat())));
+        if (rows != 1) {
+            throw new IllegalStateException("订单 " + orderId + " 会面点回填影响行数为 " + rows + "，期望 1");
+        }
         // C3：完整方案已持久化后发布投影，app 层在事务提交后转成 WebSocket 帧。
         // 会面帧投影抽成纯函数 RendezvousFrameProjector，编排器与队列侧（T1-6）共用同一口径，
-        // 不重跑判定；etaTs 取 plan.takeoffTime()（值即 meetTMin＝会面时刻，非起飞时刻）。
+        // 不重跑判定；etaTs 取 plan.meetTime()（值即 meetTMin＝会面时刻，非起飞时刻）。
         eventPublisher.publishEvent(new RendezvousPlanCommittedEvent(
                 new RendezvousFrameProjector().project(new RendezvousFrameProjector.Input(
                         orderId, plan.meetLon(), plan.meetLat(), true,
                         selection.candidates().size(),
                         RendezvousFrameProjector.reasonsOf(selection),
-                        plan.takeoffTime(),
+                        plan.meetTime(),
                         // 候选对比三项（10-29 第二步）：中选机巢／中选无人机／全量候选。
                         // 全量候选含中选者本身（selected=true），前端据此高亮中选、置灰落选。
                         best.nestId(),
                         best.droneId(),
                         RendezvousFrameProjector.candidateViewsOf(selection, best.comboId())))));
 
-        log.info("派发编排完成：orderId={} droneId={} comboId={} 会面点={},{} 起飞={} 解={} 快照版本={}",
+        log.info("派发编排完成：orderId={} droneId={} comboId={} 会面点={},{} 会面时刻={} 解={} 快照版本={}",
                 orderId, best.droneId(), best.comboId(), plan.meetLon(), plan.meetLat(),
-                plan.takeoffTime(), plan.solutionId(), plan.snapshotVersion());
+                plan.meetTime(), plan.solutionId(), plan.snapshotVersion());
 
         return best.droneId();
     }

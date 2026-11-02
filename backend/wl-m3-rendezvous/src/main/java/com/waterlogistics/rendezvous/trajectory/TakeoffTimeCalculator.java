@@ -25,6 +25,10 @@ public final class TakeoffTimeCalculator {
 
     private static final long CIVIL_OFFSET_MS = 8L * 3_600_000L;
 
+
+
+
+
     private TakeoffTimeCalculator() {
     }
 

@@ -77,3 +77,4 @@ application-local.properties
 .codebuddy/
 /水上低空物流智能调度/
 /tmp/
+.codegraph/

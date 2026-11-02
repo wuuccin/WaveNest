@@ -71,7 +71,7 @@ public record RendezvousCommand(
         comboId = WireText.requireIdentifier(comboId, "comboId", RendezvousCommand.MAX_ID_LENGTH);
         shipMmsi = WireText.requireIdentifier(shipMmsi, "shipMmsi", RendezvousCommand.MAX_ID_LENGTH);
         snapshotVersion = WireText.requireIdentifier(snapshotVersion, "snapshotVersion",
-                RendezvousCommand.MAX_ID_LENGTH);
+                                                     RendezvousCommand.MAX_ID_LENGTH);
         if (!Double.isFinite(nestLon) ||
                 !Double.isFinite(nestLat) ||
                 nestLon < -180.0 ||

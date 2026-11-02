@@ -1,5 +1,6 @@
 package com.waterlogistics.app.config;
 
+import com.waterlogistics.dispatch.rendezvous.RendezvousPort;
 import com.waterlogistics.rendezvous.facade.RendezvousFacade;
 import com.waterlogistics.rendezvous.port.DroneContextPort;
 import com.waterlogistics.rendezvous.port.TrajectorySnapshotPort;
@@ -37,5 +38,16 @@ public class RendezvousWiring {
     public RendezvousFacade rendezvousFacade(TrajectorySnapshotPort snapshotPort,
             DroneContextPort droneContextPort) {
         return new RendezvousFacade(snapshotPort, droneContextPort);
+    }
+
+    /**
+     * 会面求解端口：M2 只依赖 M2 自己的接口，实现转调 M3 门面。
+     *
+     * @param facade 动态会面门面
+     * @return 会面求解端口的实现
+     */
+    @Bean
+    public RendezvousPort rendezvousPort(RendezvousFacade facade) {
+        return facade::solve;
     }
 }

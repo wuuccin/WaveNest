@@ -185,7 +185,7 @@ public class RendezvousRecomputeRequester implements RecomputeRequester {
                             true,
                             0,
                             List.of(),
-                            plan.takeoffTime(),
+                            plan.meetTime(),
                             null,
                             droneId,
                             List.of()));

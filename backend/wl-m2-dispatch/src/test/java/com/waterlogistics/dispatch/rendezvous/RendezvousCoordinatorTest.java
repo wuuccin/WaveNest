@@ -71,7 +71,7 @@ class RendezvousCoordinatorTest {
         assertEquals(115.0, plan.meetLon(), 1e-9, "会面点经度取算法层结果");
         assertEquals(29.0, plan.meetLat(), 1e-9, "会面点纬度取算法层结果");
         assertEquals(LocalDateTime.ofInstant(Instant.ofEpochMilli(MEET_T_MS),
-                ZoneId.of("Asia/Shanghai")), plan.takeoffTime(),
+                ZoneId.of("Asia/Shanghai")), plan.meetTime(),
                 "起飞时刻取会面时刻最早上界、且已转本地时区");
         assertEquals("SOL-1", plan.solutionId(), "解标识须回传便于留痕");
         assertEquals("1", plan.snapshotVersion(), "快照版本须与 M2 常驻层一致");
@@ -164,19 +164,19 @@ class RendezvousCoordinatorTest {
     @Test
     void solveFor_shouldShiftPlanWithWindFromSnapshot() {
         RendezvousCoordinator headwind = new RendezvousCoordinator(
-                new RendezvousFacade(mmsi -> movingSnapshot(), id -> null),
+                new RendezvousFacade(mmsi -> movingSnapshot(), id -> null)::solve,
                 id -> droneContextAt(15.0), mmsi -> movingSnapshot(), sysParams(),
                 (lon, lat, now) -> new WeatherSnapshotPort.LatestWind(3.0, 90.0, MEET_T_MS));
         RendezvousCoordinator tailwind = new RendezvousCoordinator(
-                new RendezvousFacade(mmsi -> movingSnapshot(), id -> null),
+                new RendezvousFacade(mmsi -> movingSnapshot(), id -> null)::solve,
                 id -> droneContextAt(15.0), mmsi -> movingSnapshot(), sysParams(),
                 (lon, lat, now) -> new WeatherSnapshotPort.LatestWind(3.0, 270.0, MEET_T_MS));
 
         RendezvousCoordinator.MeetPlan head = headwind.solveFor(order(), "COMBO-1", "DRONE-1");
         RendezvousCoordinator.MeetPlan tail = tailwind.solveFor(order(), "COMBO-1", "DRONE-1");
 
-        assertTrue(tail.takeoffTime().isBefore(head.takeoffTime()),
-                "顺风应更早会面：逆风 " + head.takeoffTime() + "，顺风 " + tail.takeoffTime());
+        assertTrue(tail.meetTime().isBefore(head.meetTime()),
+                "顺风应更早会面：逆风 " + head.meetTime() + "，顺风 " + tail.meetTime());
     }
 
     /** 气象快照仓到适配器再到协调器：顺风应比逆风更早会面。 */
@@ -184,19 +184,19 @@ class RendezvousCoordinatorTest {
     void solveFor_shouldConsumeWindFromStore() {
         long now = System.currentTimeMillis();
         RendezvousCoordinator headwind = new RendezvousCoordinator(
-                new RendezvousFacade(mmsi -> movingSnapshot(), id -> null),
+                new RendezvousFacade(mmsi -> movingSnapshot(), id -> null)::solve,
                 id -> droneContextAt(15.0), mmsi -> movingSnapshot(), sysParams(),
                 new WeatherSnapshotAdapter(storeWithWind(now, 90.0)));
         RendezvousCoordinator tailwind = new RendezvousCoordinator(
-                new RendezvousFacade(mmsi -> movingSnapshot(), id -> null),
+                new RendezvousFacade(mmsi -> movingSnapshot(), id -> null)::solve,
                 id -> droneContextAt(15.0), mmsi -> movingSnapshot(), sysParams(),
                 new WeatherSnapshotAdapter(storeWithWind(now, 270.0)));
 
         RendezvousCoordinator.MeetPlan head = headwind.solveFor(order(), "COMBO-1", "DRONE-1");
         RendezvousCoordinator.MeetPlan tail = tailwind.solveFor(order(), "COMBO-1", "DRONE-1");
 
-        assertTrue(tail.takeoffTime().isBefore(head.takeoffTime()),
-                "顺风应更早会面：逆风 " + head.takeoffTime() + "，顺风 " + tail.takeoffTime());
+        assertTrue(tail.meetTime().isBefore(head.meetTime()),
+                "顺风应更早会面：逆风 " + head.meetTime() + "，顺风 " + tail.meetTime());
     }
 
     private static WeatherSnapshotStore storeWithWind(long obsMs, double dirDeg) {
@@ -252,16 +252,13 @@ class RendezvousCoordinatorTest {
     }
 
     /** 门面板：按 solvable 返回有解／无解（M3 是普通类，故用继承覆盖，不引入 mock 框架） */
-    private static final class StubbedFacade extends RendezvousFacade {
+    private static final class StubbedFacade implements RendezvousPort {
 
         private final boolean solvable;
 
         private RendezvousCommand lastCommand;
 
         private StubbedFacade(boolean solvable) {
-            // 门面构造器会对两个端口做 requireNonNull，故此处给占位实现；
-            // 本桩已覆盖 solve()，这两个端口在测试中不会被调用。
-            super(mmsi -> null, id -> null);
             this.solvable = solvable;
         }
 
