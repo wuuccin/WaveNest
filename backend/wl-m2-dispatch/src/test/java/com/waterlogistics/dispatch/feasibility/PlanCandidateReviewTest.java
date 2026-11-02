@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.waterlogistics.contract.mq.WeatherData;
+import com.waterlogistics.dispatch.candidate.CandidateQueries;
 import com.waterlogistics.dispatch.candidate.CandidateService;
 import com.waterlogistics.dispatch.weather.WeatherSettings;
 import com.waterlogistics.dispatch.weather.WeatherSnapshotStore;
@@ -228,29 +229,43 @@ class PlanCandidateReviewTest {
     // ───────────── HIGH.6 · 健康状态过滤 ─────────────
 
     /**
-     * 验证 planner 的查询里**确实带上了** {@code health_status} 条件。
+     * 验证候选查询<b>确实带上了</b> {@code health_status} 条件，且两处入口都走同一份条件。
      *
      * <p>为什么用「读源码」这种笨办法：过滤发生在 MyBatis 的 SQL 生成阶段，单测不起容器就执行不到。
      * 桩侧过滤只能证明「桩会滤」，不能证明「代码会滤」——后者才是 HIGH.6 要的。
-     * 这里断言两条构建方法都带 {@code getHealthStatus}，任何人删掉过滤本类即红。
+     *
+     * <p><b>断言口径已升级（逐字审查）</b>：原断言只检查「planner 与 selector 两个文件里都有
+     * getHealthStatus」。那能守住这两个文件，却守不住「将来新增第三个候选入口」。
+     * 现在条件收敛在 {@link CandidateQueries}，断言改为：
+     * <ol>
+     *   <li>{@code CandidateQueries} 必须带 {@code getHealthStatus} 且用「健康」白名单；</li>
+     *   <li>两个入口<b>不得</b>再自己拼健康过滤（否则又长出第二份口径）——
+     *       它们必须各自调用 {@code CandidateQueries}。</li>
+     * </ol>
      * 真正的 SQL 效果由张睿哲的集成测试/端到端复跑兜底。
      */
     @Test
-    @DisplayName("HIGH.6：两处候选查询都必须带 health_status = 健康 过滤")
+    @DisplayName("HIGH.6：查询条件集中在 CandidateQueries，两个候选入口都必须走它")
     void queriesMustFilterByHealthStatus() throws Exception {
-        record Target(String path, String label) {
+        java.nio.file.Path base = java.nio.file.Path.of("src/main/java/com/waterlogistics/dispatch");
+
+        String queries = java.nio.file.Files.readString(
+                base.resolve("candidate/CandidateQueries.java"));
+        assertTrue(queries.contains("getHealthStatus"),
+                "CandidateQueries 的无人机查询必须加健康状态过滤（HIGH.6：告警机不得进候选）");
+        assertTrue(queries.contains("健康"),
+                "CandidateQueries 应使用「健康」白名单口径");
+
+        record Entry(String path, String label) {
         }
-        List<Target> targets = List.of(
-                new Target("src/main/java/com/waterlogistics/dispatch/feasibility/"
-                        + "CandidateFeasibilityPlanner.java", "CandidateFeasibilityPlanner.buildInput"),
-                new Target("src/main/java/com/waterlogistics/dispatch/candidate/"
-                        + "CandidateSelector.java", "CandidateSelector.selectBest"));
-        for (Target t : targets) {
-            String src = java.nio.file.Files.readString(java.nio.file.Path.of(t.path()));
-            assertTrue(src.contains("getHealthStatus"),
-                    t.label() + " 的无人机查询必须加健康状态过滤（HIGH.6：告警机不得进候选）");
-            assertTrue(src.contains("健康"),
-                    t.label() + " 应使用「健康」白名单口径");
+        for (Entry e : List.of(
+                new Entry("feasibility/CandidateFeasibilityPlanner.java", "planner.buildInput"),
+                new Entry("candidate/CandidateSelector.java", "CandidateSelector.selectBest"))) {
+            String src = java.nio.file.Files.readString(base.resolve(e.path()));
+            assertTrue(src.contains("CandidateQueries."),
+                    e.label() + " 必须走 CandidateQueries 的统一查询口径，不得自行拼条件");
+            assertFalse(src.contains("getHealthStatus"),
+                    e.label() + " 不应再自行写健康过滤——两处各写一遍正是 HIGH.6 复发的根源");
         }
     }
 

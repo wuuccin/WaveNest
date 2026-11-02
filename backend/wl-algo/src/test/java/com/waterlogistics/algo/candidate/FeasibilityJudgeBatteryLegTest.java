@@ -3,8 +3,8 @@ package com.waterlogistics.algo.candidate;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -59,12 +59,19 @@ class FeasibilityJudgeBatteryLegTest {
         // 旧口径：2×3=6 km → 耗 9.4，余 50.6 ≥ 20 → FEASIBLE（缺陷：机巢段整段漏掉）
         // 新口径：2×(3+15)=36 km → 耗 54+0.4=54.4，余 5.6 < 20 → INFEASIBLE
         assertFalse(r.feasible(),
-                "巢远 15 km 的候选三段里程 36 km，余电 5.6% < 保留 20%，必须淘汰"
+                "巢远 15 km 的候选往返里程 36 km，余电 5.6% < 保留 20%，必须淘汰"
                         + "——旧口径漏算机巢段会把它放行");
-        assertTrue(r.reasons().stream().anyMatch(s -> s.contains("36.0")),
-                "淘汰原因应给出三段总里程 36.0 km，实际：" + r.reasons());
+        assertTrue(r.reasons().stream().anyMatch(s -> s.contains("往返里程 36.0km")),
+                "淘汰原因应给出往返总里程 36.0 km，实际：" + r.reasons());
     }
 
+    /**
+     * 淘汰原因里机巢段与主航段分开列账，现场能看出是哪段在吃电。
+     *
+     * <p>断言用「带单位的整段文案」而不是 {@code contains("36.0")} 这类半截数字：
+     * {@code "6.0"} 会被 {@code "36.0"} 命中、{@code "30.0"} 会被 {@code "30.0km"} 命中，
+     * 半截匹配会让文案写错也照样变绿（逐字审查时发现原断言正是这个问题）。
+     */
     @Test
     @DisplayName("淘汰原因里机巢段与主航段分开列账，现场能看出是哪段在吃电")
     void rejectionReasonBreaksDownBothLegs() {
@@ -75,7 +82,27 @@ class FeasibilityJudgeBatteryLegTest {
                 .filter(s -> s.contains("电量不足"))
                 .findFirst()
                 .orElseThrow();
-        assertTrue(reason.contains("30.0"), "原因应含机巢段往返 30.0 km（2×15）：" + reason);
-        assertTrue(reason.contains("6.0"), "原因应含主航段往返 6.0 km（2×3）：" + reason);
+        assertTrue(reason.contains("巢↔取 30.0"), "原因应含机巢段往返 30.0 km（2×15）：" + reason);
+        assertTrue(reason.contains("取↔交 6.0"), "原因应含主航段往返 6.0 km（2×3）：" + reason);
+        assertTrue(reason.contains("往返里程 36.0km"),
+                "两段之和应等于往返总里程 36.0 km，现场才能按文案复算核对：" + reason);
+    }
+
+    /**
+     * 组合自带距离是 {@code NaN}／负数时同样必须抛（HIGH.8 换了入口）。
+     *
+     * <p>{@code combo} 由调用方构造，测试/旁路可以绕开生成器直接 new；
+     * 若 {@code combo.distKm()} 为 NaN，{@code totalKm} 也变 NaN，
+     * 于是 {@code NaN < 保留} 恒 false ⇒ 电量闸被静默放行——与 HIGH.8 是同一个病。
+     */
+    @Test
+    @DisplayName("组合距离为 NaN／负数时必须抛，不能把电量闸变成永真")
+    void nonFiniteComboDistanceIsRejected() {
+        assertThrows(IllegalArgumentException.class,
+                () -> judge.judge(combo(Double.NaN), TASK_DIST_KM, 5.0, PAYLOAD_KG, PARAMS),
+                "combo.distKm 为 NaN 时必须抛，否则往返里程 NaN、电量闸恒过");
+        assertThrows(IllegalArgumentException.class,
+                () -> judge.judge(combo(-1.0), TASK_DIST_KM, 5.0, PAYLOAD_KG, PARAMS),
+                "combo.distKm 为负会让能耗变负、电量闸永远通过");
     }
 }

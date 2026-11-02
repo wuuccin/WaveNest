@@ -176,4 +176,29 @@ class FeasibleCandidatePickerTest {
         assertThrows(IllegalArgumentException.class,
                 () -> FeasibleCandidatePicker.pick(List.of(m30t()), 5.0, -1.0, params()));
     }
+
+    /**
+     * ±Infinity 必须与 NaN 同等拒绝（逐字审查，与 MEDIUM.19 同源）。
+     *
+     * <p>原守卫写的是 {@code Double.isNaN(...)}，只拦 NaN：
+     * <b>{@code -Infinity} 风速</b>下 {@code worstWind > 抗风上限} 恒 false，
+     * 风况闸全部放行——这是危险方向；{@code +Infinity} 载荷同理会把电量闸算成无穷负
+     * （方向安全但仍是坏数）。这里两条都钉住。
+     */
+    @Test
+    @DisplayName("入参校验：±Infinity 风速／载荷必须与 NaN 一样拒绝")
+    void validation_shouldRejectInfinities() {
+        assertThrows(IllegalArgumentException.class,
+                () -> FeasibleCandidatePicker.pick(List.of(m30t()),
+                        Double.POSITIVE_INFINITY, 10.0, params()),
+                "+Infinity 风速不是合法观测值，必须拒绝");
+        assertThrows(IllegalArgumentException.class,
+                () -> FeasibleCandidatePicker.pick(List.of(m30t()),
+                        Double.NEGATIVE_INFINITY, 10.0, params()),
+                "-Infinity 风速会让风况闸恒过，必须拒绝");
+        assertThrows(IllegalArgumentException.class,
+                () -> FeasibleCandidatePicker.pick(List.of(m30t()),
+                        5.0, Double.POSITIVE_INFINITY, params()),
+                "+Infinity 载荷必须拒绝");
+    }
 }

@@ -13,8 +13,9 @@ import java.util.List;
  * <p>规则（全部参数注入，不硬编码）：
  * <ol>
  *   <li>风况闸：现场风速（取最不利）≤ 风速上限；</li>
- *   <li>电量闸：初估往返能耗后的余量 ≥ 最低保留——
- *       初估能耗＝往返距离 × 单位距离耗电（百分比/km）＋ 载荷附加；</li>
+ *   <li>电量闸：初估<b>往返</b>能耗后的余量 ≥ 最低保留——
+ *       往返里程＝{@code 2×(取↔交单程 + 巢→取单程)}（机巢段由组合透传），
+ *       能耗＝往返里程 × 单位距离耗电（百分比/km）＋ 载荷附加；</li>
  *   <li>状态闸：组合须来自候选生成（本类不重复校验状态，生成端已滤）。</li>
  * </ol>
  * 纯 Java、无 Spring/DB——与 {@link CandidateGenerator} 同层，可独立单测。
@@ -67,7 +68,8 @@ public class FeasibilityJudge {
      * @param worstWindMs  现场最不利风速（m/s；首版实测代偿，取自 data.weather 按位置取最不利）
      * @param payloadKg    订单载荷（kg，载荷附加耗电用）
      * @param params       判定参数
-     * @throws IllegalArgumentException {@code distKm}／{@code worstWindMs}／{@code payloadKg} 非有限或为负
+     * @throws IllegalArgumentException {@code distKm}／{@code worstWindMs}／{@code payloadKg} 非有限或为负，
+     *         或 {@code combo} 为 {@code null}、{@code combo.distKm()} 非有限或为负
      *         （评审 HIGH.8：NaN 参与 {@code >}／{@code <} 比较恒为 false，
      *         会让风况闸与电量闸同时失效、全部候选静默判 FEASIBLE）
      */
@@ -114,15 +116,20 @@ public class FeasibilityJudge {
         //    宁可多算能耗，不漏算。<b>此前只算 2×taskDistKm，机巢→取货的往返整段
         //    漏掉，电量闸系统性偏乐观（Open CodeReview 点出、已修）</b>。
         //    后续 51 清单 #19（航迹生成接入派发）后改为按真实任务航迹累计里程。
-        double totalKm = 2.0 * (distKm + combo.distKm());
-        double consume = totalKm * params.batteryPerKmPercent()
+        Legs legs = legsOf(combo, distKm);
+        double consume = legs.totalKm() * params.batteryPerKmPercent()
                 + payloadKg * params.batteryPerKgPercent();
         double remaining = combo.battery() - consume;
         if (remaining < params.reserveBatteryPercent()) {
+            // 文案用「巢↔取／取↔交／往返里程」，与 legsOf 的算法逐字对应：
+            // 原写法「三段里程 + 两个 2× 分项」对不上账（两个往返分项之和就是合计，
+            // 中间并没有第三段），现场按文案复算会以为公式错了。
+            // 「↔」已表明是往返，故合计只写「往返里程」，单位紧随数字不空格
+            // （断言按此逐字匹配，改文案要同步改 FeasibilityJudgeBatteryLegTest）。
             reasons.add(String.format(
-                    "电量不足：%.0f%% − 三段里程 %.1fkm（巢↔取 %.1f + 取↔交 %.1f）× %.1f%%/km"
+                    "电量不足：%.0f%% − 往返里程 %.1fkm（巢↔取 %.1f + 取↔交 %.1f）× %.1f%%/km"
                             + " − 载荷附加 ≈ 余 %.0f%% < 保留 %.0f%%",
-                    combo.battery(), totalKm, 2.0 * combo.distKm(), 2.0 * distKm,
+                    combo.battery(), legs.totalKm(), legs.nestLegKm(), legs.taskLegKm(),
                     params.batteryPerKmPercent(),
                     remaining, params.reserveBatteryPercent()));
         }
@@ -130,6 +137,29 @@ public class FeasibilityJudge {
         return new FeasibilityResult(combo.comboId(),
                 reasons.isEmpty() ? Verdict.FEASIBLE : Verdict.INFEASIBLE,
                 reasons);
+    }
+
+    /** 电量闸用的分段里程（km）：{@code nestLeg}＝巢↔取往返，{@code taskLeg}＝取↔交往返。 */
+    private record Legs(double nestLegKm, double taskLegKm, double totalKm) {
+    }
+
+    /**
+     * 三段里程拆分：{@code totalKm = 2×(distKm + combo.distKm())}。
+     *
+     * <p>逐字审查：拆分出的每个分量都单独校验有限非负——
+     * {@code combo} 由调用方构造（测试与旁路可能直接 new），
+     * {@code combo.distKm()} 若是 {@code NaN}，{@code totalKm} 也会变 {@code NaN}，
+     * 于是 {@code NaN < 保留值} 恒 false ⇒ 电量闸被静默放行，正是 HIGH.8 那类缺陷换了入口。
+     */
+    private static Legs legsOf(CandidateGenerator.CandidateCombo combo, double distKm) {
+        if (combo == null) {
+            throw new IllegalArgumentException("候选组合 combo 不能为 null");
+        }
+        double nestToPickupKm = combo.distKm();
+        requireFiniteNonNegative("combo.distKm", nestToPickupKm);
+        double nestLeg = 2.0 * nestToPickupKm;
+        double taskLeg = 2.0 * distKm;
+        return new Legs(nestLeg, taskLeg, nestLeg + taskLeg);
     }
 
     /** 非有限值（NaN／±Infinity）与负值一律拒绝——见 {@link #judge} 的入口守卫说明。 */

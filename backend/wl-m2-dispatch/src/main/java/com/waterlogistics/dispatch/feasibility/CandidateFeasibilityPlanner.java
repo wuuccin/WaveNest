@@ -4,6 +4,8 @@ import com.waterlogistics.algo.candidate.CandidateGenerator;
 import com.waterlogistics.algo.candidate.CandidateInput;
 import com.waterlogistics.algo.candidate.FeasibilityJudge;
 import com.waterlogistics.algo.selection.FeasibleCandidatePicker;
+import com.waterlogistics.dispatch.candidate.CandidateInputAssembler;
+import com.waterlogistics.dispatch.candidate.CandidateQueries;
 import com.waterlogistics.dispatch.candidate.CandidateService;
 import com.waterlogistics.dispatch.weather.WeatherSnapshotStore;
 import com.waterlogistics.dispatch.weather.WeatherSettings;
@@ -36,15 +38,14 @@ import org.springframework.stereotype.Service;
  *
  * <h3>★ 为什么本类自己读一次台账（而不是调 {@code selectBest}）</h3>
  * <p>要退到次优就必须拿到<b>全部</b>候选，而 {@code CandidateSelector.selectBest} 只返回一个，
- * 其 {@code buildInput} 又是 private——本组不改他人子包，故在本类里做一次
- * 「实体 → {@link CandidateInput}」的映射，再调 {@code CandidateService.generate}
- * （<b>public，可直接用</b>）。
+ * 其 {@code buildInput} 又是 private——本组不改他人子包，故在本类里读一次台账，
+ * 再调 {@code CandidateService.generate}（<b>public，可直接用</b>）。
  *
- * <p><b>代价与消除条件（必须写清，否则会烂成两份真相）</b>：本类的
- * {@link #buildInput} 与 {@code CandidateSelector.buildInput} <b>同源同口径</b>
- * （含「抗风/巡航未登记 → {@code NaN} 而不是 0」这条关键口径，写错会把风况闸变成永真）。
- * 一旦 {@code CandidateSelector} 暴露「返回全部候选」的方法，本类应删掉 {@link #buildInput}
- * 改为直接调用——届时只改本类，调用方零改动。
+ * <p><b>组装口径已收敛（Open CodeReview 修）</b>：「实体 → {@link CandidateInput}」的映射
+ * 统一由 {@code CandidateInputAssembler} 提供，本类与 {@code CandidateSelector} 都只做
+ * mapper 查询（含 health/status 过滤口径）再委托它。<b>不存在两份同源副本了</b>——
+ * 尤其「抗风/巡航未登记 → {@code NaN} 而不是 0」这条口径只需改一处，
+ * 不会出现「改一边漏一边」把风况闸变成永真。
  *
  * <h3>无新鲜风况时的兜底（清单硬要求：不得给 0）</h3>
  * <p>走 {@code worstWindMsOrDefault(now, warningWindMs)}，兜底值取 {@code sys_param} 已登记的
@@ -56,14 +57,8 @@ public class CandidateFeasibilityPlanner {
 
     private static final Logger log = LoggerFactory.getLogger(CandidateFeasibilityPlanner.class);
 
-    /** 无人机「空闲」状态词（照 23 §7；与 {@code CandidateSelector} 同口径）。 */
-    private static final String STATUS_IDLE = "空闲";
-
-    /** 机巢「可用」状态词（与 {@code CandidateSelector} 同口径）。 */
-    private static final String NEST_AVAILABLE = "可用";
-
-    /** 无人机「健康」状态词（照 {@code 001_init.sql} 列注释「健康/告警」，与 CandidateSelector 同口径）。 */
-    private static final String STATUS_HEALTH_OK = "健康";
+    // 状态词不在这里定义：查询条件统一由 CandidateQueries 提供（逐字审查），
+    // 避免「本类一份、Selector 一份」的状态词副本各自漂移。
 
     // 以下两个能耗标定值在 sys_param 中无对应键，按纪律不臆造键名，
     // 沿用 FeasibilityJudge.Params.defaults() 的演示标定值（1.5 %/km、0.2 %/kg）。
@@ -311,29 +306,22 @@ public class CandidateFeasibilityPlanner {
     }
 
     /**
-     * 读空闲无人机与可用机巢，组装 {@link CandidateInput}。
+     * 读空闲无人机与可用机巢，委托 {@code CandidateInputAssembler} 组装 {@link CandidateInput}。
      *
-     * <p><b>与 {@code CandidateSelector.buildInput} 同源同口径</b>：状态词、载荷、电量、
+     * <p><b>组装口径只有一份</b>（{@code CandidateInputAssembler}）：状态词、载荷、电量、
      * 机巢允许机型都按同一套取；尤其
      * <b>抗风/巡航未登记时必须给 {@code NaN}（＝未登记），不得给 0</b>——
      * 0 会被 {@code FeasibilityJudge} 当成「完全不能吹风」，把所有该机型判死；
      * 填默认值则造假机型差异。详见 {@link CandidateInput.DroneView#windLimitMs()}。
      */
     private CandidateInput buildInput(OrderTaskEntity order) {
-        List<DroneEntity> drones = droneMapper.selectList(
-                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<DroneEntity>()
-                        .eq(DroneEntity::getStatus, STATUS_IDLE)
-                        // 健康状态过滤（评审 HIGH.6）：与 CandidateSelector 同口径，
-                        // 只放行「健康」，NULL／「告警」一律不进候选
-                        .eq(DroneEntity::getHealthStatus, STATUS_HEALTH_OK));
-        List<NestEntity> nests = nestMapper.selectList(
-                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<NestEntity>()
-                        .eq(NestEntity::getStatus, NEST_AVAILABLE));
+        List<DroneEntity> drones = droneMapper.selectList(CandidateQueries.idleAndHealthyDrones());
+        List<NestEntity> nests = nestMapper.selectList(CandidateQueries.availableNests());
 
         // 组装逻辑收敛到 CandidateInputAssembler（Open CodeReview：两份同源副本
-        // 必须收敛成一份）。mapper 查询口径（空闲＋健康 / 巢可用）仍留在本类。
+        // 必须收敛成一份）。mapper 查询口径（空闲＋健康 / 巢可用）由 CandidateQueries
+        // 统一提供（逐字审查：条件不再两处各写一遍，新入口只能拿到同一份）。
         // MEDIUM.13 守卫（缺经纬度/载重即抛）随组装器生效——生产主路径由此受保护。
-        return com.waterlogistics.dispatch.candidate.CandidateInputAssembler
-                .assemble(order, drones, nests);
+        return CandidateInputAssembler.assemble(order, drones, nests);
     }
 }

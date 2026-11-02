@@ -21,15 +21,13 @@ import java.util.List;
  * （简化目标：只看机巢→取货点直线距离；多目标精算顺延）。
  *
  * <p>约束：不做业务判断，只做数据装配 + 择优；阈值读 sys_param，不硬编码。
+ *
+ * <p><b>查询与组装口径都不在本类（逐字审查）</b>：表格条件来自
+ * {@link CandidateQueries}，实体→输入的映射来自 {@link CandidateInputAssembler}。
+ * 本类只剩「查 → 生成 → 取第一个」三行，任何人改口径不必再记着改两处。
  */
 @Service
 public class CandidateSelector {
-
-    private static final String DEFAULT_STATUS_IDLE = "空闲";
-    private static final String DEFAULT_NEST_AVAILABLE = "可用";
-
-    /** 健康状态词（照 {@code 001_init.sql} 列注释「健康/告警」） */
-    private static final String DEFAULT_HEALTH_OK = "健康";
 
     private final DroneMapper droneMapper;
     private final NestMapper nestMapper;
@@ -48,18 +46,13 @@ public class CandidateSelector {
      * 为指定订单选最优候选组合。
      *
      * @return 最优候选；无可用候选时返回 null
+     * @throws IllegalArgumentException {@code order} 为 {@code null}（调用方缺陷）
+     * @throws IllegalStateException    订单缺 {@code ship_lon}/{@code ship_lat}/{@code goods_weight}
+     *                                  （MEDIUM.13：不填 0 兜底，避免造出 (0,0) 取货点）
      */
     public CandidateGenerator.CandidateCombo selectBest(OrderTaskEntity order) {
-        List<DroneEntity> drones = droneMapper.selectList(
-            new LambdaQueryWrapper<DroneEntity>()
-                .eq(DroneEntity::getStatus, DEFAULT_STATUS_IDLE)
-                // 健康状态过滤（评审 HIGH.6）：原查询只看「空闲」，告警机照样被当成可派候选。
-                // 取值照 001_init.sql 列注释「健康/告警」，只放行「健康」；
-                // 用 `=` 而非 `ne(告警)`，是为了让 NULL／拼错的值一律排除（白名单口径）。
-                .eq(DroneEntity::getHealthStatus, DEFAULT_HEALTH_OK));
-        List<NestEntity> nests = nestMapper.selectList(
-            new LambdaQueryWrapper<NestEntity>()
-                .eq(NestEntity::getStatus, DEFAULT_NEST_AVAILABLE));
+        List<DroneEntity> drones = droneMapper.selectList(CandidateQueries.idleAndHealthyDrones());
+        List<NestEntity> nests = nestMapper.selectList(CandidateQueries.availableNests());
 
         if (drones.isEmpty() || nests.isEmpty()) {
             return null;
@@ -81,12 +74,15 @@ public class CandidateSelector {
         return combos.get(0);
     }
 
+    /**
+     * 委托唯一组装实现（Open CodeReview：两份同源副本必须收敛成一份）。
+     *
+     * <p>保留这一层薄封装而不是直接内联，是为了让本类后续若被删除时
+     * 调用点集中在一处（本类如被裁定删除，只需删这一处调用）。
+     */
     private CandidateInput buildInput(OrderTaskEntity order,
                                       List<DroneEntity> drones,
                                       List<NestEntity> nests) {
-        // 组装逻辑收敛到 CandidateInputAssembler（Open CodeReview：两份同源副本
-        // 必须收敛成一份，否则每次评审修复都要改两处漏一处）。mapper 查询口径
-        // （status=空闲 + health_status=健康）仍留在本类。
         return CandidateInputAssembler.assemble(order, drones, nests);
     }
 }

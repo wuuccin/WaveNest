@@ -75,6 +75,13 @@ public class DroneContextAdapter implements DroneContextPort {
         if (drone == null || drone.getHomeNestId() == null || drone.getHomeNestId().isBlank()) {
             return null;
         }
+        // 主键一致性自检（逐字审查）：selectById 出来的行，drone_id 理应等于入参。
+        // 若不等（主键被改过／触发器等历史数据问题），以<b>已校验的入参</b>为准——
+        // 身份字段不能取自库值，否则会把 A 机的上下文挂到 B 机上。
+        if (drone.getDroneId() != null && !droneId.equals(drone.getDroneId())) {
+            log.warn("drone 台账主键不一致：入参 {}，查询结果为 {}——以入参为准，请核对主键数据",
+                    droneId, drone.getDroneId());
+        }
         String currentNestId = drone.getCurrentNestId();
         if (currentNestId == null || currentNestId.isBlank()) {
             currentNestId = drone.getHomeNestId();
@@ -104,8 +111,13 @@ public class DroneContextAdapter implements DroneContextPort {
             cruiseSpeedMs = DEFAULT_CRUISE_SPEED_MS;
         }
         return new DroneContext(
-                drone.getDroneId(),
+                // 身份字段取<b>已校验的入参</b>，不取库值（逐字审查）：
+                // 入参在上面已判空/空白，是可信来源；库值未经校验，
+                // 万一为空会把一个 null 的 droneId 透给 M3 的求解键。
+                droneId,
                 drone.getHomeNestId(),
+                // currentNestId 用上面已归一的局部量（库值为空时已回落原巢），
+                // 不直接用 drone.getCurrentNestId()——那会把空串透给 M3 的求解起点
                 currentNestId,
                 nest.getLon().doubleValue(),
                 nest.getLat().doubleValue(),
