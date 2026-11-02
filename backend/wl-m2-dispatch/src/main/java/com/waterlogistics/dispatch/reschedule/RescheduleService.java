@@ -8,10 +8,14 @@ import com.waterlogistics.algo.inflight.HomecomingParams;
 import com.waterlogistics.algo.inflight.IntentChangeJudge;
 import com.waterlogistics.algo.inflight.IntentChangeSignal;
 import com.waterlogistics.algo.inflight.NestCandidate;
+import com.waterlogistics.contract.state.OrderStatus;
 import com.waterlogistics.dispatch.homecoming.HomecomingService;
 import com.waterlogistics.dispatch.plan.DispatchOrchestrator;
 import com.waterlogistics.dispatch.queue.TaskQueueService;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Optional;
+import java.util.Set;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -40,6 +44,12 @@ import org.springframework.transaction.annotation.Transactional;
  */
 @Service
 public class RescheduleService {
+
+    /**
+     * 飞行中三态（CRITICAL.2）：货物已装机、空中不可转移，任何重派入口一律拒绝。
+     */
+    private static final Set<OrderStatus> FLYING = EnumSet.of(
+            OrderStatus.OUTBOUND, OrderStatus.HANDOVER, OrderStatus.RETURNING);
 
     /** 返航复核与三级落点判定（模块层编排，落《包结构设计》行 84） */
     private final HomecomingService homecoming;
@@ -81,11 +91,17 @@ public class RescheduleService {
      * {@code IntentChangeWiring} 做严格对齐配对，与该实现重复且会把 SOG 填成 0
      * （令依赖 SOG 的判据失效），<b>已删除，勿改回</b>。
      *
-     * @param window     船侧滑窗样本（实测 COG vs 预测航迹切向），由调用方维护定长窗口
+     * @param window     船侧滑窗样本（实测 COG vs 预测航迹切向），由调用方维护定长窗口，<b>不得为空</b>
      * @param thetaThDeg 阈值 Θ_th（度）
      * @return 持续监测信号；采信 {@link IntentChangeSignal#persistent()}（滤抖后结论）
+     * @throws IllegalArgumentException 滑窗为 {@code null} 或空列表——没有样本就谈不上「航向是否变了」，
+     *                                  静默返回「未变更」会把「没数据」伪装成「判过且没问题」（MEDIUM.60）
      */
     public IntentChangeSignal evaluateIntentChange(List<HeadingSample> window, double thetaThDeg) {
+        if (window == null || window.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "航向滑窗样本为空，无法判定意图变更（须由 PredictionService 配对后传入）");
+        }
         return IntentChangeJudge.judge(HeadingWindowDelta.compute(window), thetaThDeg);
     }
 
@@ -133,9 +149,30 @@ public class RescheduleService {
      * @throws IllegalStateException 落点为野外迫降／灭失，或尚未落巢、尚未回收时——
      *                               此时<b>不得</b>放行重派，须按《21》§8 走人工回收或终止
      */
+    @Transactional
     public void requeueOrder(OrderRequeueCommand cmd) {
         requireRequeueable(cmd);
+        // HIGH.32：DTO 只做「快失败」提示，落地前按库里最新状态在<b>同一事务</b>内重校验，
+        // 再交给 requeue 的条件更新入口（WHERE status=当前），杜绝检查后状态被并发推进
+        requireNotInFlight(cmd.orderId());
         taskQueueService.requeue(cmd.orderId());
+    }
+
+    /**
+     * 物理前置的服务端重校验（CRITICAL.2 / HIGH.32）：订单仍在飞行三态时直接拒绝。
+     *
+     * <p>不能只信 {@link OrderRequeueCommand} 里的布尔快照——它可能陈旧或被调用方手搓；
+     * 权威状态以队列状态机（库内 {@code order_task.status}）为准。真正的并发防重还由
+     * {@link TaskQueueService#requeue} 的「条件更新 + 行数校验」兜底，本方法只把
+     * 「货物还在空中」这一物理不可能提前挑明。
+     */
+    private void requireNotInFlight(String orderId) {
+        OrderStatus status = taskQueueService.statusOf(orderId);
+        if (FLYING.contains(status)) {
+            throw new IllegalStateException("订单 " + orderId + " 处于「" + status.getValue()
+                    + "」：货物仍在原机上、空中不可转移，须先落巢并确认货物回收再重入队"
+                    + "（《21》§8「唯一可行的转移途径是成功降落到机巢」）");
+        }
     }
 
     /**
@@ -189,16 +226,23 @@ public class RescheduleService {
      * 二者的前置条件不同，不可混用。
      *
      * @param orderId 需重派的订单
-     * @return 新派发的 droneId；<b>闸门熔断时返回 {@code null}</b>（订单转「已受理待唤醒」，
-     *         待闸门解除后重入队再编排）
-     * @throws IllegalStateException 无可用候选组合／会面求解无解／订单状态不符
+     * @return 新派发的 droneId；<b>闸门熔断时返回 {@link Optional#empty()}</b>（订单转
+     *         「已受理待唤醒」，待闸门解除后重入队再编排）——LOW.28 起用 Optional 显式
+     *         区分「延后」与「派发成功」，调用方不得再把 null 当新机号
+     * @throws IllegalStateException 无可用候选组合／会面求解无解／订单状态不符／
+     *                               订单仍在飞行三态（货物未落巢回收，CRITICAL.2）
      */
     @Transactional
-    public String reschedule(String orderId) {
-        // 第 1 步：重入队（清原机 + 状态回待调度 + task_log 留痕）
+    public Optional<String> reschedule(String orderId) {
+        // 第 0 步：物理前置（CRITICAL.2）——不再绕过队列状态机直接重入队，
+        // 飞行中订单先拒绝；随后 requeue 以条件更新（WHERE status=当前）落状态
+        requireNotInFlight(orderId);
+
+        // 第 1 步：重入队（清原机 + 状态回待调度 + task_log 留痕；白名单 + 条件更新）
         taskQueueService.requeue(orderId);
 
-        // 第 2 步：共用派发编排（组批 → 选机 → 会面 → 派发 → 回填会面点）
-        return dispatchOrchestrator.orchestrate(orderId);
+        // 第 2 步：共用派发编排（组批 → 选机 → 会面 → 派发 → 回填会面点）；
+        // B3 闸门熔断时编排返回 null，此处转成空 Optional（非失败、非派发成功）
+        return Optional.ofNullable(dispatchOrchestrator.orchestrate(orderId));
     }
 }

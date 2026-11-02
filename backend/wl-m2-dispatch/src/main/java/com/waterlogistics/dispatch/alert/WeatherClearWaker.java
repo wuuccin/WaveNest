@@ -131,8 +131,13 @@ public class WeatherClearWaker {
         int woken = 0;
         for (OrderTaskEntity order : backlog) {
             try {
-                rescheduleService.reschedule(order.getOrderId());
-                woken++;
+                // LOW.28：闸门仍熔断时 reschedule 返回空 Optional（延后），
+                // 不得计入「成功唤醒」——延后不是派发成功
+                if (rescheduleService.reschedule(order.getOrderId()).isPresent()) {
+                    woken++;
+                } else {
+                    log.info("订单 {} 重派延后（闸门熔断），保持待唤醒", order.getOrderId());
+                }
             } catch (Exception e) {
                 log.warn("唤醒订单 {} 失败，跳过不影响其余：{}", order.getOrderId(), e.getMessage());
             }

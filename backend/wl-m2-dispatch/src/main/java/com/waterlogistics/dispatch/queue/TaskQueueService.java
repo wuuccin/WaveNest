@@ -195,6 +195,19 @@ public class TaskQueueService {
         transition(order, current, OrderStatus.WAIT_DISPATCH, "重入队");
     }
 
+    /**
+     * 读取订单当前状态（重派前置裁决用，队列状态机口径统一收在本类）。
+     *
+     * @throws IllegalStateException 订单不存在
+     */
+    public OrderStatus statusOf(String orderId) {
+        OrderTaskEntity order = orderTaskMapper.selectById(orderId);
+        if (order == null) {
+            throw new IllegalStateException("订单不存在：" + orderId);
+        }
+        return OrderStatus.fromValue(order.getStatus());
+    }
+
     /** 状态流转：更新订单状态 + 写 task_log（同事务）；落库用中文状态词 */
     private void transition(OrderTaskEntity order, OrderStatus from, OrderStatus to, String opType) {
         long eventTs = System.currentTimeMillis();

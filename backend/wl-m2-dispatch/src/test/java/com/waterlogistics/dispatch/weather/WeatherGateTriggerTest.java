@@ -79,7 +79,9 @@ class WeatherGateTriggerTest {
         assertTrue(trigger.isTrippedByWeather());
 
         // 外部干预（人工复位）把 AUTO 清掉，本地标记仍是 true——两侧脱节
-        gate.reset();
+        // 注：11-02 起 reset() 只解除 MANUAL、保留 AUTO（HIGH.12），
+        // 外部清除 AUTO 的场景改由 clear(AUTO) 表达
+        gate.clear(GateSource.AUTO);
         assertTrue(gate.isOpen());
 
         // 风仍然临界：下一次评估必须重新 trip（不得以本地标记为由跳过）
