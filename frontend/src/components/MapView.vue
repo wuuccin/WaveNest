@@ -1,19 +1,21 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import L from 'leaflet'
-import { useShipStore, useDroneStore, useOrderStore, useAlertStore, useNestStore, useFleetStore, useAirspaceStore } from '../stores'
+import { useShipStore, useDroneStore, useOrderStore, useAlertStore, useNestStore, useFleetStore, useAirspaceStore, usePredictionStore } from '../stores'
 import { drawShip } from '../layers/shipLayer'
 import { drawMeeting } from '../layers/meetingLayer'
 import { drawDrone } from '../layers/droneTrackLayer'
 import { drawAlerts } from '../layers/alertLayer'
+import { drawPredictionTrack, clearPredictionTrack } from '../layers/predictionLayer.js'
 import { drawNests } from '../layers/nestLayer'
 import { drawFleet, drawStaticFeatures } from '../layers/staticFeatureLayer'
 import { systemMapPoint, toMapLatLng } from '../map/coordinates'
 import { candidateAssessment } from '../realtime/candidateAssessment'
 
 const props = defineProps({ comparison: { type: Object, default: null }, branchRoute: { type: Object, default: null }, focusRoute: { type: Boolean, default: false }, droneId: { type: String, default: '' }, orderId: { type: String, default: '' }, connectionError: { type: String, default: '' } })
-const ship = useShipStore(), drone = useDroneStore(), order = useOrderStore(), alert = useAlertStore(), nest = useNestStore(), fleet = useFleetStore(), airspace = useAirspaceStore()
-let map, staticGroup, comparisonGroup, shipGroup, meetingGroup, droneGroup, branchGroup, alertGroup, nestGroup, fleetGroup, debugReferenceGroup
+const ship = useShipStore(), drone = useDroneStore(), order = useOrderStore(), alert = useAlertStore(), nest = useNestStore(), fleet = useFleetStore(), airspace = useAirspaceStore(), prediction = usePredictionStore()
+let map, staticGroup, comparisonGroup, shipGroup, meetingGroup, droneGroup, branchGroup, alertGroup, nestGroup, fleetGroup, debugReferenceGroup, predictionGroup
+let lastOverlaidMmsi = ''
 let activeBaseLayer = null, activeBaseType = 'imagery'
 let tileFailure = false
 const valid = point => point && Number.isFinite(point.lat) && Number.isFinite(point.lon)
@@ -209,6 +211,16 @@ function drawBranchRoute() {
     icon: L.divIcon({ className: 'map-nest-label', html: '⌂ 机巢 / 货物回收', iconSize: [150, 30], iconAnchor: [75, -8] }) }).addTo(branchGroup)
 }
 
+/** 画/清预测叠加：store.overlay 为空即清空（取消选中、换数据源）。 */
+function drawPredictionOverlay() {
+  if (!predictionGroup) return
+  const overlay = prediction.overlay
+  if (!overlay) { clearPredictionTrack(predictionGroup); lastOverlaidMmsi = ''; return }
+  const fit = overlay.mmsi !== lastOverlaidMmsi
+  lastOverlaidMmsi = overlay.mmsi
+  drawPredictionTrack(predictionGroup, overlay, { fit })
+}
+
 const update = () => {
   if (!map) return
   drawComparison()
@@ -220,6 +232,7 @@ const update = () => {
   drawStaticFeatures(staticGroup, displayAirspace.value)
   drawBranchRoute()
   drawAlerts(map, alertGroup, alert.items, order.orders, visibleDrone.value, ship.current)
+  drawPredictionOverlay()
   const rawPoints = (props.focusRoute
     ? [ship.current, visibleDrone.value, order.rendezvous, previousMeeting.value, ...(props.branchRoute?.points || [])]
     : [ship.current, ...(ship.current?.points || []), visibleDrone.value,
@@ -256,6 +269,7 @@ onMounted(() => {
   branchGroup = L.layerGroup().addTo(map)
   droneGroup = L.layerGroup().addTo(map)
   alertGroup = L.layerGroup().addTo(map)
+  predictionGroup = L.layerGroup().addTo(map)
   nestGroup = L.layerGroup().addTo(map)
   fleetGroup = L.layerGroup().addTo(map)
   debugReferenceGroup = L.layerGroup().addTo(map)
@@ -269,8 +283,8 @@ onMounted(() => {
 })
 watch([() => ship.current, () => visibleDrone.value, () => order.rendezvous, () => alert.items.length,
   () => order.previousRendezvous, () => order.orders, () => props.comparison, () => props.branchRoute, () => props.droneId, () => props.orderId, () => nest.items,
-  () => fleet.items, () => airspace.items], update, { deep: true })
-onUnmounted(() => { if (map && debugEnabled) map.off('click', pickMapPoint); map?.remove(); map = null; activeBaseLayer = null; debugReferenceGroup = null })
+  () => fleet.items, () => airspace.items, () => prediction.overlay], update, { deep: true })
+onUnmounted(() => { if (map && debugEnabled) map.off('click', pickMapPoint); map?.remove(); map = null; activeBaseLayer = null; debugReferenceGroup = null; predictionGroup = null; lastOverlaidMmsi = '' })
 </script>
 
 <template>
@@ -300,6 +314,7 @@ onUnmounted(() => { if (map && debugEnabled) map.off('click', pickMapPoint); map
       <span v-if="displayAirspace.some(item => item.kind === 'bridge')"><i class="map-symbol map-symbol-bridge">桥</i> 桥梁净空</span>
       <span v-if="displayAirspace.some(item => item.kind === 'waterway') || displayAirspace.filter(item => item.kind === 'bridge').length >= 2"><i class="map-line map-line-waterway"></i> 航道参考</span>
       <span v-if="branchRoute"><i class="map-line" :class="branchRoute.type === 'continue' ? 'map-line-continue' : 'map-line-abandon'"></i> {{ branchRoute.type === 'continue' ? '原机改道续送' : '原机带货返航' }}</span>
+      <span v-if="prediction.overlay"><i class="map-line" :class="prediction.overlay.premise === 'VALID' ? 'map-line-ship' : 'map-line-change'"></i> 预测看台 · {{ prediction.overlay.mmsi }}</span>
     </div>
     <div class="map-shell">
       <div id="operations-map"></div>

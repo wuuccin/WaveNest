@@ -1,3 +1,5 @@
+import { PATHS } from './prediction.js'
+
 const timeoutMs = 8000
 async function request(path, options = {}) {
   const controller = new AbortController()
@@ -21,5 +23,10 @@ export const api = {
   resetShip: (options = {}) => request('/sim/ship/reset', { ...options, method: 'POST' }),
   turnShip: (delta = 45, options = {}) => request(`/sim/ship/turn?delta=${encodeURIComponent(delta)}`, { ...options, method: 'POST' }),
   tasks: () => request('/api/monitor/tasks'),
-  stats: () => request('/api/monitor/statistics')
+  records: taskId => request(`/api/monitor/tasks/${encodeURIComponent(taskId)}/records`),
+  stats: () => request('/api/monitor/statistics'),
+  // 预测看台（阶段二 1）：路径统一收敛到 api/prediction.js 的 PATHS，
+  // 这里只做薄封装——契约一改只动那张表，不在这里留第二份字面量。
+  predictionList: (signal) => request(PATHS.list, { ...(signal ? { signal } : {}) }),
+  predictionDetail: (mmsi, signal) => request(PATHS.detail(mmsi), { ...(signal ? { signal } : {}) })
 }
