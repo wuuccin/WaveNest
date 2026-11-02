@@ -177,9 +177,12 @@ public class AlertDrivenDispatcher {
                         message.eventId(), message.droneId());
                 return;
             }
-            String newDroneId = rescheduleService.reschedule(orderId);
-            log.info("偏航告警触发重调度完成：orderId={} 新机={} eventId={}",
-                    orderId, newDroneId, message.eventId());
+            // Optional 显式区分「派发成功」与「闸门熔断延后」，后者不得记作新机
+            rescheduleService.reschedule(orderId).ifPresentOrElse(
+                    newDroneId -> log.info("偏航告警触发重调度完成：orderId={} 新机={} eventId={}",
+                            orderId, newDroneId, message.eventId()),
+                    () -> log.info("偏航告警重调度延后（闸门熔断），订单保持待唤醒：orderId={} eventId={}",
+                            orderId, message.eventId()));
             done = true;
         } finally {
             if (!done) {

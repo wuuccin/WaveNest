@@ -58,12 +58,9 @@ public class AdmissionWakeScheduler {
 
     private void wake(String orderId) {
         try {
-            String droneId = rescheduleService.reschedule(orderId);
-            if (droneId != null) {
-                log.info("延后单唤醒成功：orderId={} 新机={}", orderId, droneId);
-            } else {
-                log.info("延后单唤醒后仍被闸门延后：orderId={}", orderId);
-            }
+            rescheduleService.reschedule(orderId).ifPresentOrElse(
+                    droneId -> log.info("延后单唤醒成功：orderId={} 新机={}", orderId, droneId),
+                    () -> log.info("延后单唤醒后仍被闸门延后：orderId={}", orderId));
         } catch (Exception e) {
             log.warn("延后单唤醒失败（订单可能已终止或被人工处理）：orderId={} 原因={}",
                     orderId, e.getMessage());

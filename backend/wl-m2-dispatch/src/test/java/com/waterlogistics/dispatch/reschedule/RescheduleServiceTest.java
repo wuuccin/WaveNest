@@ -2,6 +2,7 @@ package com.waterlogistics.dispatch.reschedule;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -11,10 +12,13 @@ import com.waterlogistics.algo.inflight.HomecomingParams;
 import com.waterlogistics.algo.inflight.HomecomingTier;
 import com.waterlogistics.algo.inflight.HeadingSample;
 import com.waterlogistics.contract.rest.GeoPoint;
+import com.waterlogistics.contract.state.OrderStatus;
 import com.waterlogistics.dispatch.homecoming.HomecomingService;
+import com.waterlogistics.dispatch.plan.DispatchOrchestrator;
 import com.waterlogistics.dispatch.queue.TaskQueueService;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -73,10 +77,29 @@ class RescheduleServiceTest {
                 "滑窗累计 30° 大于阈值 20°，应判变更");
     }
 
+    /** MEDIUM.60：滑窗为 null 时不得静默判「未变更」，须显式拒绝（无样本≠判过且没问题） */
+    @Test
+    void evaluateIntentChange_shouldRejectNullWindow() {
+        IllegalArgumentException thrown = assertThrows(IllegalArgumentException.class,
+                () -> service.evaluateIntentChange(null, 20.0));
+
+        assertTrue(thrown.getMessage().contains("航向滑窗样本为空"), thrown.getMessage());
+    }
+
+    /** MEDIUM.60：空列表同样拒绝——调用方未配对样本时须先补齐，而不是拿空窗蒙混过判据 */
+    @Test
+    void evaluateIntentChange_shouldRejectEmptyWindow() {
+        IllegalArgumentException thrown = assertThrows(IllegalArgumentException.class,
+                () -> service.evaluateIntentChange(List.of(), 20.0));
+
+        assertTrue(thrown.getMessage().contains("航向滑窗样本为空"), thrown.getMessage());
+    }
+
     /** 落巢＋回收确认后，重入队委托张睿哲的 TaskQueueService#requeue */
     @Test
     void requeueOrder_shouldDelegateToTaskQueueWhenLandedAndRecycled() {
         RecordingTaskQueue queue = new RecordingTaskQueue();
+        queue.currentStatus = OrderStatus.DISPATCHED;
         RescheduleService wired = new RescheduleService(
                 queue, new HomecomingService(), null);
         OrderRequeueCommand cmd = OrderRequeueCommand.builder()
@@ -89,6 +112,23 @@ class RescheduleServiceTest {
 
         assertEquals("ORDER-1", queue.requeuedOrderId,
                 "物理前置齐备后应把落地动作交给 TaskQueueService#requeue（清原机＋回待调度＋task_log）");
+    }
+
+    /** HIGH.32：DTO 齐备但库里订单仍在飞行 → 服务端重校验拒绝，不碰 requeue */
+    @Test
+    void requeueOrder_shouldRejectWhenOrderStillFlying() {
+        RecordingTaskQueue queue = new RecordingTaskQueue();
+        queue.currentStatus = OrderStatus.OUTBOUND;
+        RescheduleService wired = new RescheduleService(
+                queue, new HomecomingService(), null);
+        OrderRequeueCommand cmd = new OrderRequeueCommand(
+                "ORDER-1", "GOODS-1", "DRONE-1", true, "NEST-A", true, false);
+
+        IllegalStateException thrown = assertThrows(IllegalStateException.class,
+                () -> wired.requeueOrder(cmd));
+
+        assertTrue(thrown.getMessage().contains("去程中"), thrown.getMessage());
+        assertEquals(null, queue.requeuedOrderId, "飞行中不得落地重入队");
     }
 
     /** 未落巢不得重入队：货物装机后绑死在原机上，空中不可转移（《21》§8） */
@@ -155,10 +195,52 @@ class RescheduleServiceTest {
                 "须点明灭失走终止而非重派：" + thrown.getMessage());
     }
 
-    /** 记录被调用订单的 TaskQueueService 桩（继承以覆盖 requeue，避免引入 mock 框架） */
+    /** CRITICAL.2：飞行中订单（货物仍在原机上）不得重派，先拒绝再谈重入队 */
+    @Test
+    void reschedule_shouldRejectFlyingOrder() {
+        RecordingTaskQueue queue = new RecordingTaskQueue();
+        queue.currentStatus = OrderStatus.OUTBOUND;
+        RescheduleService wired = new RescheduleService(queue, new HomecomingService(), null);
+
+        IllegalStateException thrown = assertThrows(IllegalStateException.class,
+                () -> wired.reschedule("ORDER-1"));
+
+        assertTrue(thrown.getMessage().contains("空中不可转移"), thrown.getMessage());
+        assertNull(queue.requeuedOrderId, "飞行中不得落地重入队，更不得派给第二架机");
+    }
+
+    /** 正常重派：重入队 → 编排返回新机号（Optional 有值） */
+    @Test
+    void reschedule_shouldReturnDroneWhenOrchestrated() {
+        RecordingTaskQueue queue = new RecordingTaskQueue();
+        queue.currentStatus = OrderStatus.DISPATCHED;
+        RescheduleService wired = new RescheduleService(
+                queue, new HomecomingService(), new StubOrchestrator("UAV-09"));
+
+        Optional<String> droneId = wired.reschedule("ORDER-1");
+
+        assertEquals("ORDER-1", queue.requeuedOrderId);
+        assertEquals(Optional.of("UAV-09"), droneId);
+    }
+
+    /** LOW.28：闸门熔断时编排返回 null → 空 Optional，显式表达「延后」而非「派发成功」 */
+    @Test
+    void reschedule_shouldReturnEmptyWhenGateDeferred() {
+        RecordingTaskQueue queue = new RecordingTaskQueue();
+        queue.currentStatus = OrderStatus.ACCEPTED_WAIT_WAKE;
+        RescheduleService wired = new RescheduleService(
+                queue, new HomecomingService(), new StubOrchestrator(null));
+
+        Optional<String> droneId = wired.reschedule("ORDER-1");
+
+        assertTrue(droneId.isEmpty(), "闸门熔断延后不得被调用方当成派发成功");
+    }
+
+    /** 记录被调用订单的 TaskQueueService 桩（继承以覆盖 requeue/statusOf，避免引入 mock 框架） */
     private static final class RecordingTaskQueue extends TaskQueueService {
 
         private String requeuedOrderId;
+        private OrderStatus currentStatus = OrderStatus.WAIT_DISPATCH;
 
         private RecordingTaskQueue() {
             super(null, null, null);
@@ -167,6 +249,27 @@ class RescheduleServiceTest {
         @Override
         public void requeue(String orderId) {
             this.requeuedOrderId = orderId;
+        }
+
+        @Override
+        public OrderStatus statusOf(String orderId) {
+            return currentStatus;
+        }
+    }
+
+    /** 派发编排桩：直接给出编排结果（null 即模拟 B3 闸门熔断延后） */
+    private static final class StubOrchestrator extends DispatchOrchestrator {
+
+        private final String droneId;
+
+        private StubOrchestrator(String droneId) {
+            super(null, null, null, null, null);
+            this.droneId = droneId;
+        }
+
+        @Override
+        public String orchestrate(String orderId) {
+            return droneId;
         }
     }
 }

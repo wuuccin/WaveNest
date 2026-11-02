@@ -28,6 +28,7 @@ import com.waterlogistics.storage.repository.OrderTaskMapper;
 import com.waterlogistics.storage.repository.TaskLogMapper;
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -79,7 +80,7 @@ class AlertDrivenDispatcherOrderLookupTest {
     @Test
     void deviation_withoutOrderId_shouldRescheduleWithLookedUpOrderId() {
         when(flightPhaseAdvancer.activeOrderIdOf(DRONE)).thenReturn(ORDER);
-        when(rescheduleService.reschedule(ORDER)).thenReturn("UAV-02");
+        when(rescheduleService.reschedule(ORDER)).thenReturn(Optional.of("UAV-02"));
 
         dispatcher.route(alert(AlertType.DEVIATION, null));
 
