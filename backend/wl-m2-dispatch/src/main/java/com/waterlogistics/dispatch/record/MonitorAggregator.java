@@ -203,11 +203,8 @@ public final class MonitorAggregator {
                 case DISPATCHED -> dispatched++;
                 case OUTBOUND, HANDOVER, RETURNING -> inFlight++;
                 case FINISHED -> finished++;
-                default -> {
-                    if (status.isTerminal()) {
-                        terminal++;
-                    }
-                }
+                case REJECTED, FAILED, ABORTED -> terminal++;
+                case PENDING_ACCEPT, ACCEPTED_WAIT_WAKE, WAIT_DISPATCH, DISPATCHING -> { }
             }
         }
 
@@ -243,7 +240,8 @@ public final class MonitorAggregator {
                 inFlight += count;
             } else if (status == OrderStatus.FINISHED) {
                 finished += count;
-            } else if (status.isTerminal()) {
+            } else if (status == OrderStatus.REJECTED || status == OrderStatus.FAILED
+                    || status == OrderStatus.ABORTED) {
                 terminal += count;
             }
         }

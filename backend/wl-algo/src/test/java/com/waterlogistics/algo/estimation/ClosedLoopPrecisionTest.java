@@ -83,7 +83,10 @@ class ClosedLoopPrecisionTest {
     private static final double TRUE_TAU_E_SEC = 120.0;
 
     private static final double SIGMA_POS_M = 20.0;
-    private static final int RUNS = 40;
+    // 六个相互隔离的固定种子组，每组 40 轮；总轮数超过 NEES 最小采信量。
+    private static final int SEED_GROUPS = 6;
+    private static final int RUNS_PER_GROUP = 40;
+    private static final int RUNS = SEED_GROUPS * RUNS_PER_GROUP;
 
     private static WaterwayGeometry buildWaterway() {
         double rad = Math.toRadians(BEARING_DEG);
@@ -157,7 +160,9 @@ class ClosedLoopPrecisionTest {
         int validityPoints = pointCount;
 
         for (int run = 0; run < RUNS; run++) {
-            Random random = new Random(20261019L + run);
+            int seedGroup = run / RUNS_PER_GROUP;
+            int withinGroup = run % RUNS_PER_GROUP;
+            Random random = new Random(20261019L + seedGroup * 1_000_003L + withinGroup);
 
             // ── ① 真值轨迹
             double vMean = 2.0 + random.nextDouble();                 // 2–3 m/s
@@ -364,16 +369,18 @@ class ClosedLoopPrecisionTest {
         int limit = dataset.validityPoints();
 
         NeesCalibrator calibrator = new NeesCalibrator();
-        for (int i = 1; i <= limit; i++) {
-            for (int run = 0; run < RUNS; run++) {
-                calibrator.add(dataset.errAlongM()[run][i], dataset.errCrossM()[run][i],
-                        dataset.sigmaAlongM()[run][i], dataset.sigmaCrossM()[run][i]);
-            }
+        // 同一轮的相邻预测点高度相关；只取固定时距的一个点，避免把相关点当独立样本。
+        for (int run = 0; run < RUNS; run++) {
+            calibrator.add(dataset.errAlongM()[run][limit], dataset.errCrossM()[run][limit],
+                    dataset.sigmaAlongM()[run][limit], dataset.sigmaCrossM()[run][limit]);
         }
         NeesCalibrator.Result result = calibrator.result();
         System.out.printf(Locale.ROOT,
-                "[闭环] NEES 样本 %d、m = %.3f、c = %.3f、95%% 宽度 = %.3f%n",
+                "[闭环] 轮数 %d、种子组 %d、NEES 样本 %d、m = %.3f、c = %.3f、95%% CI = [%.3f, %.3f]、半宽 = %.3f%n",
+                RUNS, SEED_GROUPS,
                 result.sampleCount(), result.meanNees(), result.calibrationFactor(),
+                result.calibrationFactor() - result.confidenceWidth(),
+                result.calibrationFactor() + result.confidenceWidth(),
                 result.confidenceWidth());
 
         assertTrue(result.meanNees() > 0.0);
@@ -381,6 +388,8 @@ class ClosedLoopPrecisionTest {
                 "c = " + result.calibrationFactor() + " 落在 (0.3, 2.0) 之外，带宽标定失控");
         assertTrue(result.sampleCount() >= NeesCalibrator.MIN_SAMPLES_FOR_ACCEPTANCE,
                 "样本数不足 200，c 的 95% 区间过宽");
+        assertTrue(result.confidenceWidth() <= NeesCalibrator.MAX_CONFIDENCE_WIDTH,
+                "标定因子 95% 半宽超过 0.15");
     }
 
     // ───────────── 统计与打印 ─────────────

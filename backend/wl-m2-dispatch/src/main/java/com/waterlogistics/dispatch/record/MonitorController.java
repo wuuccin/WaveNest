@@ -3,6 +3,8 @@ package com.waterlogistics.dispatch.record;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 
 /**
  * 调度结果展示的只读 HTTP 入口（M2 · 卢肄文 · 10-22 任务 D3）。
@@ -32,10 +34,11 @@ import org.springframework.web.bind.annotation.RestController;
 public final class MonitorController {
 
     /** 任务列表路径——待 {@code ApiPath} 登记（见类注释）。 */
-    static final String MONITOR_TASKS = "/api/monitor/tasks";
+    static final String MONITOR_BASE = "/api/monitor";
+    static final String MONITOR_TASKS = MONITOR_BASE + "/tasks";
 
     /** 统计路径——待 {@code ApiPath} 登记（见类注释）。 */
-    static final String MONITOR_STATISTICS = "/api/monitor/statistics";
+    static final String MONITOR_STATISTICS = MONITOR_BASE + "/statistics";
 
     private final MonitorQueryService monitorQueryService;
 
@@ -46,7 +49,7 @@ public final class MonitorController {
     /**
      * 任务列表（下单时刻倒序）。
      *
-     * <p>{@code page} 从 1 开始，默认 1；{@code size} 默认 50、上限 200。
+     * <p>{@code page} 从 1 开始，默认 1；{@code size} 默认 50、上限 200，非法值返回 400。
      * {@code total} 为本页返回条数。空库返回 {@code {"tasks":[],"total":0}}，<b>不返回 404</b>——
      * 「库里还没有任务」与「这个任务不存在」是两件事，空列表是正确语义。
      */
@@ -54,6 +57,10 @@ public final class MonitorController {
     public MonitorAggregator.TasksResponse tasks(
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "50") int size) {
+        if (page < 1 || size < 1 || size > MonitorQueryService.MAX_PAGE_SIZE) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "page must be >= 1 and size must be between 1 and 200");
+        }
         return monitorQueryService.tasks(page, size);
     }
 
