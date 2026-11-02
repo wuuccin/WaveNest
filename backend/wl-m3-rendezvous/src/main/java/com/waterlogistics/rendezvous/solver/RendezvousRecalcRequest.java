@@ -73,17 +73,11 @@ public record RendezvousRecalcRequest(
         Objects.requireNonNull(shipMmsi, "shipMmsi 不能为空");
         Objects.requireNonNull(stateSnapshot, "stateSnapshot 不能为空");
         requestId = RendezvousRecalcRequest.safeIdentifier(
-                RendezvousRecalcRequest.trimSpaces(requestId),
-                "requestId",
-                RendezvousRecalcRequest.MAX_ID_LENGTH);
+                RendezvousRecalcRequest.trimSpaces(requestId), "requestId");
         droneId = RendezvousRecalcRequest.safeIdentifier(
-                RendezvousRecalcRequest.trimSpaces(droneId),
-                "droneId",
-                RendezvousRecalcRequest.MAX_ID_LENGTH);
+                RendezvousRecalcRequest.trimSpaces(droneId), "droneId");
         snapshotVersion = RendezvousRecalcRequest.safeIdentifier(
-                RendezvousRecalcRequest.trimSpaces(snapshotVersion),
-                "snapshotVersion",
-                RendezvousRecalcRequest.MAX_ID_LENGTH);
+                RendezvousRecalcRequest.trimSpaces(snapshotVersion), "snapshotVersion");
         shipMmsi = RendezvousRecalcRequest.trimSpaces(shipMmsi);
         if (shipMmsi.isEmpty()) {
             throw new IllegalArgumentException("shipMmsi 不能为空白字符串");
@@ -94,11 +88,10 @@ public record RendezvousRecalcRequest(
             throw new IllegalArgumentException("requestId/droneId/snapshotVersion 不能为空白字符串");
         }
         if (orderId != null) {
-            orderId = RendezvousRecalcRequest.safeIdentifier(orderId, "orderId", RendezvousRecalcRequest.MAX_ID_LENGTH);
+            orderId = RendezvousRecalcRequest.safeIdentifier(orderId, "orderId");
         }
         if (triggerReason != null) {
-            triggerReason = RendezvousRecalcRequest.safeText(triggerReason, "triggerReason",
-                    RendezvousRecalcRequest.MAX_REASON_LENGTH);
+            triggerReason = RendezvousRecalcRequest.safeTriggerReason(triggerReason);
         }
         if (!RendezvousRecalcRequest.MMSI_PATTERN.matcher(shipMmsi).matches()) {
             throw new IllegalArgumentException("shipMmsi 须为 9 位数字，实际长度 " + shipMmsi.length()
@@ -134,11 +127,11 @@ public record RendezvousRecalcRequest(
 
 
 
-    private static String safeIdentifier(String value, String field, int maxLength) {
+    private static String safeIdentifier(String value, String field) {
         if (value == null) {
             throw new IllegalArgumentException(field + " 不能为空");
         }
-        if (value.isEmpty() || value.length() > maxLength
+        if (value.isEmpty() || value.length() > RendezvousRecalcRequest.MAX_ID_LENGTH
                 || RendezvousRecalcRequest.UNSAFE.matcher(value).find()
                 || value.chars().anyMatch(Character::isWhitespace)
                 || value.chars().anyMatch(Character::isSpaceChar)) {
@@ -147,12 +140,17 @@ public record RendezvousRecalcRequest(
         return value;
     }
 
-    private static String safeText(String value, String field, int maxLength) {
+
+
+
+
+    private static String safeTriggerReason(String value) {
         if (value == null) {
             return null;
         }
-        if (value.length() > maxLength || RendezvousRecalcRequest.UNSAFE.matcher(value).find()) {
-            throw new IllegalArgumentException(field + " 非法：长度或字符不在允许范围内");
+        if (value.length() > RendezvousRecalcRequest.MAX_REASON_LENGTH
+                || RendezvousRecalcRequest.UNSAFE.matcher(value).find()) {
+            throw new IllegalArgumentException("triggerReason 非法：长度或字符不在允许范围内");
         }
         return value;
     }

@@ -33,15 +33,6 @@ import java.util.Objects;
  */
 public final class HandoverJudge {
 
-    /**
-     * 每度纬差对应的米数（与 GeoApprox 同一近似）
-     */
-    private static final double METERS_PER_DEG = GeoApprox.METERS_PER_DEG;
-
-
-
-
-
     private HandoverJudge() {
     }
 
@@ -57,71 +48,107 @@ public final class HandoverJudge {
      * @throws NullPointerException cmd 为 null（样本非空与时间严格升序已由
      *                              {@link HandoverCommand} 构造期拒绝）
      */
-    @SuppressWarnings("ObjectAllocationInLoop")
     public static B_HandoverConfirmation judge(HandoverCommand cmd) {
         Objects.requireNonNull(cmd, "cmd 不能为空");
+        JudgeState state = new JudgeState(cmd);
         List<HandoverSample> samples = cmd.samples();
-        HandoverParams params = cmd.params();
-
-        HandoverSample origin = samples.get(0);
-        double cosLat = HandoverJudge.cosLatOf(origin);
-
-        HandoverPhase phase = HandoverPhase.APPROACH;
-        Long stableSince = null;
-        long transferStartT = 0L;
-        Double actualMeetLon = null;
-        Double actualMeetLat = null;
-        long handoverDoneT = 0L;
-        boolean success = false;
-
-        double prevDx = HandoverJudge.relativeX(origin, cosLat);
-        double prevDy = HandoverJudge.relativeY(origin);
-        if (Math.hypot(prevDx, prevDy) < params.approachRadiusM()) {
-            phase = HandoverPhase.MATCH;
-            actualMeetLon = Double.valueOf(origin.droneLon());
-            actualMeetLat = Double.valueOf(origin.droneLat());
-        }
-
         int sampleCount = samples.size();
+        long previousT = samples.get(0).t();
         for (int i = 1; i < sampleCount; i++) {
             HandoverSample sample = samples.get(i);
-            long dtMs = sample.t() - samples.get(i - 1).t();
+            double dtSec = (double) (sample.t() - previousT) / 1000.0;
+            previousT = sample.t();
+            if (state.hasCompleted(sample, dtSec)) {
+                break;
+            }
+        }
+        return state.toConfirmation(cmd);
+    }
 
+
+
+
+
+    /** 判定过程中需要跨样本保持的状态。抽出它是为了把单一样本的推进逻辑与状态存放分开。 */
+    private static final class JudgeState {
+
+        /** 每度纬差对应的米数（与 GeoApprox 同一近似） */
+        private static final double METERS_PER_DEG = GeoApprox.METERS_PER_DEG;
+
+        private final HandoverParams params;
+        private final long originT;
+        private HandoverPhase phase = HandoverPhase.APPROACH;
+        private Long stableSince = null;
+        private long transferStartT = 0L;
+        private Double actualMeetLon = null;
+        private Double actualMeetLat = null;
+        private long handoverDoneT = 0L;
+        private boolean success = false;
+        private double prevDx;
+        private double prevDy;
+
+
+
+
+
+        private JudgeState(HandoverCommand cmd) {
+            this.params = cmd.params();
+            HandoverSample origin = cmd.samples().get(0);
+            this.originT = origin.t();
+            this.prevDx = JudgeState.relativeX(origin, JudgeState.cosLatOf(origin));
+            this.prevDy = JudgeState.relativeY(origin);
+            if (Math.hypot(this.prevDx, this.prevDy) < this.params.approachRadiusM()) {
+                this.phase = HandoverPhase.MATCH;
+                this.actualMeetLon = Double.valueOf(origin.droneLon());
+                this.actualMeetLat = Double.valueOf(origin.droneLat());
+            }
+        }
+
+
+
+
+
+        /**
+         * 推进一个样本。
+         *
+         * @return {@code true} 表示本次交接已成功完成，调用方可以停止遍历
+         */
+        private boolean hasCompleted(HandoverSample sample, double dtSec) {
             // 每拍按「机位与船位的中纬」重算经度缩放，不能沿用首拍的余弦
-            double sampleCosLat = HandoverJudge.cosLatOf(sample);
-            double dx = HandoverJudge.relativeX(sample, sampleCosLat);
-            double dy = HandoverJudge.relativeY(sample);
+            double sampleCosLat = JudgeState.cosLatOf(sample);
+            double dx = JudgeState.relativeX(sample, sampleCosLat);
+            double dy = JudgeState.relativeY(sample);
             double dist = Math.hypot(dx, dy);
-            double relSpeed = Math.hypot(dx - prevDx, dy - prevDy) / ((double) dtMs / 1000.0);
-            prevDx = dx;
-            prevDy = dy;
+            double relSpeed = Math.hypot(dx - this.prevDx, dy - this.prevDy) / dtSec;
+            this.prevDx = dx;
+            this.prevDy = dy;
 
             // 稳定判据（距离与速度均低于各自阈值）——MATCH 段与同拍 TRANSFER 共用同一判定
-            boolean stable = dist < params.posErrorM() && relSpeed < params.speedErrorMs();
+            boolean stable = dist < this.params.posErrorM() && relSpeed < this.params.speedErrorMs();
 
-            if (phase == HandoverPhase.APPROACH) {
-                if (dist < params.approachRadiusM()) {
-                    phase = HandoverPhase.MATCH;
-                    actualMeetLon = Double.valueOf(sample.droneLon());
-                    actualMeetLat = Double.valueOf(sample.droneLat());
+            if (this.phase == HandoverPhase.APPROACH) {
+                if (dist < this.params.approachRadiusM()) {
+                    this.phase = HandoverPhase.MATCH;
+                    this.actualMeetLon = Double.valueOf(sample.droneLon());
+                    this.actualMeetLat = Double.valueOf(sample.droneLat());
                     if (stable) {
-                        stableSince = Long.valueOf(sample.t());
+                        this.stableSince = Long.valueOf(sample.t());
                     }
                 }
-                continue;
+                return false;
             }
 
-            if (phase == HandoverPhase.MATCH) {
+            if (this.phase == HandoverPhase.MATCH) {
                 if (!stable) {
-                    stableSince = null;
-                    continue;
+                    this.stableSince = null;
+                    return false;
                 }
-                if (stableSince == null) {
-                    stableSince = Long.valueOf(sample.t());
+                if (this.stableSince == null) {
+                    this.stableSince = Long.valueOf(sample.t());
                 }
-                if ((double) (sample.t() - stableSince.longValue()) >= params.stableSec() * 1000.0) {
-                    phase = HandoverPhase.TRANSFER;
-                    transferStartT = sample.t();
+                if ((double) (sample.t() - this.stableSince.longValue()) >= this.params.stableSec() * 1000.0) {
+                    this.phase = HandoverPhase.TRANSFER;
+                    this.transferStartT = sample.t();
                 }
             }
 
@@ -129,69 +156,77 @@ public final class HandoverJudge {
             // 允许在该过渡拍即刻接受投放反馈（见 HandoverJudgeTest 同拍投放用例）。
             // 投放标记只在真实投放的那一拍为 true；本拍不满足风况或稳定性时，
             // 后续样本须以新的投放拍重试，生产方不得把一次投放闩锁到后续每一拍。
-            if (phase == HandoverPhase.TRANSFER && sample.dropDone()) {
-                if (stable && sample.windSpeedMs() <= params.windLimitMs()) {
-                    success = true;
-                    handoverDoneT = sample.t();
-                    break;
-                }
+            if (this.phase == HandoverPhase.TRANSFER && sample.dropDone()
+                    && stable && sample.windSpeedMs() <= this.params.windLimitMs()) {
+                this.success = true;
+                this.handoverDoneT = sample.t();
+                return true;
             }
+            return false;
         }
 
-        Integer escortTimeCost = null;
-        Integer handoverTimeCost = null;
-        Double energyCost = null;
-        if (success) {
-            escortTimeCost = Integer.valueOf((int) Math.min((long) Integer.MAX_VALUE, (transferStartT - origin.t()) / 1000L));
-            handoverTimeCost = Integer.valueOf((int) Math.min((long) Integer.MAX_VALUE, (handoverDoneT - transferStartT) / 1000L));
-            double totalSec = (double) (handoverDoneT - origin.t()) / 1000.0;
-            energyCost = Double.valueOf(Math.min(100.0, totalSec * params.energyRatePerSecPct()));
+
+
+
+
+        private B_HandoverConfirmation toConfirmation(HandoverCommand cmd) {
+            Integer escortTimeCost = null;
+            Integer handoverTimeCost = null;
+            Double energyCost = null;
+            if (this.success) {
+                escortTimeCost = Integer.valueOf((int) Math.min((long) Integer.MAX_VALUE,
+                                                                (this.transferStartT - this.originT) / 1000L));
+                handoverTimeCost = Integer.valueOf((int) Math.min((long) Integer.MAX_VALUE,
+                                                                  (this.handoverDoneT - this.transferStartT) / 1000L));
+                double totalSec = (double) (this.handoverDoneT - this.originT) / 1000.0;
+                energyCost = Double.valueOf(Math.min(100.0, totalSec * this.params.energyRatePerSecPct()));
+            }
+
+            return new B_HandoverConfirmation(
+                    cmd.taskId(),
+                    cmd.droneId(),
+                    this.actualMeetLon,
+                    this.actualMeetLat,
+                    cmd.plannedMeetLon(),
+                    cmd.plannedMeetLat(),
+                    cmd.plannedMeetT(),
+                    this.success ? Long.valueOf(this.handoverDoneT) : null,
+                    escortTimeCost,
+                    handoverTimeCost,
+                    energyCost,
+                    this.success ? HandoverResult.SUCCESS : HandoverResult.FAILED
+            );
         }
 
-        return new B_HandoverConfirmation(
-                cmd.taskId(),
-                cmd.droneId(),
-                actualMeetLon,
-                actualMeetLat,
-                cmd.plannedMeetLon(),
-                cmd.plannedMeetLat(),
-                cmd.plannedMeetT(),
-                success ? Long.valueOf(handoverDoneT) : null,
-                escortTimeCost,
-                handoverTimeCost,
-                energyCost,
-                success ? HandoverResult.SUCCESS : HandoverResult.FAILED
-        );
-    }
 
 
 
 
-
-    /** 经度缩放的余弦值：取机位与船位的中纬，与 {@code GeoApprox} 的距离口径一致。 */
-    private static double cosLatOf(HandoverSample sample) {
-        return Math.cos(Math.toRadians((sample.droneLat() + sample.shipLat()) / 2.0));
-    }
-
-
-
-
-
-    private static double relativeX(HandoverSample sample, double cosLat) {
-        double dLon = sample.droneLon() - sample.shipLon();
-        if (dLon > 180.0) {
-            dLon -= 360.0;
-        } else if (dLon <= -180.0) {
-            dLon += 360.0;
+        /** 经度缩放的余弦值：取机位与船位的中纬，与 {@code GeoApprox} 的距离口径一致。 */
+        private static double cosLatOf(HandoverSample sample) {
+            return Math.cos(Math.toRadians((sample.droneLat() + sample.shipLat()) / 2.0));
         }
-        return dLon * HandoverJudge.METERS_PER_DEG * cosLat;
-    }
 
 
 
 
 
-    private static double relativeY(HandoverSample sample) {
-        return (sample.droneLat() - sample.shipLat()) * HandoverJudge.METERS_PER_DEG;
+        private static double relativeX(HandoverSample sample, double cosLat) {
+            double dLon = sample.droneLon() - sample.shipLon();
+            if (dLon > 180.0) {
+                dLon -= 360.0;
+            } else if (dLon <= -180.0) {
+                dLon += 360.0;
+            }
+            return dLon * JudgeState.METERS_PER_DEG * cosLat;
+        }
+
+
+
+
+
+        private static double relativeY(HandoverSample sample) {
+            return (sample.droneLat() - sample.shipLat()) * JudgeState.METERS_PER_DEG;
+        }
     }
 }
