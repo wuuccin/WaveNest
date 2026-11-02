@@ -1,14 +1,18 @@
 <script setup>
 import { onMounted, onUnmounted, watch } from 'vue'
 import L from 'leaflet'
-import { useShipStore, useDroneStore, useOrderStore, useAlertStore } from '../stores'
+import { useShipStore, useDroneStore, useOrderStore, useAlertStore, usePredictionStore } from '../stores'
 import { drawShip } from '../layers/shipLayer'
 import { drawMeeting } from '../layers/meetingLayer'
 import { drawDrone } from '../layers/droneTrackLayer'
 import { drawAlerts } from '../layers/alertLayer'
+import { drawPredictionTrack, clearPredictionTrack } from '../layers/predictionLayer.js'
 
 const ship = useShipStore(), drone = useDroneStore(), order = useOrderStore(), alert = useAlertStore()
-let map, shipGroup, meetingGroup, droneGroup, alertGroup, lastBoundsKey = ''
+// 预测看台（阶段二 1）：叠加层由 store.overlay 驱动——它已校验「点列属于当前选中船」，
+// 地图只负责画；fit 只在选中变化时给一次，每帧都抢视野会让用户没法平移。
+const prediction = usePredictionStore()
+let map, shipGroup, meetingGroup, droneGroup, alertGroup, predictionGroup, lastBoundsKey = '', lastOverlaidMmsi = ''
 const valid = point => point && Number.isFinite(point.lat) && Number.isFinite(point.lon)
 const update = () => {
   if (!map) return
@@ -16,6 +20,7 @@ const update = () => {
   drawMeeting(map, meetingGroup, order.rendezvous)
   drawDrone(map, droneGroup, drone.current)
   drawAlerts(map, alertGroup, alert.items, order.orders, drone.current, ship.current)
+  drawPredictionOverlay()
   const points = [ship.current, ...(ship.current?.points || []), drone.current,
     ...(drone.current?.segments || []).flatMap(segment => segment.points || []), order.rendezvous].filter(valid)
   if (!points.length) return
@@ -38,12 +43,22 @@ onMounted(() => {
   meetingGroup = L.layerGroup().addTo(map)
   droneGroup = L.layerGroup().addTo(map)
   alertGroup = L.layerGroup().addTo(map)
+  predictionGroup = L.layerGroup().addTo(map)
   update()
   setTimeout(() => { if (map) { map.invalidateSize(); lastBoundsKey = ''; update() } }, 100)
 })
+/** 画/清预测叠加：store.overlay 为空即清空（取消选中、换数据源）。 */
+function drawPredictionOverlay() {
+  if (!predictionGroup) return
+  const overlay = prediction.overlay
+  if (!overlay) { clearPredictionTrack(predictionGroup); lastOverlaidMmsi = ''; return }
+  const fit = overlay.mmsi !== lastOverlaidMmsi
+  lastOverlaidMmsi = overlay.mmsi
+  drawPredictionTrack(predictionGroup, overlay, { fit })
+}
 watch([() => ship.current, () => drone.current, () => order.rendezvous, () => alert.items.length,
-  () => order.orders], update, { deep: true })
-onUnmounted(() => { map?.remove(); map = null })
+  () => order.orders, () => prediction.overlay], update, { deep: true })
+onUnmounted(() => { map?.remove(); map = null; predictionGroup = null; lastOverlaidMmsi = '' })
 </script>
 
 <template>
@@ -56,6 +71,7 @@ onUnmounted(() => { map?.remove(); map = null })
       <span><i class="map-line map-line-drone"></i> 无人机去程</span>
       <span><i class="map-line map-line-handover"></i> 末段交接</span>
       <span><i class="map-line map-line-return"></i> 无人机返航</span>
+      <span v-if="prediction.overlay"><i class="map-line" :class="prediction.overlay.premise === 'VALID' ? 'map-line-ship' : 'map-line-change'"></i> 预测看台 · {{ prediction.overlay.mmsi }}</span>
     </div>
     <div class="map-shell">
       <div id="operations-map"></div>

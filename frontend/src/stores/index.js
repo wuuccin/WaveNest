@@ -41,3 +41,7 @@ export const useOrderStore = defineStore('order', {
     reset() { this.gate = { gateStatus: '未知', gateSources: [] }; this.byId = {}; this.timeline = {}; this.rendezvous = null; this.replaying = false }
   }
 })
+
+// 预测看台状态（阶段二 1 · 杨添爻）：实现与注释在 stores/prediction.js，
+// 这里只做一次再导出，保持既有「全部 store 从 ../stores 取」的用法不变。
+export { usePredictionStore } from './prediction.js'
