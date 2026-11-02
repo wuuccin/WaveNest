@@ -5,7 +5,7 @@ dependencies {
     api(project(":wl-contract"))
     api(project(":wl-algo"))
     api(project(":wl-storage"))
-    api(libs.bundles.web.common)
+    implementation(libs.bundles.web.common)
     implementation(project(":wl-m3-rendezvous"))
     implementation(libs.bundles.mq)
 }

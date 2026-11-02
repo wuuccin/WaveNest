@@ -79,8 +79,11 @@ class RescheduleServiceTest {
         RecordingTaskQueue queue = new RecordingTaskQueue();
         RescheduleService wired = new RescheduleService(
                 queue, new HomecomingService(), null);
-        OrderRequeueCommand cmd = new OrderRequeueCommand(
-                "ORDER-1", "GOODS-1", "DRONE-1", true, "NEST-A", true, false);
+        OrderRequeueCommand cmd = OrderRequeueCommand.builder()
+                .orderId("ORDER-1").goodsId("GOODS-1").droneId("DRONE-1")
+                .landedAtNest(true).landingPointId("NEST-A")
+                .recyclingConfirmed(true).lossConfirmed(false)
+                .build();
 
         wired.requeueOrder(cmd);
 
@@ -91,8 +94,11 @@ class RescheduleServiceTest {
     /** 未落巢不得重入队：货物装机后绑死在原机上，空中不可转移（《21》§8） */
     @Test
     void requeueOrder_shouldRejectWhenNotLanded() {
-        OrderRequeueCommand cmd = new OrderRequeueCommand(
-                "ORDER-1", "GOODS-1", "DRONE-1", false, "NEST-A", true, false);
+        OrderRequeueCommand cmd = OrderRequeueCommand.builder()
+                .orderId("ORDER-1").goodsId("GOODS-1").droneId("DRONE-1")
+                .landedAtNest(false).landingPointId("NEST-A")
+                .recyclingConfirmed(false).lossConfirmed(false)
+                .build();
 
         IllegalStateException thrown = assertThrows(IllegalStateException.class,
                 () -> service.requeueOrder(cmd));
@@ -101,11 +107,30 @@ class RescheduleServiceTest {
                 "须点明缺的是落巢确认：" + thrown.getMessage());
     }
 
+    /** 野外迫降后人工回收是合法状态：构造不得拦截，重入队裁决仍须拒绝 */
+    @Test
+    void requeueOrder_shouldAllowFieldRecoveryCommandButRejectRequeue() {
+        OrderRequeueCommand cmd = OrderRequeueCommand.builder()
+                .orderId("ORDER-1").goodsId("GOODS-1").droneId("DRONE-1")
+                .landedAtNest(false).landingPointId("FIELD-POINT")
+                .recyclingConfirmed(true).lossConfirmed(false)
+                .build();
+
+        IllegalStateException thrown = assertThrows(IllegalStateException.class,
+                () -> service.requeueOrder(cmd));
+
+        assertTrue(thrown.getMessage().contains("尚未确认落巢"),
+                "野外迫降即使已人工回收也不得重入队：" + thrown.getMessage());
+    }
+
     /** 落巢但未确认回收不得重入队：回收确认才把货物转为可用 */
     @Test
     void requeueOrder_shouldRejectWhenNotRecycled() {
-        OrderRequeueCommand cmd = new OrderRequeueCommand(
-                "ORDER-1", "GOODS-1", "DRONE-1", true, "NEST-A", false, false);
+        OrderRequeueCommand cmd = OrderRequeueCommand.builder()
+                .orderId("ORDER-1").goodsId("GOODS-1").droneId("DRONE-1")
+                .landedAtNest(true).landingPointId("NEST-A")
+                .recyclingConfirmed(false).lossConfirmed(false)
+                .build();
 
         IllegalStateException thrown = assertThrows(IllegalStateException.class,
                 () -> service.requeueOrder(cmd));
@@ -117,8 +142,11 @@ class RescheduleServiceTest {
     /** 灭失不得重入队：订单走「异常终止」，不存在改派（《21》§8） */
     @Test
     void requeueOrder_shouldRejectWhenLost() {
-        OrderRequeueCommand cmd = new OrderRequeueCommand(
-                "ORDER-1", "GOODS-1", "DRONE-1", false, "LOST-POINT", false, true);
+        OrderRequeueCommand cmd = OrderRequeueCommand.builder()
+                .orderId("ORDER-1").goodsId("GOODS-1").droneId("DRONE-1")
+                .landedAtNest(false).landingPointId("LOST-POINT")
+                .recyclingConfirmed(false).lossConfirmed(true)
+                .build();
 
         IllegalStateException thrown = assertThrows(IllegalStateException.class,
                 () -> service.requeueOrder(cmd));
