@@ -224,4 +224,148 @@ class PredictionServiceTest {
     void toHeadingSample_shouldBeEmptyForUnknownShip() {
         assertTrue(service.toHeadingSample(ais("999999999", 10.0, 0.0, T0)).isEmpty());
     }
+
+    // =================================================================
+    // 11-02 评审：HIGH.24 / MEDIUM.46 / MEDIUM.4 / MEDIUM.47 / MEDIUM.49 / LOW.20
+    // =================================================================
+
+    @Test
+    @DisplayName("★ HIGH.24：ship_traj 帧带 mmsi，大屏才能把一帧归到某条船")
+    void toFrame_shouldCarryMmsi() {
+        PredictionSnapshot snapshot = service.refresh(ais("413000777", 10.0, 0.0, T0));
+
+        ShipTrajFrame frame = snapshot.toFrame();
+
+        assertEquals("413000777", frame.mmsi(), "帧里没有船标识，多船同时跟时就无法归属");
+        assertEquals(snapshot.version(), frame.version());
+        assertEquals(snapshot.points(), frame.points());
+    }
+
+    @Test
+    @DisplayName("★ MEDIUM.46：观测越界抛异常时版本号必须退回，不留空洞")
+    void rejectedObservation_shouldNotConsumeVersion() {
+        // 纬度 200 越界：ConstantVelocityPredictor 的 validate 会抛 IllegalArgumentException
+        AisMessage bad = new AisMessage("413000001", "测试船", LON, 200.0, 10.0, 0.0, T0);
+
+        assertThrows(IllegalArgumentException.class, () -> service.refresh(bad));
+        assertTrue(service.snapshotOf("413000001").isEmpty(), "越界观测不写快照");
+
+        PredictionSnapshot good = service.refresh(ais("413000001", 10.0, 0.0, T0));
+        assertEquals(1, good.version(),
+                "版本序列不该因为一次失败而出现空洞（method javadoc 承诺「抛出时不递增版本」）");
+    }
+
+    @Test
+    @DisplayName("★ MEDIUM.4：evictStale 同步清掉四个 Map，只留仍在有效期内的船")
+    void evictStale_shouldClearAllPerShipMaps() {
+        long now = T0 + 10_000L;
+        PredictionSettings settings = new PredictionSettings(30.0, 0.15, 10.0, 0.02, 600L, 60L, 900L);
+        PredictionService clocked = new PredictionService(settings,
+                new LoggingRecomputeRequester(), event -> { }, PredictionProfile.constant(),
+                () -> now);
+
+        clocked.refresh(ais("413000001", 10.0, 90.0, T0));
+        clocked.refresh(ais("413000002", 10.0, 90.0, T0));
+        assertEquals(2, clocked.trackedShipCount());
+
+        // 有效期 900 s：把「现在」推到 T0+901 s，两船都过期
+        int evicted = clocked.evictStale(T0 + 901_000L);
+
+        assertEquals(2, evicted);
+        assertEquals(0, clocked.trackedShipCount());
+        assertTrue(clocked.snapshotOf("413000001").isEmpty());
+        assertEquals(0, clocked.latestSnapshots().size());
+        // 观测与航向也要干净：留着它们，重算会拿旧观测算出一版"凭空复活"的快照
+        assertTrue(clocked.recompute("413000001").isEmpty(),
+                "观测已清 ⇒ 重算必须返回空，否则被清掉的船会凭空复活");
+    }
+
+    @Test
+    @DisplayName("evictStale 不清仍新鲜、也未超 TTL 的船")
+    void evictStale_shouldKeepFreshShips() {
+        long now = T0 + 10_000L;
+        PredictionSettings settings = new PredictionSettings(30.0, 0.15, 10.0, 0.02, 600L, 60L, 900L);
+        PredictionService clocked = new PredictionService(settings,
+                new LoggingRecomputeRequester(), event -> { }, PredictionProfile.constant(),
+                () -> now);
+
+        clocked.refresh(ais("413000001", 10.0, 90.0, T0));
+
+        assertEquals(0, clocked.evictStale(T0 + 60_000L), "60 s 后仍新鲜");
+        assertEquals(1, clocked.trackedShipCount());
+    }
+
+    @Test
+    @DisplayName("★ MEDIUM.47：点列不足以定出切向时返回空，不拿主轴方位顶替")
+    void tangentDegAt_shouldBeEmptyWhenPointsInsufficient() {
+        // 精算快照的 courseDeg 是「参考线走向」而不是船的航迹切向；
+        // 点列 < 2 时若拿它当 predictedTangentDeg，E 组 6b 的成向判定会带系统性偏差。
+        PredictionSnapshot singlePoint = new PredictionSnapshot("413000001", 1L, T0, 90.0, 900L,
+                "VALID", List.of(new ShipTrajPoint(T0, LON, LAT, 20.0, 15.0)),
+                null, null, null, null, null);
+
+        assertTrue(PredictionService.tangentDegAt(singlePoint, T0).isEmpty());
+        assertTrue(PredictionService.tangentDegAt(
+                new PredictionSnapshot("413000001", 1L, T0, 90.0, 900L, "VALID",
+                        List.of(), null, null, null, null, null), T0).isEmpty(),
+                "空点列同样取不到切向");
+    }
+
+    @Test
+    @DisplayName("切向取得到时仍是相邻点方位（改动没有把正常路径切断）")
+    void tangentDegAt_shouldStillWorkForNormalTrack() {
+        PredictionSnapshot snapshot = service.refresh(ais("413000001", 10.0, 90.0, T0));
+
+        double tangent = PredictionService.tangentDegAt(snapshot, T0).orElseThrow();
+        assertEquals(90.0, tangent, 0.5, "正东航迹的切向约 90°");
+    }
+
+    @Test
+    @DisplayName("★ MEDIUM.49：zSeries / enterTimesMs 深拷贝，调用方改原列表不影响已发布快照")
+    void snapshot_shouldDefensivelyCopyNullableLists() {
+        java.util.List<Double> mutableZ = new java.util.ArrayList<>(List.of(1.0, 2.0));
+        java.util.List<Long> mutableEnter = new java.util.ArrayList<>(List.of(T0));
+
+        PredictionSnapshot snapshot = new PredictionSnapshot("413000001", 1L, T0, 90.0, 900L,
+                "VALID", List.of(new ShipTrajPoint(T0, LON, LAT, 20.0, 15.0)),
+                mutableZ, null, mutableEnter, null, null);
+
+        mutableZ.add(99.0);
+        mutableEnter.add(T0 + 1L);
+
+        assertEquals(2, snapshot.zSeries().size(), "新息序列不该被生产方事后改写");
+        assertEquals(1, snapshot.enterTimesMs().size());
+    }
+
+    @Test
+    @DisplayName("★ LOW.20：t0 超前（时钟回拨）不判过期；有效期溢出也不翻成「未过期」")
+    void isStale_shouldHandleFutureT0AndOverflow() {
+        PredictionSnapshot future = new PredictionSnapshot("413000001", 1L, T0, 90.0, 900L,
+                "VALID", List.of(new ShipTrajPoint(T0, LON, LAT, 20.0, 15.0)),
+                null, null, null, null, null);
+
+        assertFalse(future.isStale(T0 - 3_600_000L), "t0 超前时 elapsed 为负，不能判过期");
+
+        PredictionSnapshot huge = new PredictionSnapshot("413000001", 1L, T0, 90.0,
+                Long.MAX_VALUE, "VALID",
+                List.of(new ShipTrajPoint(T0, LON, LAT, 20.0, 15.0)),
+                null, null, null, null, null);
+        assertFalse(huge.isStale(T0 + 1_000L), "有效期极大时不该因乘法溢出而误判过期");
+    }
+
+    @Test
+    @DisplayName("空点列不发帧：publish 跳过，不抛给调用方")
+    void emptySnapshot_shouldNotPublishFrame() {
+        java.util.List<ShipTrajFrame> published = new java.util.ArrayList<>();
+        PredictionSettings settings = new PredictionSettings(30.0, 0.15, 10.0, 0.02, 600L, 60L, 900L);
+        PredictionService publisher = new PredictionService(settings,
+                new LoggingRecomputeRequester(),
+                event -> published.add(((PredictionUpdatedEvent) event).frame()),
+                PredictionProfile.constant(), () -> T0 + 1000L);
+
+        publisher.refresh(ais("413000001", 10.0, 0.0, T0));
+
+        assertEquals(1, published.size(), "正常快照应发一帧");
+        assertEquals("413000001", published.get(0).mmsi());
+    }
 }

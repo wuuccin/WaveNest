@@ -29,6 +29,18 @@ import org.junit.jupiter.api.Test;
 class PredictionServicePreciseTest {
 
     private static final long T0 = 1_760_000_000_000L;
+
+    /**
+     * 测试里的「现在」：取 {@code T0 + 1800 s}，与预测时域 {@code horizonSec} 等长。
+     *
+     * <p>为什么不能像原来那样取 {@code T0 + 3600 s}：MEDIUM.44 给断言网补了
+     * {@code STALE}（末点不得早于现在超过 300 s 时钟容差）。本类喂的观测时刻在
+     * {@code T0} 附近、点列只画到 {@code t0 + 1800 s}；把「现在」放到 {@code T0 + 3600 s}
+     * 等于宣称「拿一小时前的观测在现在重算」，那一版确实已经过期——被 STALE 拦下是对的，
+     * 但本类验的是校验框／σ／新息，不该被时间线问题干扰。取 1800 s 让「现在」落在
+     * 预测时域内，同时仍距 {@code T0} 足够远以避开 {@code T0_IN_FUTURE}。
+     */
+    private static final long NOW_MS = T0 + 1_800_000L;
     private static final String MMSI = "413000002";
     private static final double ORIGIN_LON = 115.9000;
     private static final double ORIGIN_LAT = 28.6500;
@@ -59,12 +71,12 @@ class PredictionServicePreciseTest {
         PredictionProfile profile = PredictionProfile.precise(settings, assurance,
                 PrecisePredictionEngine.Params.defaults());
         return new PredictionService(settings, new LoggingRecomputeRequester(), event -> { },
-                profile, () -> T0 + 3_600_000L);
+                profile, () -> NOW_MS);
     }
 
     private PredictionService constantService() {
         return new PredictionService(settings, new LoggingRecomputeRequester(), event -> { },
-                PredictionProfile.constant(), () -> T0 + 3_600_000L);
+                PredictionProfile.constant(), () -> NOW_MS);
     }
 
     @Test

@@ -2,6 +2,7 @@ package com.waterlogistics.dispatch.prediction;
 
 import com.waterlogistics.algo.estimation.EstimatedPoint;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 
 /**
@@ -23,9 +24,21 @@ import java.util.Optional;
  *       匀速版是纯几何外推，跑在哪个坐标域由仿真决定，故只对它做结构判定。</li>
  * </ul>
  *
- * <p><b>时间口径</b>：快照没有 ETA 字段，清单里的「ETA 不早于当前时刻」落成两条可判定的等价物——
- * ① 起点时刻不得晚于「现在」超过 {@value #CLOCK_SKEW_TOLERANCE_MS} ms（时钟漂移容忍）；
- * ② 点列时刻严格递增（迟到点会被这条抓到）。
+ * <p><b>时间口径</b>：快照没有 ETA 字段，清单里的「ETA 不早于当前时刻」落成三条可判定的等价物
+ * （11-02 MEDIUM.44 补齐后）：
+ * <ol>
+ *   <li>起点时刻不得晚于「现在」超过 {@value #CLOCK_SKEW_TOLERANCE_MS} ms（{@code T0_IN_FUTURE}）；</li>
+ *   <li>首点时刻须锚在起点上（{@code FIRST_POINT_BEFORE_T0}）——否则「按 τ 取点」的整套口径错位；</li>
+ *   <li>末点不得早于「现在」超过 {@value #CLOCK_SKEW_TOLERANCE_MS} ms（{@code STALE}）
+ *       ——这一条才是「ETA 不早于当前时刻」的字面对应物。</li>
+ * </ol>
+ * 第 3 条为什么必须单列：点列内部单调只保证「30 个点彼此有序」，一版 2 小时前算、点列全在过去的
+ * 快照照样满足单调性，却对本拍调度毫无价值——原实现（只有第 1、2 条）放行了这种快照。
+ *
+ * <p><b>刻意不做的一条</b>：不判「点时刻 ≤ 起点 ＋ 有效期」。本项目的
+ * {@code horizonSec}（点列覆盖多长，1800 s）与 {@code validitySec}（多久后须刷新，900 s）
+ * 是两个独立的量，点列本来就画得比有效期远——按有效期截点会把每一版正常输出都判成违约。
+ * 评审原文的这条建议与该语义不符，已在 {@code checkStructure} 处注明不采纳的理由。
  */
 public final class PredictionAssurance {
 
@@ -57,7 +70,13 @@ public final class PredictionAssurance {
         VALIDITY_NEGATIVE("VALIDITY_NEGATIVE"),
 
         /** 起点时刻远在未来。 */
-        T0_IN_FUTURE("T0_IN_FUTURE");
+        T0_IN_FUTURE("T0_IN_FUTURE"),
+
+        /** 首点时刻早于起点（τ=0 的点没锚在 t0 上）。 */
+        FIRST_POINT_BEFORE_T0("FIRST_POINT_BEFORE_T0"),
+
+        /** 末点已早于当前时刻——整版预测全部落在过去，等于没有未来轨迹。 */
+        STALE("STALE");
 
         private final String code;
 
@@ -175,6 +194,17 @@ public final class PredictionAssurance {
                             + CLOCK_SKEW_TOLERANCE_MS + " ms"));
         }
 
+        // ---- 以下两条锚定是 MEDIUM.44 的补齐 ----
+        // 原实现只判「t0 不在未来」＋「点列内部单调」，两者的结合并不能推出「有未来轨迹」：
+        // 一版 t0 在两小时前、点列全在过去的快照照样通过，而它对本拍调度毫无用处。
+        // 两条锚定分别对应「τ 基准对不对」「这版是否已经作废」。
+        long firstTs = points.get(0).tMs();
+        if (firstTs < t0Ms - CLOCK_SKEW_TOLERANCE_MS) {
+            return Optional.of(new Violation(Code.FIRST_POINT_BEFORE_T0,
+                    "首点时刻 " + firstTs + " 早于起点 " + t0Ms + " 超过 "
+                            + CLOCK_SKEW_TOLERANCE_MS + " ms：τ=0 的点没有锚在 t0 上"));
+        }
+
         long previousT = Long.MIN_VALUE;
         double previousAlong = 0.0;
         double previousCross = 0.0;
@@ -185,6 +215,12 @@ public final class PredictionAssurance {
             if (point == null) {
                 return Optional.of(new Violation(Code.NON_FINITE, "第 " + index + " 个点为 null"));
             }
+            // 时域自洽：**不做**「点不得超过 t0+validitySec」的判定。本项目的
+            // horizonSec（1800 s，点列覆盖多长）与 validitySec（900 s，多久后须刷新）
+            // 是两个量，点列本来就画得比有效期远——预测量的是"画多远"，
+            // 有效期量的是"保证多久内可信"。按 validitySec 截点会把正常输出判成违约
+            // （PredictionBboxNanchangSegmentTest 等 5 个用例当场红），
+            // 评审该条建议与本项目语义不符，故只保留清单明确要求的「ETA 不早于当前时刻」。
             if (!Double.isFinite(point.lon()) || !Double.isFinite(point.lat())
                     || !Double.isFinite(point.sigmaAlongM())
                     || !Double.isFinite(point.sigmaCrossM())) {
@@ -216,6 +252,15 @@ public final class PredictionAssurance {
             previousAlong = point.sigmaAlongM();
             previousCross = point.sigmaCrossM();
         }
+
+        // 整版作废判定：末点都落在过去了，这一版对「本拍的未来」没有任何可用内容。
+        // 容差同 T0_IN_FUTURE——AIS 时基与调用方时钟有漂移，卡死相等会在边界上抖动。
+        long lastTs = points.get(points.size() - 1).tMs();
+        if (nowMs - lastTs > CLOCK_SKEW_TOLERANCE_MS) {
+            return Optional.of(new Violation(Code.STALE,
+                    "末点时刻 " + lastTs + " 早于现在 " + nowMs + " 超过 "
+                            + CLOCK_SKEW_TOLERANCE_MS + " ms：整版预测已落在过去"));
+        }
         return Optional.empty();
     }
 
@@ -238,8 +283,8 @@ public final class PredictionAssurance {
             EstimatedPoint point = points.get(index);
             if (!bounds.contains(point.lon(), point.lat())) {
                 return Optional.of(new Violation(Code.OUT_OF_BOUNDS, "第 " + index
-                        + " 个点落在框外：lon=" + String.format("%.5f", point.lon())
-                        + " lat=" + String.format("%.5f", point.lat())
+                        + " 个点落在框外：lon=" + String.format(Locale.ROOT, "%.5f", point.lon())
+                        + " lat=" + String.format(Locale.ROOT, "%.5f", point.lat())
                         + "，框 [" + bounds.minLon() + ", " + bounds.maxLon() + "] × ["
                         + bounds.minLat() + ", " + bounds.maxLat() + "]"));
             }

@@ -34,4 +34,28 @@ public record RecomputeRequest(
         double courseDeltaDeg,
         String triggerReason,
         long tsMs) {
+
+    /**
+     * 强制三条不变式（评审 LOW.22）。
+     *
+     * <p>本记录的 javadoc 早就写明「{@code courseDeltaDeg} 恒为非负的最短弧差」，
+     * 但自动生成的构造器一条都不验。承接方（{@link LoggingRecomputeRequester}）要靠
+     * {@code mmsi} 反查观测、要靠 {@code courseDeltaDeg} 决定日志与去重强度，
+     * 拿到 null 船号或负的弧差时它既算不下去也报不出来——坏信号在源头就失败，
+     * 比在承接方抛一个「NPE 或 Map 查不到」要可查得多。
+     *
+     * <p>不校验 {@code previousCourseDeg}/{@code currentCourseDeg} 的值域：
+     * 它们是「观测对地航向」，AIS 源可能给 0～359.9 以外值（如 360 表示未知），
+     * 那是上游数据源的口径问题，过度收紧会让一条脏 AIS 反而炸掉整条预测链。
+     */
+    public RecomputeRequest {
+        if (mmsi == null || mmsi.isBlank()) {
+            throw new IllegalArgumentException("mmsi 不能为空：重算信号须可定位到船");
+        }
+        if (!(courseDeltaDeg >= 0.0) || courseDeltaDeg > 180.0) {
+            // 用 !(x >= 0) 而不是 x < 0：NaN 在后者里也会漏过（NaN < 0 为 false）
+            throw new IllegalArgumentException(
+                    "courseDeltaDeg 必须为 [0, 180] 的最短弧差：" + courseDeltaDeg + "（mmsi=" + mmsi + "）");
+        }
+    }
 }
