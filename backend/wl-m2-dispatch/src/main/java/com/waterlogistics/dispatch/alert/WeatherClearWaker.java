@@ -49,6 +49,9 @@ public class WeatherClearWaker {
 
     private static final Logger log = LoggerFactory.getLogger(WeatherClearWaker.class);
 
+    /** 积压扫描单页容量（MEDIUM.1 性能：分页后单页上限，避免全量载入） */
+    private static final int BACKLOG_PAGE_SIZE = 200;
+
     private final DispatchGateService gateService;
     private final RescheduleService rescheduleService;
     private final OrderTaskMapper orderTaskMapper;
@@ -87,15 +90,22 @@ public class WeatherClearWaker {
             log.info("气象解除积压唤醒轮询未启用（wavenest.mq.wake-poll-enabled=false）");
             return;
         }
+        // LOW.1（缺陷）：配置为 0 或负数时 scheduleWithFixedDelay 抛 IllegalArgumentException，
+        // 启动即失败；钳制为最小 1 秒并告警，不因一条坏配置拖垮整个应用
+        long intervalSec = Math.max(1L, pollIntervalSec);
+        if (pollIntervalSec < 1L) {
+            log.warn("轮询间隔配置非法（{}s），已钳制为 {}s：wavenest.mq.wake-poll-interval-sec",
+                    pollIntervalSec, intervalSec);
+        }
         if (initialOpen) {
             // 起始即打开：启动前可能已积压一批订单，先补扫一轮，补扫完成再进边沿轮询
             lastOpen.set(false);
             tickSafely();
         }
         scheduler.scheduleWithFixedDelay(this::tickSafely,
-                pollIntervalSec, pollIntervalSec, TimeUnit.SECONDS);
+                intervalSec, intervalSec, TimeUnit.SECONDS);
         log.info("气象解除积压唤醒轮询已启动：间隔 {}s，起始闸门状态={}",
-                pollIntervalSec, lastOpen.get() ? "打开" : "熔断");
+                intervalSec, lastOpen.get() ? "打开" : "熔断");
     }
 
     @PreDestroy
@@ -151,19 +161,36 @@ public class WeatherClearWaker {
     /**
      * 扫描「已受理待唤醒」积压订单并逐单重入队＋续编排。
      *
+     * <p><b>MEDIUM.1（性能）</b>：按 {@code order_id} 升序 keyset 分页（每页 {@value #BACKLOG_PAGE_SIZE}），
+     * 不再一次性把全部积压载入 JVM。keyset 游标只前进不回头，单笔失败（仍留在积压态）也不会造成死循环。
+     *
      * @return 成功唤醒的笔数；单笔失败只记警告（自身事务回滚，不影响其余）
      */
     public int wakeBacklog() {
-        List<OrderTaskEntity> backlog = orderTaskMapper.selectList(
-                new LambdaQueryWrapper<OrderTaskEntity>()
-                        .eq(OrderTaskEntity::getStatus, OrderStatus.ACCEPTED_WAIT_WAKE.getValue()));
         int woken = 0;
-        for (OrderTaskEntity order : backlog) {
-            try {
-                rescheduleService.reschedule(order.getOrderId());
-                woken++;
-            } catch (Exception e) {
-                log.warn("唤醒订单 {} 失败，跳过不影响其余：{}", order.getOrderId(), e.getMessage());
+        String cursor = null;
+        while (true) {
+            List<OrderTaskEntity> page = orderTaskMapper.selectList(
+                    new LambdaQueryWrapper<OrderTaskEntity>()
+                            .eq(OrderTaskEntity::getStatus, OrderStatus.ACCEPTED_WAIT_WAKE.getValue())
+                            .gt(cursor != null, OrderTaskEntity::getOrderId, cursor)
+                            .orderByAsc(OrderTaskEntity::getOrderId)
+                            .last("LIMIT " + BACKLOG_PAGE_SIZE));
+            if (page == null || page.isEmpty()) {
+                break;
+            }
+            for (OrderTaskEntity order : page) {
+                try {
+                    rescheduleService.reschedule(order.getOrderId());
+                    woken++;
+                } catch (Exception e) {
+                    log.warn("唤醒订单 {} 失败，跳过不影响其余：{}",
+                            order.getOrderId(), e.getMessage());
+                }
+            }
+            cursor = page.get(page.size() - 1).getOrderId();
+            if (page.size() < BACKLOG_PAGE_SIZE || cursor == null) {
+                break;
             }
         }
         return woken;
