@@ -66,6 +66,10 @@ public final class WireText {
         return value == null ? null : WireText.UNSAFE.matcher(value).replaceAll("?");
     }
 
+
+
+
+
     /**
      * 脱敏并截断，避免超长外部输入把日志或异常消息撑爆。
      *
@@ -86,6 +90,10 @@ public final class WireText {
         int keep = Math.max(0, maxLength - 3);
         return WireText.escapeForLog(value.subSequence(0, keep)) + "...";
     }
+
+
+
+
 
     /**
      * 校验并归一标识符：去除首尾空白后，拒绝空串、超长、内部空白与不安全字符。
