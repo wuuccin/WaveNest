@@ -167,20 +167,17 @@ class AlertDrivenRescheduleTest {
     }
 
     @Test
-    void lostLinkAlert_shouldFallbackToDroneBatteryAndReview() {
+    void lostLinkAlert_shouldSkipReviewBecauseBatteryUnavailable() {
         String orderId = dispatchedOrder();
 
-        // 失联消息无当前值 → 退 drone 表最近电量；commCovered=FALSE 仅作风险标记不作否决
+        // MEDIUM.7：失联属非低电量告警，不得复用 drone 表最近电量去判「回不回得来」；
+        // 电量不可得 → 组装器返回 null → 复核不启动、不广播、不落复核审计
         dispatcher.route(new AlertEventMessage(
                 "EV-K1", "失联", "严重", 35, DRONE, orderId, NOW, null, null));
 
-        List<HomecomingDecisionEvent> mine = eventsOf("EV-K1");
-        assertThat(mine).hasSize(1);
-        assertThat(mine.get(0).tier()).isEqualTo(HomecomingTier.RETURN_HOME_NEST);
-        assertThat(mine.get(0).needSlotRequest()).isFalse();
-
+        assertThat(eventsOf("EV-K1")).isEmpty();
         assertThat(logsOf(orderId)).extracting(TaskLogEntity::getOpType)
-                .contains("返航复核-失联");
+                .doesNotContain("返航复核-失联");
     }
 
     @Test

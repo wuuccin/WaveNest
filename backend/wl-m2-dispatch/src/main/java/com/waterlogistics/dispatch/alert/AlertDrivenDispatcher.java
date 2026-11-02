@@ -15,6 +15,7 @@ import com.waterlogistics.storage.entity.TaskLogEntity;
 import com.waterlogistics.storage.repository.DroneMapper;
 import com.waterlogistics.storage.repository.OrderTaskMapper;
 import com.waterlogistics.storage.repository.TaskLogMapper;
+import com.rabbitmq.client.Channel;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -25,10 +26,13 @@ import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.amqp.core.ExchangeTypes;
+import org.springframework.amqp.core.Message;
 import org.springframework.amqp.rabbit.annotation.Exchange;
 import org.springframework.amqp.rabbit.annotation.Queue;
 import org.springframework.amqp.rabbit.annotation.QueueBinding;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
+import org.springframework.amqp.listener.ListenerExecutionFailedException;
+import org.springframework.amqp.rabbit.listener.api.RabbitListenerErrorHandler;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 
@@ -121,15 +125,18 @@ public class AlertDrivenDispatcher {
      * 消费一条告警事件。任何异常只丢弃本条并记警告，不向外抛——
      * 单条坏消息不得中断整个队列。
      */
-    @RabbitListener(bindings = @QueueBinding(
-            value = @Queue(
-                    name = "${wavenest.mq.m2-alert-event-queue:wavenest.m2.alert-event}",
-                    durable = "true"),
-            exchange = @Exchange(
-                    name = "${wavenest.mq.exchange:wavenest.data}",
-                    type = ExchangeTypes.TOPIC,
-                    durable = "true"),
-            key = TopicName.ALERT_EVENT))
+    @RabbitListener(
+            bindings = @QueueBinding(
+                    value = @Queue(
+                            name = "${wavenest.mq.m2-alert-event-queue:wavenest.m2.alert-event}",
+                            durable = "true"),
+                    exchange = @Exchange(
+                            name = "${wavenest.mq.exchange:wavenest.data}",
+                            type = ExchangeTypes.TOPIC,
+                            durable = "true"),
+                    key = TopicName.ALERT_EVENT),
+            // MEDIUM.2（告警）：反序列化失败发生在进入本方法之前，由监听器错误处理器兜底丢弃单条
+            errorHandler = "alertListenerErrorHandler")
     public void onAlertEvent(AlertEventMessage message) {
         if (message == null || message.eventId() == null) {
             log.warn("丢弃非法告警消息：null 或缺 eventId");
@@ -138,8 +145,9 @@ public class AlertDrivenDispatcher {
         try {
             route(message);
         } catch (Exception e) {
-            log.warn("告警消息处理失败已丢弃（不中断队列）：eventId={} type={} orderId={} 原因={}",
-                    message.eventId(), message.alertType(), message.orderId(), e.getMessage());
+            // MEDIUM.3（告警）：catch-all 带上异常对象，保留堆栈而非只记 message
+            log.warn("告警消息处理失败已丢弃（不中断队列）：eventId={} type={} orderId={}",
+                    message.eventId(), message.alertType(), message.orderId(), e);
         }
     }
 
@@ -200,18 +208,21 @@ public class AlertDrivenDispatcher {
                         orderId, message.eventId());
                 return;
             }
+            // MEDIUM.5（告警）：告警只带 orderId 不带 droneId 时，按订单绑定机查无人机；
+            // 组装器内部同口径回落，两处不会查出不一致的机号
+            String droneId = isBlank(message.droneId()) ? order.getDroneId() : message.droneId();
             HomecomingInput input = assembler.build(message, order,
-                    message.droneId() == null ? null : droneMapper.selectById(message.droneId()));
+                    isBlank(droneId) ? null : droneMapper.selectById(droneId));
             if (input == null) {
                 return;
             }
             HomecomingParams params = assembler.params();
-            // 候选他巢台账传空：第二级需 B 组返程能耗精算，未接——降级到一／三级，不伪造能耗
+            // 候选他巢台账由 HomecomingService 从 nest＋occupancy_slot 组装（调用方不传）
             HomecomingDecision decision = homecomingService.reviewAndDecide(input, params, List.of());
             writeAudit(order, message, decision);
             eventPublisher.publishEvent(new HomecomingDecisionEvent(
-                    message.eventId(), message.alertType(), order.getOrderId(), message.droneId(),
-                    decision.tier(), decision.targetId(), decision.needSlotRequest(), decision.reason()));
+                    message.eventId(), message.alertType(), order.getOrderId(), input.droneId(),
+                    decision.tier(), decision.targetId(), decision.reason()));
             log.info("告警驱动返航复核完成：orderId={} tier={} eventId={}",
                     order.getOrderId(), decision.tier().getValue(), message.eventId());
             done = true;
@@ -266,7 +277,7 @@ public class AlertDrivenDispatcher {
             return message.orderId();
         }
         String droneId = message.droneId();
-        if (isBlank(droneId) || flightPhaseAdvancer == null) {
+        if (isBlank(droneId)) {
             return null;
         }
         String activeOrderId = flightPhaseAdvancer.activeOrderIdOf(droneId);
@@ -287,7 +298,8 @@ public class AlertDrivenDispatcher {
         try {
             TaskLogEntity audit = new TaskLogEntity();
             audit.setOrderId(order.getOrderId());
-            audit.setOpType("返航复核-" + message.alertType());
+            // LOW.1（可维护）：opType 走枚举映射，不再直接拼外部文本
+            audit.setOpType("返航复核-" + AlertType.fromValue(message.alertType()).getValue());
             audit.setFromStatus(order.getStatus());
             audit.setToStatus(order.getStatus());
             audit.setTs(LocalDateTime.ofInstant(Instant.now(), DB_ZONE));
@@ -300,5 +312,25 @@ public class AlertDrivenDispatcher {
 
     private static boolean isBlank(String value) {
         return value == null || value.isBlank();
+    }
+}
+
+/**
+ * 告警监听器错误处理器（MEDIUM.2 告警）：消息反序列化失败发生在进入监听方法之前，
+ * 容器异常时会按 {@code defaultRequeueRejected} 反复重投同一条坏消息、堵住整个队列。
+ * 本处理器只记警告并返回 {@code null}（消费成功），实现「单条坏消息不中断队列」。
+ */
+@Component("alertListenerErrorHandler")
+class AlertListenerErrorHandler implements RabbitListenerErrorHandler {
+
+    private static final Logger log = LoggerFactory.getLogger(AlertListenerErrorHandler.class);
+
+    @Override
+    public Object handleError(Message amqpMessage, Channel channel,
+            org.springframework.messaging.Message<?> message,
+            ListenerExecutionFailedException exception) throws Exception {
+        Throwable cause = exception.getCause() == null ? exception : exception.getCause();
+        log.warn("告警消息转换或消费失败已丢弃（不中断队列）：{}", cause.toString());
+        return null;
     }
 }
