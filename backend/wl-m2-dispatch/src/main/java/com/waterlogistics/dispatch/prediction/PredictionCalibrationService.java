@@ -18,6 +18,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 /**
@@ -118,7 +119,15 @@ public class PredictionCalibrationService {
     /** 落库成功条数（联调与判据核对用）。 */
     private final AtomicLong persistedCount = new AtomicLong();
 
-    /** 生产装配用。 */
+    /**
+     * 生产装配用。
+     *
+     * <p><b>{@code @Autowired} 不能省</b>：本类有多个构造器，Spring 的「唯一构造器自动推断」
+     * 只在构造器<b>恰好一个</b>时才生效；一旦有多个而无一标注，容器会退回找无参构造器，
+     * 报 {@code No default constructor found}。这个坑在单测里完全看不见——单测直接
+     * {@code new}，只有加载 ApplicationContext 的集成测试才会炸，所以必须显式标注。
+     */
+    @Autowired
     public PredictionCalibrationService(ObjectProvider<ResidualSampleSource> sampleSources,
             PredErrorSampleMapper sampleMapper, SysParamLoader sysParamLoader) {
         this(sampleSources, sampleMapper, sysParamLoader, biasParamsOf(sysParamLoader));
