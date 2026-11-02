@@ -1,6 +1,7 @@
 package com.waterlogistics.collector.publisher;
 
 import com.waterlogistics.contract.mq.AisMessage;
+import com.waterlogistics.contract.mq.DeliveryReceipt;
 import com.waterlogistics.contract.mq.UavTelemetry;
 import com.waterlogistics.contract.mq.WeatherData;
 import com.waterlogistics.contract.mq.TopicName;
@@ -17,4 +18,7 @@ public interface DataPublisher {
     void publishUavTelemetry(UavTelemetry msg);
 
     void publishWeather(WeatherData msg);
+
+    /** 发布投放成功回执（仿真按需，或真实投放装置上报）。 */
+    void publishDeliveryReceipt(DeliveryReceipt msg);
 }

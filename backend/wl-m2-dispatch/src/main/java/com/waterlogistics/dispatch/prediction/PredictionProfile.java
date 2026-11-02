@@ -1,5 +1,7 @@
 package com.waterlogistics.dispatch.prediction;
 
+import com.waterlogistics.algo.estimation.WaterwayGeometry;
+
 /**
  * 预测实现的装配结果（M2 · 卢肄文 · 10-23 F4）：<b>模式 ＋ 断言网 ＋ 精算引擎</b>三件套。
  *
@@ -43,7 +45,21 @@ public record PredictionProfile(
      */
     public static PredictionProfile precise(PredictionSettings settings, PredictionAssurance assurance,
             PrecisePredictionEngine.Params params) {
+        return precise(settings, assurance, params, null);
+    }
+
+    /**
+     * 精算版画像（带航道中心线）。
+     *
+     * @param settings   预测参数（σ 初值、α、时域、步长）
+     * @param assurance  断言网（含赣江地理框）
+     * @param params     引擎参数（附录 B 初值）
+     * @param centerline 航道中心线；为空时沿用实测窗口建参考线的退化口径
+     * @return 画像
+     */
+    public static PredictionProfile precise(PredictionSettings settings, PredictionAssurance assurance,
+            PrecisePredictionEngine.Params params, WaterwayGeometry centerline) {
         return new PredictionProfile(PredictionMode.PRECISE, assurance,
-                new PrecisePredictionEngine(settings, params));
+                new PrecisePredictionEngine(settings, params, centerline));
     }
 }

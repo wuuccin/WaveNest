@@ -208,6 +208,30 @@ public class TaskQueueService {
         return OrderStatus.fromValue(order.getStatus());
     }
 
+    /**
+     * 投放回执确认：末段交接中 → 返航中（脱离返航）。
+     *
+     * <p><b>幂等</b>：时间兜底可能已把订单推进到返航中或已完成，此时直接返回，
+     * 不重复写日志。只有仍停在末段交接中的订单才允许推进。
+     *
+     * @throws IllegalStateException 订单不存在，或状态不属于末段交接中、返航中、已完成
+     */
+    public void markHandoverDone(String orderId) {
+        OrderTaskEntity order = orderTaskMapper.selectById(orderId);
+        if (order == null) {
+            throw new IllegalStateException("订单不存在：" + orderId);
+        }
+        OrderStatus current = OrderStatus.fromValue(order.getStatus());
+        if (current == OrderStatus.RETURNING || current == OrderStatus.FINISHED) {
+            return;
+        }
+        if (current != OrderStatus.HANDOVER) {
+            throw new IllegalStateException("订单 " + orderId + " 当前状态 " + current.getValue()
+                    + " 不允许标记交接完成");
+        }
+        transition(order, OrderStatus.HANDOVER, OrderStatus.RETURNING, "投放回执-交接完成");
+    }
+
     /** 状态流转：更新订单状态 + 写 task_log（同事务）；落库用中文状态词 */
     private void transition(OrderTaskEntity order, OrderStatus from, OrderStatus to, String opType) {
         long eventTs = System.currentTimeMillis();
