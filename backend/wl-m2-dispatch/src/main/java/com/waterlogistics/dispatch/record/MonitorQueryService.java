@@ -7,7 +7,6 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
@@ -69,14 +68,21 @@ public class MonitorQueryService {
      * @return 统计响应；空库时各计数为 0
      */
     public MonitorAggregator.StatisticsResponse statistics() {
-        Map<String, Long> counts = jdbcTemplate.query(
-                "SELECT status, COUNT(*) AS amount FROM order_task GROUP BY status",
-                (rs, rowNum) -> Map.entry(rs.getString("status") == null ? "" : rs.getString("status"),
-                        rs.getLong("amount"))).stream()
-                .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
-        LocalDateTime lastOrderAt = jdbcTemplate.queryForObject(
-                "SELECT MAX(create_time) FROM order_task", LocalDateTime.class);
+        // 同一事务快照内读取统计，避免订单计数与最近下单时刻跨两次读取漂移。
+        Map<String, Long> counts = new java.util.HashMap<>();
+        LocalDateTime[] lastOrderAt = {null};
+        jdbcTemplate.query("SELECT status, COUNT(*) AS amount, MAX(create_time) AS latest "
+                        + "FROM order_task GROUP BY status", rs -> {
+            String status = rs.getString("status");
+            counts.put(status == null ? "" : status, rs.getLong("amount"));
+            java.sql.Timestamp latest = rs.getTimestamp("latest");
+            if (latest != null && (lastOrderAt[0] == null
+                    || latest.toLocalDateTime().isAfter(lastOrderAt[0]))) {
+                lastOrderAt[0] = latest.toLocalDateTime();
+            }
+        });
         Long logCount = taskLogMapper.selectCount(null);
-        return MonitorAggregator.toStatistics(counts, logCount == null ? 0L : logCount, lastOrderAt);
+        // task_log 属另一张持续写入的事件表，其计数与订单聚合不承诺同一时刻快照。
+        return MonitorAggregator.toStatistics(counts, logCount == null ? 0L : logCount, lastOrderAt[0]);
     }
 }

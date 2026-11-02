@@ -15,7 +15,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * 主链触发器（B0 · 10-20 任务清单；C0 · 10-21 续接派发编排）。
@@ -39,32 +40,43 @@ import org.springframework.transaction.annotation.Transactional;
 public class DispatchTrigger {
 
     private static final Logger log = LoggerFactory.getLogger(DispatchTrigger.class);
+    private static final ZoneId DB_ZONE = ZoneId.of("Asia/Shanghai");
 
     private final OrderTaskMapper orderTaskMapper;
     private final TaskQueueService taskQueueService;
     private final DispatchOrchestrator dispatchOrchestrator;
     private final PredictionService predictionService;
+    private final TransactionTemplate transactionTemplate;
 
     public DispatchTrigger(OrderTaskMapper orderTaskMapper, TaskQueueService taskQueueService,
-            DispatchOrchestrator dispatchOrchestrator, PredictionService predictionService) {
+            DispatchOrchestrator dispatchOrchestrator, PredictionService predictionService,
+            PlatformTransactionManager transactionManager) {
         this.orderTaskMapper = orderTaskMapper;
         this.taskQueueService = taskQueueService;
         this.dispatchOrchestrator = dispatchOrchestrator;
         this.predictionService = predictionService;
+        this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
 
     /**
      * 订单受理事件处理：落库 → 受理 → 派发编排（组批 → 选机 → 会面 → 派发）。
      *
-     * <p>整链路在同一事务内：任一步失败则回滚，订单不产生脏状态。
+     * <p>先在短事务里落单并受理，再由编排器在自己的事务内派发。
      * 事件发布方（OrderAdmissionService）不依赖本监听器的返回值，
      * 失败仅记录日志，不阻断下单响应（下单已返回 accepted）。
      */
     @EventListener
-    @Transactional
     public void onOrderSubmitted(OrderSubmittedEvent event) {
+        if (event == null) {
+            log.warn("忽略空的订单受理事件");
+            return;
+        }
         String orderId = event.orderId();
         try {
+            if (orderTaskMapper.selectById(orderId) != null) {
+                log.info("订单事件重复投递，跳过：orderId={}", orderId);
+                return;
+            }
             if (event.deferred()) {
                 // 阶段一 26：接单判定为「延后待唤醒」的单子——落库即「已受理待唤醒」，
                 // 不受理、不组批；唤醒由 AdmissionWakeScheduler（定时）或
@@ -76,14 +88,18 @@ public class DispatchTrigger {
                 deferred.setGoodsType(event.goodsType());
                 if (event.expectedTimeMs() != null) {
                     deferred.setExpectedTime(LocalDateTime.ofInstant(
-                            Instant.ofEpochMilli(event.expectedTimeMs()), ZoneId.systemDefault()));
+                            Instant.ofEpochMilli(event.expectedTimeMs()), DB_ZONE));
                 }
                 deferred.setPriority(event.priority());
                 deferred.setCreateTime(LocalDateTime.ofInstant(
-                        Instant.ofEpochMilli(event.submitTsMs()), ZoneId.systemDefault()));
+                        Instant.ofEpochMilli(event.submitTsMs()), DB_ZONE));
                 deferred.setStatus(OrderStatus.ACCEPTED_WAIT_WAKE.getValue());
                 fillShipPosition(deferred);
-                orderTaskMapper.insert(deferred);
+                transactionTemplate.executeWithoutResult(status -> {
+                    if (orderTaskMapper.selectById(orderId) == null) {
+                        orderTaskMapper.insert(deferred);
+                    }
+                });
                 log.info("延后单落库：orderId={} waitReason={} wakeEtaTs={}",
                         orderId, event.waitReason(), event.wakeEtaTs());
                 return;
@@ -97,17 +113,21 @@ public class DispatchTrigger {
             entity.setGoodsType(event.goodsType());
             if (event.expectedTimeMs() != null) {
                 entity.setExpectedTime(LocalDateTime.ofInstant(
-                        Instant.ofEpochMilli(event.expectedTimeMs()), ZoneId.systemDefault()));
+                        Instant.ofEpochMilli(event.expectedTimeMs()), DB_ZONE));
             }
             entity.setPriority(event.priority());
             entity.setCreateTime(LocalDateTime.ofInstant(
-                    Instant.ofEpochMilli(event.submitTsMs()), ZoneId.systemDefault()));
+                    Instant.ofEpochMilli(event.submitTsMs()), DB_ZONE));
             entity.setStatus(OrderStatus.PENDING_ACCEPT.getValue());
             fillShipPosition(entity);
-            orderTaskMapper.insert(entity);
-
-            // 2. 受理：待受理 → 待调度
-            taskQueueService.accept(entity);
+            transactionTemplate.executeWithoutResult(status -> {
+                if (orderTaskMapper.selectById(orderId) != null) {
+                    throw new IllegalStateException("订单事件重复投递：" + orderId);
+                }
+                orderTaskMapper.insert(entity);
+                // 落库与受理是一笔短事务；编排另起事务，不持有下单写锁。
+                taskQueueService.accept(entity);
+            });
 
             // 3. 派发编排（C0）：组批 → 选机 → 会面 → 派发 → 回填会面点
             //    闸门熔断时编排器转「已受理待唤醒」并返回 null，非失败
@@ -120,7 +140,8 @@ public class DispatchTrigger {
             }
         } catch (Exception e) {
             log.error("主链触发失败：orderId={} err={}", orderId, e.getMessage(), e);
-            throw e; // 事务回滚
+            // 事件由下单请求同步发布；失败留在日志中，由监控和重试链路处理，
+            // 不把调度异常伪装成下单接口失败。
         }
     }
 
@@ -133,8 +154,15 @@ public class DispatchTrigger {
         predictionService.snapshotOf(entity.getShipMmsi()).ifPresent(snapshot -> {
             if (!snapshot.points().isEmpty()) {
                 ShipTrajPoint current = snapshot.points().get(0);
-                entity.setShipLon(BigDecimal.valueOf(current.lon()));
-                entity.setShipLat(BigDecimal.valueOf(current.lat()));
+                if (Double.isFinite(current.lon()) && Double.isFinite(current.lat())
+                        && current.lon() >= -180 && current.lon() <= 180
+                        && current.lat() >= -90 && current.lat() <= 90) {
+                    entity.setShipLon(BigDecimal.valueOf(current.lon()));
+                    entity.setShipLat(BigDecimal.valueOf(current.lat()));
+                } else {
+                    log.warn("忽略非法预测船位：mmsi={} lon={} lat={}",
+                            entity.getShipMmsi(), current.lon(), current.lat());
+                }
             }
         });
     }
