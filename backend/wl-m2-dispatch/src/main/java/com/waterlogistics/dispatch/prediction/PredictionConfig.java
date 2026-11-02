@@ -1,6 +1,9 @@
 package com.waterlogistics.dispatch.prediction;
 
+import com.waterlogistics.algo.estimation.WaterwayGeometry;
 import com.waterlogistics.storage.param.SysParamLoader;
+import java.util.ArrayList;
+import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -149,7 +152,8 @@ public class PredictionConfig {
             @Value("${wavenest.m2.prediction.theta-max-deg:75}") double thetaMaxDeg,
             @Value("${wavenest.m2.prediction.v-max-craft-ms:6}") double vMaxCraftMs,
             @Value("${wavenest.m2.prediction.initial-velocity-std-ms:0.5}") double initialVelocityStdMs,
-            @Value("${wavenest.m2.prediction.tau-e-sec:120}") double tauESec) {
+            @Value("${wavenest.m2.prediction.tau-e-sec:120}") double tauESec,
+            @Value("${wavenest.m2.prediction.centerline:}") String centerlineSpec) {
 
         PredictionMode mode = PredictionMode.fromCode(modeCode);
         if (!mode.code().equalsIgnoreCase(String.valueOf(modeCode).trim())) {
@@ -167,6 +171,35 @@ public class PredictionConfig {
 
         log.info("预测层运行在精算版：观测滤波 ＋ 曲线坐标 ＋ 协方差传播 ＋ 横向 OU（{} = {}）",
                 KEY_MODE, mode.code());
-        return PredictionProfile.precise(settings, assurance, params);
+        return PredictionProfile.precise(settings, assurance, params, parseCenterline(centerlineSpec));
+    }
+
+    /**
+     * 解析航道中心线配置：分号分隔顶点，每个顶点写 {@code lon,lat}。
+     *
+     * <p>配置为空或顶点不足两个时返回 {@code null}，引擎回落到实测窗口建参考线的退化口径。
+     *
+     * @param spec 中心线配置串
+     * @return 参考折线，缺失时为空
+     */
+    private static WaterwayGeometry parseCenterline(String spec) {
+        if (spec == null || spec.isBlank()) {
+            return null;
+        }
+        List<WaterwayGeometry.Vertex> vertices = new ArrayList<>();
+        for (String pair : spec.split(";")) {
+            String trimmed = pair.trim();
+            if (trimmed.isEmpty()) {
+                continue;
+            }
+            String[] parts = trimmed.split(",");
+            if (parts.length != 2) {
+                throw new IllegalArgumentException("中心线点格式应为 lon,lat：" + trimmed);
+            }
+            vertices.add(new WaterwayGeometry.Vertex(
+                    Double.parseDouble(parts[0].trim()),
+                    Double.parseDouble(parts[1].trim())));
+        }
+        return vertices.size() < 2 ? null : new WaterwayGeometry(vertices);
     }
 }

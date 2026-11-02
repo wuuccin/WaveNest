@@ -6,6 +6,8 @@ import com.waterlogistics.algo.estimation.ConstantVelocityPredictor;
 import com.waterlogistics.algo.estimation.EstimatedPoint;
 import com.waterlogistics.algo.estimation.LateralOuFilter;
 import com.waterlogistics.algo.estimation.MultiStepPredictor;
+import com.waterlogistics.algo.estimation.NavPhaseTracker;
+import com.waterlogistics.algo.estimation.PremiseMonitor;
 import com.waterlogistics.algo.estimation.PremiseStatus;
 import com.waterlogistics.algo.estimation.WaterwayGeometry;
 import com.waterlogistics.contract.mq.AisMessage;
@@ -58,11 +60,12 @@ import org.slf4j.LoggerFactory;
  *       两者的输入是「预测—实测配对样本」及其落表（{@code A-11} 的预测误差样本表），
  *       该表在 M6 侧尚未建；本类改为把每拍的归一化新息累积进快照的 {@code zSeries}
  *       （窗长 32），先让 E 组与标定侧有真数据可吃，等表建好再接。</li>
- *   <li><b>前提监测 {@code PremiseMonitor} 未接</b>：其 P 判据需要窗口与阈值，两项在
- *       {@code sys_param} 中均未登记（不臆造键名），故前提一律给 {@code VALID}，
- *       与匀速版口径一致，待登记后接。</li>
- *   <li><b>航段限速</b>：无中心线台账即无分段限速，故用 {@link MultiStepPredictor.SpeedLimitLookup#unbounded()}；
- *       车速仍受滤波器自己的 {@code vMaxCraftMs} 限幅。</li>
+ *   <li><b>前提监测</b>：{@link PremiseMonitor} 与 {@link NavPhaseTracker} 已按船接入，
+ *       每帧观测推进一次，P 判据的参数取算法层缺省值；结论经 {@code Outcome.premise}
+ *       透出到 {@code ship_traj.premise}。</li>
+ *   <li><b>航段限速</b>：中心线已接入，但配置里未带分段限速数据，故仍用
+ *       {@link MultiStepPredictor.SpeedLimitLookup#unbounded()}；车速受滤波器自己的
+ *       {@code vMaxCraftMs} 限幅。</li>
  * </ul>
  *
  * <p><b>本类不感知 Spring、不写库</b>：装配见 {@link PredictionConfig}，调用见 {@link PredictionService}。
@@ -205,6 +208,12 @@ public class PrecisePredictionEngine {
 
         WaterwayGeometry geometry;
 
+        PremiseMonitor premise;
+
+        NavPhaseTracker navPhase;
+
+        PremiseStatus premiseStatus = PremiseStatus.VALID;
+
         boolean initialized;
 
         long lastAppliedTsMs = Long.MIN_VALUE;
@@ -218,14 +227,27 @@ public class PrecisePredictionEngine {
 
     private final Params params;
 
+    /** 航道中心线；非空时参考线固定取中心线，不再由本船实测窗口建线。 */
+    private final WaterwayGeometry centerline;
+
     private final Map<String, ShipState> states = new ConcurrentHashMap<>();
 
     public PrecisePredictionEngine(PredictionSettings settings, Params params) {
+        this(settings, params, null);
+    }
+
+    /**
+     * @param settings   预测参数
+     * @param params     引擎参数
+     * @param centerline 航道中心线；为 {@code null} 时沿用实测窗口建参考线的退化口径
+     */
+    public PrecisePredictionEngine(PredictionSettings settings, Params params, WaterwayGeometry centerline) {
         if (settings == null || params == null) {
             throw new IllegalArgumentException("settings / params 不得为 null");
         }
         this.settings = settings;
         this.params = params;
+        this.centerline = centerline;
     }
 
     /** 已在跟踪的船数。 */
@@ -279,7 +301,9 @@ public class PrecisePredictionEngine {
             }
 
             if (state.geometry == null) {
-                WaterwayGeometry geometry = buildGeometry(state.window, observation.cog());
+                WaterwayGeometry geometry = centerline != null
+                        ? centerline
+                        : buildGeometry(state.window, observation.cog());
                 if (geometry == null) {
                     log.debug("精算冷启动：mmsi={} 实测点不足以建参考线（{} 条）",
                             observation.mmsi(), state.window.size());
@@ -302,7 +326,7 @@ public class PrecisePredictionEngine {
                 return Optional.empty();
             }
 
-            if (state.along.s() >= state.geometry.totalLengthM() - TAIL_MARGIN_M) {
+            if (centerline == null && state.along.s() >= state.geometry.totalLengthM() - TAIL_MARGIN_M) {
                 log.warn("参考线将尽，重建并重锚：mmsi={} s={} 总长={}",
                         observation.mmsi(), state.along.s(), state.geometry.totalLengthM());
                 WaterwayGeometry rebuilt = buildGeometry(state.window, observation.cog());
@@ -366,6 +390,7 @@ public class PrecisePredictionEngine {
             state.initialized = true;
             state.lastAppliedTsMs = observation.ts();
             state.predictedVarianceS = state.along.varianceS();
+            advancePremise(state, observation);
             return;
         }
 
@@ -383,6 +408,7 @@ public class PrecisePredictionEngine {
         state.along.update(projection.s(), thetaRad);
         state.lateral.update(projection.e(), observation.ts());
         state.lastAppliedTsMs = observation.ts();
+        advancePremise(state, observation);
 
         double nis = state.along.normalizedInnovation();
         if (Double.isFinite(nis)) {
@@ -392,6 +418,27 @@ public class PrecisePredictionEngine {
             }
             state.zSeries.addLast(nis);
         }
+    }
+
+    /**
+     * 推进前提监测：把本帧观测送入 {@link PremiseMonitor}，并记录最新结论。
+     *
+     * <p>首帧按速度符号锁定方向参考，之后由监测器自行累积偏航与翻转判据。
+     */
+    private void advancePremise(ShipState state, AisMessage observation) {
+        if (state.premise == null) {
+            state.premise = new PremiseMonitor(PremiseMonitor.Params.defaults(),
+                    state.along.vAlongMs() >= 0.0 ? 1 : -1, List.of());
+            state.premise.lockCourseRef(state.geometry.courseDegAt(state.along.s()));
+        }
+        if (state.navPhase == null) {
+            state.navPhase = new NavPhaseTracker(NavPhaseTracker.Params.defaults());
+        }
+        NavPhaseTracker.Phase phase = state.navPhase.update(new NavPhaseTracker.Observation(
+                observation.ts(), state.along.s(), state.along.vAlongMs(), params.vMaxCraftMs(), false));
+        state.premiseStatus = state.premise.observe(new PremiseMonitor.Observation(
+                observation.ts(), state.along.s(), state.along.vAlongMs(), observation.cog(),
+                phase, false, false)).verdict().toStatus();
     }
 
     // ───────────── 内部：参考线与预测 ─────────────
@@ -532,7 +579,7 @@ public class PrecisePredictionEngine {
                 t0Ms,
                 samples.get(0).courseDeg(),
                 validitySec,
-                PremiseStatus.VALID,
+                state.premiseStatus,
                 points,
                 new ArrayList<>(state.zSeries));
     }
