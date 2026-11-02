@@ -100,6 +100,18 @@ class PredictionBboxNanchangSegmentTest {
     // ───────── 仿真喂法真值（SimAisConnector 的代码默认值）─────────
 
     private static final long T0 = 1_760_000_000_000L;
+
+    /**
+     * 测试里的「现在」：取 {@code T0 + 1800 s}，与预测时域 {@code horizonSec} 等长。
+     *
+     * <p>为什么不能像原来那样取 {@code T0 + 3600 s}：MEDIUM.44 给断言网补了
+     * {@code STALE}（末点不得早于现在超过 300 s 时钟容差）。本类喂的观测时刻在
+     * {@code T0} 附近、点列只画到 {@code t0 + 1800 s}；把「现在」放到 {@code T0 + 3600 s}
+     * 等于宣称「拿一小时前的观测在现在重算」，那一版确实已经过期——被 STALE 拦下是对的，
+     * 但本类验的是校验框／σ／新息，不该被时间线问题干扰。取 1800 s 让「现在」落在
+     * 预测时域内，同时仍距 {@code T0} 足够远以避开 {@code T0_IN_FUTURE}。
+     */
+    private static final long NOW_MS = T0 + 1_800_000L;
     private static final String MMSI = "123456789";
     private static final double SOG_KNOTS = 8.0;
     private static final double KNOT_TO_MS = 1852.0 / 3600.0;
@@ -131,7 +143,7 @@ class PredictionBboxNanchangSegmentTest {
         PredictionProfile profile = PredictionProfile.precise(settings, assurance,
                 PrecisePredictionEngine.Params.defaults());
         return new PredictionService(settings, new LoggingRecomputeRequester(), event -> { },
-                profile, () -> T0 + 3_600_000L);
+                profile, () -> NOW_MS);
     }
 
     // ───────────────────────── 判据 ① 跑通 + 判据 ② 不被拦 ─────────────────────────
@@ -285,7 +297,10 @@ class PredictionBboxNanchangSegmentTest {
 
         // 直接对网判一次，把违约代码钉死为 OUT_OF_BOUNDS（不是别的违约凑巧触发）
         java.util.Optional<PredictionAssurance.Violation> violation = assurance.check(
-                T0, T0 + 3_600_000L, 900L,
+                // 「现在」取 T0 而非 T0+3600 s：本用例验的是地理框，而 MEDIUM.44 补的
+                // STALE（末点不得早于现在 300 s）会在时间线不合理时抢先返回，把
+                // OUT_OF_BOUNDS 这条被钉死的判据盖掉。时间线归 STALE 的专项用例去验。
+                T0, T0, 900L,
                 List.of(new com.waterlogistics.algo.estimation.EstimatedPoint(
                         T0, 114.3000, 30.6000, 20.0, 15.0)));
         assertTrue(violation.isPresent(), "原仿真点必须判违约");
@@ -303,7 +318,10 @@ class PredictionBboxNanchangSegmentTest {
         // 115.895 / 28.770：在 T1-8 旧框（115.850–115.910 × 28.655–28.770）之内，
         // 但在 T2-6 定稿框北界（28.767）之外。若仍放行，说明收窄没落地。
         java.util.Optional<PredictionAssurance.Violation> violation = assurance.check(
-                T0, T0 + 3_600_000L, 900L,
+                // 「现在」取 T0 而非 T0+3600 s：本用例验的是地理框，而 MEDIUM.44 补的
+                // STALE（末点不得早于现在 300 s）会在时间线不合理时抢先返回，把
+                // OUT_OF_BOUNDS 这条被钉死的判据盖掉。时间线归 STALE 的专项用例去验。
+                T0, T0, 900L,
                 List.of(new com.waterlogistics.algo.estimation.EstimatedPoint(
                         T0, 115.895, 28.770, 20.0, 15.0)));
         assertTrue(violation.isPresent(), "28.770 已在新框北界（28.767）之外，必须判违约");
