@@ -3,9 +3,11 @@ package com.waterlogistics.dispatch.plan;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.waterlogistics.algo.candidate.CandidateGenerator;
 import com.waterlogistics.contract.state.OrderStatus;
+import com.waterlogistics.contract.ws.PlanTrackFrame;
 import com.waterlogistics.dispatch.feasibility.CandidateFeasibilityPlanner;
 import com.waterlogistics.dispatch.frame.RendezvousFrameProjector;
 import com.waterlogistics.dispatch.queue.TaskQueueService;
+import com.waterlogistics.dispatch.record.TaskLogRecorder;
 import com.waterlogistics.dispatch.rendezvous.RendezvousCoordinator;
 import com.waterlogistics.dispatch.rendezvous.RendezvousPlanCommittedEvent;
 import com.waterlogistics.storage.entity.OrderTaskEntity;
@@ -63,6 +65,8 @@ public class DispatchOrchestrator {
     private final RendezvousCoordinator rendezvous;
     private final OrderTaskMapper orderTaskMapper;
     private final ApplicationEventPublisher eventPublisher;
+    private final MissionTrackAssembler missionTrackAssembler;
+    private final TaskLogRecorder taskLogRecorder;
 
     /**
      * C1：选机段的可行性择优（卢肄文）。生成 → 逐个判可行性 → 取最近的可飞候选。
@@ -76,12 +80,16 @@ public class DispatchOrchestrator {
             RendezvousCoordinator rendezvous,
             OrderTaskMapper orderTaskMapper,
             CandidateFeasibilityPlanner candidateFeasibilityPlanner,
-            ApplicationEventPublisher eventPublisher) {
+            ApplicationEventPublisher eventPublisher,
+            MissionTrackAssembler missionTrackAssembler,
+            TaskLogRecorder taskLogRecorder) {
         this.taskQueueService = taskQueueService;
         this.rendezvous = rendezvous;
         this.orderTaskMapper = orderTaskMapper;
         this.candidateFeasibilityPlanner = candidateFeasibilityPlanner;
         this.eventPublisher = eventPublisher;
+        this.missionTrackAssembler = missionTrackAssembler;
+        this.taskLogRecorder = taskLogRecorder;
     }
 
     /**
@@ -136,6 +144,15 @@ public class DispatchOrchestrator {
         if (rows != 1) {
             throw new IllegalStateException("订单 " + orderId + " 会面点回填影响行数为 " + rows + "，期望 1");
         }
+
+        // 第 6 步：装配三段航迹，写一条任务日志摘要，并发布规划航迹帧。
+        // 航迹生成失败随本事务回滚，不留下「已派发但无航迹」的半成品。
+        PlanTrackFrame trackFrame = missionTrackAssembler.assemble(orderId, best.comboId(), plan);
+        taskLogRecorder.record(orderId, PlanTrackFrame.OP_TYPE,
+                OrderStatus.DISPATCHED.getValue(), OrderStatus.DISPATCHED.getValue(),
+                System.currentTimeMillis());
+        eventPublisher.publishEvent(new MissionTrackPlannedEvent(trackFrame));
+
         // C3：完整方案已持久化后发布投影，app 层在事务提交后转成 WebSocket 帧。
         // 会面帧投影抽成纯函数 RendezvousFrameProjector，编排器与队列侧（T1-6）共用同一口径，
         // 不重跑判定；etaTs 取 plan.meetTime()（值即 meetTMin＝会面时刻，非起飞时刻）。
