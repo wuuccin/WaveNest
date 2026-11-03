@@ -31,15 +31,16 @@ class ContractDoctrineTest {
 
     /**
      * 《22》§1.2 的 12 个主题：raw.* 五条、data.* 五条、alert.event、task.plan；
-     * ＋《86》附 G-01 新增的 {@code rendezvous.deviation}（功能 19 数据回流，非告警通道）＝ 13 个。
+     * ＋《86》附 G-01 新增的 {@code rendezvous.deviation}（功能 19 数据回流，非告警通道）；
+     * ＋投放回执 {@code data.uav.delivery} ＝ 14 个。
      */
     @Test
-    void topics_shouldBeThirteenAndAuthoritative() {
-        assertEquals(13, TopicName.TOPICS.size(), "主题数量必须为 12＋1（rendezvous.deviation）");
+    void topics_shouldBeFourteenAndAuthoritative() {
+        assertEquals(14, TopicName.TOPICS.size(), "主题数量必须为 12＋2（rendezvous.deviation、data.uav.delivery）");
         assertEquals(List.of(
                         "raw.ais", "raw.uav.telemetry", "raw.weather", "raw.hydro", "raw.notice",
                         "data.ais", "data.uav.telemetry", "data.weather", "data.hydro", "data.notice",
-                        "alert.event", "task.plan", "rendezvous.deviation"),
+                        "alert.event", "task.plan", "rendezvous.deviation", "data.uav.delivery"),
                 TopicName.TOPICS);
     }
 
@@ -101,10 +102,10 @@ class ContractDoctrineTest {
         assertEquals(List.of("提示", "警告", "严重"), values(AlertLevel.values()));
     }
 
-    /** 《22》§4 五类 WS 帧 */
+    /** 《22》§4 六类 WS 帧 */
     @Test
-    void wsFrameTypes_shouldBeFive() {
-        assertEquals(List.of("ship_traj", "drone_state", "rendezvous", "alarm", "order_state"),
+    void wsFrameTypes_shouldBeSix() {
+        assertEquals(List.of("ship_traj", "drone_state", "rendezvous", "alarm", "order_state", "plan_track"),
                 Arrays.stream(WsFrameType.values()).map(WsFrameType::getType).toList());
     }
 
