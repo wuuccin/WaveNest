@@ -3,6 +3,8 @@ package com.waterlogistics.dispatch.prediction;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.waterlogistics.algo.estimation.EstimatedPoint;
+import com.waterlogistics.algo.estimation.MultiStepPredictor.SpeedLimitLookup;
 import com.waterlogistics.algo.estimation.PremiseStatus;
 import com.waterlogistics.algo.estimation.WaterwayGeometry;
 import com.waterlogistics.contract.mq.AisMessage;
@@ -55,6 +57,34 @@ class PrecisePredictionEngineCenterlineTest {
         }
 
         assertEquals(PremiseStatus.INVALID, last.premise(), "长时间停船应判前提失效");
+    }
+
+    @Test
+    void speedLimit_shouldSlowDownOverspeedShip() {
+        // 限速 2.0 m/s 与不限速两个引擎，喂同一条 8 m/s 沿中心线航行的超速船。
+        PrecisePredictionEngine limited = new PrecisePredictionEngine(
+                SETTINGS, PrecisePredictionEngine.Params.defaults(), CENTERLINE,
+                SpeedLimitLookup.constant(2.0));
+        PrecisePredictionEngine unlimited = new PrecisePredictionEngine(
+                SETTINGS, PrecisePredictionEngine.Params.defaults(), CENTERLINE,
+                SpeedLimitLookup.unbounded());
+
+        PrecisePredictionEngine.Outcome a = limited
+                .predict(observation(115.860, 28.660, 8.0, 27.0, 1000L)).orElseThrow();
+        PrecisePredictionEngine.Outcome b = unlimited
+                .predict(observation(115.860, 28.660, 8.0, 27.0, 1000L)).orElseThrow();
+
+        // 中心线 lon 单调递增（115.852 → 115.879），末点 lon 越小＝沿程推进越少。
+        double limitedEndLon = lastLon(a);
+        double unlimitedEndLon = lastLon(b);
+        assertTrue(limitedEndLon < unlimitedEndLon,
+                "限速后沿程推进应少于不限速：limited=" + limitedEndLon
+                        + " unlimited=" + unlimitedEndLon);
+    }
+
+    private static double lastLon(PrecisePredictionEngine.Outcome outcome) {
+        List<EstimatedPoint> points = outcome.points();
+        return points.get(points.size() - 1).lon();
     }
 
     private static AisMessage observation(double lon, double lat, double sog, double cog, long ts) {

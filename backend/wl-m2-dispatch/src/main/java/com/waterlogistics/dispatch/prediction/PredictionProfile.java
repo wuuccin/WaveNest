@@ -1,5 +1,6 @@
 package com.waterlogistics.dispatch.prediction;
 
+import com.waterlogistics.algo.estimation.MultiStepPredictor.SpeedLimitLookup;
 import com.waterlogistics.algo.estimation.WaterwayGeometry;
 
 /**
@@ -59,7 +60,23 @@ public record PredictionProfile(
      */
     public static PredictionProfile precise(PredictionSettings settings, PredictionAssurance assurance,
             PrecisePredictionEngine.Params params, WaterwayGeometry centerline) {
+        return precise(settings, assurance, params, centerline, SpeedLimitLookup.unbounded());
+    }
+
+    /**
+     * 精算版画像（带航道中心线与分段限速）。
+     *
+     * @param settings   预测参数（σ 初值、α、时域、步长）
+     * @param assurance  断言网（含赣江地理框）
+     * @param params     引擎参数（附录 B 初值）
+     * @param centerline 航道中心线；为空时沿用实测窗口建参考线的退化口径
+     * @param speedLimit 航段分段限速查询；为 {@code null} 时恒不限速
+     * @return 画像
+     */
+    public static PredictionProfile precise(PredictionSettings settings, PredictionAssurance assurance,
+            PrecisePredictionEngine.Params params, WaterwayGeometry centerline,
+            SpeedLimitLookup speedLimit) {
         return new PredictionProfile(PredictionMode.PRECISE, assurance,
-                new PrecisePredictionEngine(settings, params, centerline));
+                new PrecisePredictionEngine(settings, params, centerline, speedLimit));
     }
 }

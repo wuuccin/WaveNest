@@ -6,6 +6,7 @@ import com.waterlogistics.algo.estimation.ConstantVelocityPredictor;
 import com.waterlogistics.algo.estimation.EstimatedPoint;
 import com.waterlogistics.algo.estimation.LateralOuFilter;
 import com.waterlogistics.algo.estimation.MultiStepPredictor;
+import com.waterlogistics.algo.estimation.MultiStepPredictor.SpeedLimitLookup;
 import com.waterlogistics.algo.estimation.NavPhaseTracker;
 import com.waterlogistics.algo.estimation.PremiseMonitor;
 import com.waterlogistics.algo.estimation.PremiseStatus;
@@ -320,24 +321,35 @@ public class PrecisePredictionEngine implements ResidualSampleSource {
     /** 航道中心线；非空时参考线固定取中心线，不再由本船实测窗口建线。 */
     private final WaterwayGeometry centerline;
 
+    /** 航段分段限速查询；缺省恒不限速（等价 {@code unbounded()}）。 */
+    private final SpeedLimitLookup speedLimit;
+
     private final Map<String, ShipState> states = new ConcurrentHashMap<>();
 
     public PrecisePredictionEngine(PredictionSettings settings, Params params) {
         this(settings, params, null);
     }
 
+    public PrecisePredictionEngine(PredictionSettings settings, Params params,
+            WaterwayGeometry centerline) {
+        this(settings, params, centerline, SpeedLimitLookup.unbounded());
+    }
+
     /**
      * @param settings   预测参数
      * @param params     引擎参数
      * @param centerline 航道中心线；为 {@code null} 时沿用实测窗口建参考线的退化口径
+     * @param speedLimit 航段分段限速查询；为 {@code null} 时恒不限速
      */
-    public PrecisePredictionEngine(PredictionSettings settings, Params params, WaterwayGeometry centerline) {
+    public PrecisePredictionEngine(PredictionSettings settings, Params params,
+            WaterwayGeometry centerline, SpeedLimitLookup speedLimit) {
         if (settings == null || params == null) {
             throw new IllegalArgumentException("settings / params 不得为 null");
         }
         this.settings = settings;
         this.params = params;
         this.centerline = centerline;
+        this.speedLimit = speedLimit == null ? SpeedLimitLookup.unbounded() : speedLimit;
     }
 
     /** 已在跟踪的船数。 */
@@ -890,7 +902,7 @@ public class PrecisePredictionEngine implements ResidualSampleSource {
                 MultiStepPredictor.LateralForecast.from(state.lateral, state.lateral.varianceE(),
                         settings.sigma0CrossM(), params.tauESec()),
                 state.geometry,
-                MultiStepPredictor.SpeedLimitLookup.unbounded());
+                speedLimit);
 
         List<MultiStepPredictor.Sample> samples = MultiStepPredictor.predict(input, predictParams);
         long validitySec = MultiStepPredictor.validitySec(samples, predictParams);

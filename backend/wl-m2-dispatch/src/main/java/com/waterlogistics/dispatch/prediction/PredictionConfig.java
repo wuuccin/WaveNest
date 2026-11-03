@@ -1,5 +1,6 @@
 package com.waterlogistics.dispatch.prediction;
 
+import com.waterlogistics.algo.estimation.MultiStepPredictor.SpeedLimitLookup;
 import com.waterlogistics.algo.estimation.WaterwayGeometry;
 import com.waterlogistics.storage.param.SysParamLoader;
 import java.util.ArrayList;
@@ -59,6 +60,9 @@ public class PredictionConfig {
 
     /** 预测时域（精算时域）。 */
     static final String KEY_HORIZON_SEC = "horizonSec";
+
+    /** 分段限速配置键（C7 裁定，见 77 §7）：列表项 {@code {fromS, toS, speedMs}}。 */
+    static final String KEY_SEGMENT_SPEED_LIMITS = "wavenest.m2.prediction.segment-speed-limits";
 
     /** 缺省：预测点间隔，s —— {@code sys_param} 尚无此键（不臆造）。 */
     static final long DEFAULT_STEP_SEC = 60L;
@@ -153,7 +157,8 @@ public class PredictionConfig {
             @Value("${wavenest.m2.prediction.v-max-craft-ms:6}") double vMaxCraftMs,
             @Value("${wavenest.m2.prediction.initial-velocity-std-ms:0.5}") double initialVelocityStdMs,
             @Value("${wavenest.m2.prediction.tau-e-sec:120}") double tauESec,
-            @Value("${wavenest.m2.prediction.centerline:}") String centerlineSpec) {
+            @Value("${wavenest.m2.prediction.centerline:}") String centerlineSpec,
+            SpeedLimitLookup speedLimit) {
 
         PredictionMode mode = PredictionMode.fromCode(modeCode);
         if (!mode.code().equalsIgnoreCase(String.valueOf(modeCode).trim())) {
@@ -171,7 +176,8 @@ public class PredictionConfig {
 
         log.info("预测层运行在精算版：观测滤波 ＋ 曲线坐标 ＋ 协方差传播 ＋ 横向 OU（{} = {}）",
                 KEY_MODE, mode.code());
-        return PredictionProfile.precise(settings, assurance, params, parseCenterline(centerlineSpec));
+        return PredictionProfile.precise(settings, assurance, params,
+                parseCenterline(centerlineSpec), speedLimit);
     }
 
     /**
@@ -198,6 +204,31 @@ public class PredictionConfig {
             return engine;
         }
         return mmsi -> List.of();
+    }
+
+    /**
+     * 分段限速查询（11-03 M4 · 吴可欣）：把配置键
+     * {@code wavenest.m2.prediction.segment-speed-limits} 解析成 {@link SpeedLimitLookup}，
+     * 暴露为容器里唯一的限速查询 Bean。
+     *
+     * <p><b>装配边界</b>：本方法只负责「解析配置 → 产出查询」，<b>不</b>把查询接进
+     * {@link PrecisePredictionEngine}（引擎归卢肄文，见《111-11-03 任务计划》§5.1）。
+     * 引擎侧接入时在 {@code predictionProfile(...)} 里引用本 Bean 并透传给引擎即可，
+     * 只改装配一处。
+     *
+     * <p><b>配置空或非法时回落「恒不限速」</b>（等价 {@link SpeedLimitLookup#unbounded()}）：
+     * 预测链路退化为现状，不会因一条配置写坏把整条链路拦停。
+     *
+     * @param spec 配置串，格式 {@code "fromS,toS,speedMs;..."}
+     * @return 分段限速查询；空或非法时为恒不限速
+     */
+    @Bean
+    public SpeedLimitLookup speedLimitLookup(
+            @Value("${wavenest.m2.prediction.segment-speed-limits:}") String spec) {
+        if (spec == null || spec.isBlank()) {
+            log.info("分段限速未配置（{} 为空），预测链路沿用不限速口径", KEY_SEGMENT_SPEED_LIMITS);
+        }
+        return CenterlineSpeedLimitLookup.parse(spec);
     }
 
     /**
