@@ -131,7 +131,8 @@ class PredErrorSampleIntegrationTest {
                     PredictionCalibrationService.forTesting(ignored -> samples, sampleMapper, sysParamLoader);
             PredictionCalibrationService.CalibrationOutcome replayed = afterRestart.calibrate(mmsi);
 
-            assertEquals(2, replayed.newSamples(), "重启后同一批样本仍会进内存统计");
+            assertEquals(1, replayed.newSamples(),
+                    "重启后同一批样本仍会进内存统计（1 = 只剩 τ=60 那条；τ=0 只落库不计数）");
             assertEquals(0L, afterRestart.persistedSampleCount(), "但一行都不该再写进去");
             assertEquals(2L, afterRestart.duplicateSkippedCount(), "两条都应记成「跳过」");
             assertEquals(0, afterRestart.consecutivePersistFailures(),
