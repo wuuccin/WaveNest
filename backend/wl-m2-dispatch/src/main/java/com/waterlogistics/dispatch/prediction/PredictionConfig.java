@@ -175,6 +175,32 @@ public class PredictionConfig {
     }
 
     /**
+     * 残差样本源（11-03 D1）：把精算引擎的残差出口暴露成容器里唯一的
+     * {@link ResidualSampleSource}，供 {@link PredictionCalibrationService} 按可选依赖注入。
+     *
+     * <p><b>为什么要单独开这个 Bean</b>：引擎实例住在 {@link PredictionProfile} 里
+     * （画像整体装配，见该类注释），本身不是容器 Bean；而校准服务只认
+     * {@code ObjectProvider<ResidualSampleSource>}。不暴露则容器里永远没有实现，
+     * 校准链路会一直退化为「不可用」——那不是 bug 报告，是静默失效，最难发现。
+     *
+     * <p><b>匀速版为什么返回空实现而不是 {@code null}</b>：{@code @Bean} 方法返回
+     * {@code null} 会被注册成 NullBean，{@code ObjectProvider.getIfAvailable()} 拿到的
+     * 是 {@code null} 还是抛异常取决于 Spring 版本与注入点，属于「靠实现细节吃饭」。
+     * 给一个恒空的实现，语义是明确的「匀速版没有精算状态，也就没有残差可算」。
+     *
+     * @param profile 预测画像（含引擎）
+     * @return 残差样本源
+     */
+    @Bean
+    public ResidualSampleSource residualSampleSource(PredictionProfile profile) {
+        PrecisePredictionEngine engine = profile.engine();
+        if (engine != null) {
+            return engine;
+        }
+        return mmsi -> List.of();
+    }
+
+    /**
      * 解析航道中心线配置：分号分隔顶点，每个顶点写 {@code lon,lat}。
      *
      * <p>配置为空或顶点不足两个时返回 {@code null}，引擎回落到实测窗口建参考线的退化口径。

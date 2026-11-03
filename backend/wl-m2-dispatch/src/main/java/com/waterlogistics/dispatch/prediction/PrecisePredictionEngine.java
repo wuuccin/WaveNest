@@ -34,6 +34,17 @@ import org.slf4j.LoggerFactory;
  *        → ⑤ 多步预测（MultiStepPredictor.predict → 点列 ＋ σ∇τ）
  * </pre>
  *
+ * <h3>为什么这一层同时是残差出口（11-03 D1）</h3>
+ * <p>「预测 ↔ 实测」的配对残差只有本类算得出来：它同时握有<b>上一版预测点列</b>
+ * （{@code MultiStepPredictor.Sample} 里带曲线坐标 {@code s}/{@code e}、两条 σ 与切向）
+ * 与<b>新观测在同一条参考线上的投影</b>。换到别处算，就得把点列反投影回曲线坐标、
+ * 还得假设参考线没变——而参考线恰恰是本类的内部状态。故本类实现
+ * {@link ResidualSampleSource}：算完即按船缓存，消费方（校准链路）按需取。
+ *
+ * <p><b>为什么缓存而不是每拍回调</b>：校准有节流（默认 60 s/船），每拍回调会把
+ * 残差产生频率与消费频率强耦合；缓存一份「最近一窗」后，消费方什么时候来取都能取到，
+ * 也才能满足接口要求的「幂等可重入」——重复索取只是重复读同一个不可变列表。
+ *
  * <h3>为什么要这一层（清单第 3 条「适配有状态性」）</h3>
  * <p>算法层的类都是「纯计算」，但 {@code AlongTrackKalmanFilter}／{@code LateralOuFilter} 各自
  * 持有状态，只能<b>逐拍推进</b>；若每次预测都新建一份，接错不会报错，只会让 σ 每帧从头长起
@@ -70,7 +81,7 @@ import org.slf4j.LoggerFactory;
  *
  * <p><b>本类不感知 Spring、不写库</b>：装配见 {@link PredictionConfig}，调用见 {@link PredictionService}。
  */
-public class PrecisePredictionEngine {
+public class PrecisePredictionEngine implements ResidualSampleSource {
 
     private static final Logger log = LoggerFactory.getLogger(PrecisePredictionEngine.class);
 
@@ -100,6 +111,43 @@ public class PrecisePredictionEngine {
 
     /** 线尾余量，m：投影逼近折线末端时重建参考线。 */
     static final double TAIL_MARGIN_M = 100.0;
+
+    /**
+     * 每船缓存的残差样本条数上限（1 Hz 输入下约 4 分钟）。
+     *
+     * <p>为什么要有上限：消费方（校准）默认 60 s 才来取一次，正常只积几十条；
+     * 但节流配置被改大、或校准整体不可用时，缓存会无界增长。上限取 256 是
+     * 「远大于正常积压、又小到不会撑爆内存」的折中——真被压满说明链路有病，
+     * 丢最旧的样本比 OOM 好。
+     */
+    static final int RESIDUAL_CAP = 256;
+
+    /** 残差样本保留期相对预测时域的余量，s（时域外的观测算不出残差，留着也无用）。 */
+    private static final long RESIDUAL_RETENTION_MARGIN_SEC = 60L;
+
+    /**
+     * 预测探针的撒点间隔，s。
+     *
+     * <p>取值理由：1 Hz 输入下每拍一支会让待评队列压到 1800 支、产出 3600 条/时/船，
+     * 远超 200 条的采信门槛且毫无必要；30 s 一支则是 120 条/时/船，攒满 200 条约 100 分钟，
+     * 与「跑一批 AIS 看校准是否收敛」的节奏吻合。取 60 s 会让攒满门槛需要 3 小时以上。
+     */
+    static final int PROBE_INTERVAL_SEC = 30;
+
+    /**
+     * 探针评估时距栅格，s——τ 在采样时<b>轮转</b>取这些值。
+     *
+     * <p>为什么必须轮转：若每支探针都只评「最近的一版」，τ 会恒等于 1 s，样本全落在
+     * 最小的时域桶里，σ 的增长项 α 永远得不到检验——而 α 正是带宽里最需要标定的参数
+     * （11-02 实测报告：σ∥ 的斜率是真实误差增长率的 8 倍）。
+     *
+     * <p>栅格从 60 s 铺到 1800 s（＝缺省时域），覆盖「近距准、远距松」的全过程；
+     * 时域配得比栅格最大值小时，超出的档位会被裁到 {@code horizonSec}。
+     */
+    static final int[] PROBE_LAG_GRID_SEC = {60, 180, 300, 600, 900, 1200, 1800};
+
+    /** 待评估探针上限（每支带 31 个点，64 支约覆盖 32 分钟不评估的极端情况）。 */
+    static final int PROBE_CAP = 64;
 
     /** 参考线延伸长度在时域覆盖之外的额外余量，m。 */
     private static final double EXTENSION_MARGIN_M = 500.0;
@@ -221,6 +269,48 @@ public class PrecisePredictionEngine {
         double predictedVarianceS;
 
         double normalizedInnovation;
+
+        // ── 残差出口（11-03 D1）──
+
+        /** 已撒出、尚待评估的预测探针（按评估时刻升序）。 */
+        final Deque<PredictionProbe> probes = new ArrayDeque<>();
+
+        /** 下一次可以撒探针的时刻，Unix 毫秒（首条观测时为 {@link Long#MIN_VALUE}）。 */
+        long nextProbeTsMs = Long.MIN_VALUE;
+
+        /** 探针时距轮转下标（让样本覆盖整条 τ 栅格，而不是全挤在最小 τ 上）。 */
+        int probeCursor;
+
+        /** 服务层为下一版预测登记的版本号（由 {@link #recordVersion} 写入）。 */
+        long boundVersion;
+
+        /** 最近产生的残差样本（sampleTs 严格递增，见 {@link #emitResidual}）。 */
+        final Deque<ResidualSample> residuals = new ArrayDeque<>();
+    }
+
+    /**
+     * 一支「预测探针」：把某时刻的一版预测留到将来再评。
+     *
+     * <p>为什么不能只跟「上一拍的预测」比：观测是 1 Hz、预测每拍都刷新，于是
+     * {@code τ = t_obs − t0} 恒为 1 s。那样采出来的样本全落在最小的时域桶里，
+     * <b>σ 的增长项 α 永远得不到检验</b>——而 α 恰恰是带宽里最需要标定的参数
+     * （11-02 的实测报告里 σ∥ 斜率是真实误差增长率的 8 倍）。故按固定间隔留一版预测，
+     * 到点再评，τ 才能覆盖到小时级。
+     *
+     * @param t0Ms    预测起点时刻
+     * @param version 该版预测的快照版本号
+     * @param evalAtMs 预定评估时刻（{@code t0Ms + τ}）
+     * @param tauSec   预定评估时距，s（栅格值；实际 τ 以评估时的真实时刻回算）
+     * @param samples  该版预测点列（带 s/e/σ/切向）
+     * @param geometry 该版预测所用的参考线（换线后 s/e 不再可比）
+     */
+    private record PredictionProbe(
+            long t0Ms,
+            long version,
+            long evalAtMs,
+            int tauSec,
+            List<MultiStepPredictor.Sample> samples,
+            WaterwayGeometry geometry) {
     }
 
     private final PredictionSettings settings;
@@ -272,6 +362,225 @@ public class PrecisePredictionEngine {
     }
 
     /**
+     * 取该船当前可用的残差样本（11-03 D1）。
+     *
+     * <p>返回的是<b>缓存最近一窗</b>的不可变副本，按 {@code sampleTsMs} 升序。
+     * 重复调用不改变任何状态，也不会重复产生样本——样本只在 {@link #predict} 推进状态时产生，
+     * 满足接口「幂等可重入」的约定。
+     *
+     * <p>未跟踪的船、冷启动未完成的船、或刚换过参考线的船都返回空列表（不抛异常）。
+     * 消费方（{@code PredictionCalibrationService}）把空列表当「本拍无新样本」处理。
+     *
+     * @param mmsi 目标船标识
+     * @return 升序样本列表；无样本时为空列表
+     */
+    @Override
+    public List<ResidualSample> residualSamplesOf(String mmsi) {
+        if (mmsi == null || mmsi.isBlank()) {
+            return List.of();
+        }
+        ShipState state = states.get(mmsi);
+        if (state == null) {
+            return List.of();
+        }
+        synchronized (state) {
+            return List.copyOf(state.residuals);
+        }
+    }
+
+    /**
+     * 服务层登记「下一版预测将使用的快照版本号」。
+     *
+     * <p><b>为什么由服务层告知而不是本类自己编号</b>：版本号是
+     * {@code PredictionSnapshot.version}，由 {@link PredictionService} 的每船计数器发放，
+     * 中间还夹着「匀速版回落」「断言未过」等分支——引擎自己数一份必然与快照版本错位，
+     * 而 {@code pred_error_sample.pred_version} 的语义就是「这一版快照」。
+     *
+     * <p>调用点必须在 {@link #predict} <b>之前</b>：这样本版点列在产生时就能盖上自己的版本号，
+     * 下一拍配对残差时直接取用，不需要在残差里再猜版本。
+     *
+     * <p>取值只增不减：重算路径可能带着同一条观测再来一次，若允许回退，
+     * 已产生的样本会被打上更旧的版本，四元组唯一键就失去意义。
+     *
+     * @param mmsi    目标船
+     * @param version 本版快照版本号
+     */
+    public void recordVersion(String mmsi, long version) {
+        if (mmsi == null || mmsi.isBlank() || version <= 0L) {
+            return;
+        }
+        ShipState state = states.computeIfAbsent(mmsi, key -> new ShipState());
+        synchronized (state) {
+            if (version > state.boundVersion) {
+                state.boundVersion = version;
+            }
+        }
+    }
+
+    /**
+     * 每隔一段时间撒一支探针，把这一版预测留到 {@code t0 + τ} 再评。
+     *
+     * <p>为什么不是每拍都撒：1 Hz 下每拍一支，待评队列要压 1800 支 × 31 个点，
+     * 而产出量是 3600 条/时/船——远超 200 条门槛，纯属浪费库与内存。
+     * 30 s 一支、每支只评一次，产出 120 条/时/船：攒满 200 条约 100 分钟，
+     * 与「跑一批 AIS 看校准是否收敛」的节奏吻合。
+     *
+     * <p>τ 轮转的理由见 {@link PredictionProbe}：不轮转就全挤在最小 τ 上，
+     * σ 的增长项永远得不到检验。
+     */
+    private void scheduleProbe(ShipState state, Computed computed) {
+        long t0Ms = computed.outcome().t0Ms();
+        if (state.nextProbeTsMs != Long.MIN_VALUE
+                && t0Ms < state.nextProbeTsMs) {
+            return;
+        }
+        int horizonSec = (int) Math.min(settings.horizonSec(), Integer.MAX_VALUE);
+        int lagSec = Math.min(PROBE_LAG_GRID_SEC[state.probeCursor % PROBE_LAG_GRID_SEC.length], horizonSec);
+        state.probeCursor++;
+
+        long evalAtMs = t0Ms + lagSec * 1000L;
+        state.probes.addLast(new PredictionProbe(
+                t0Ms,
+                state.boundVersion,
+                evalAtMs,
+                lagSec,
+                computed.samples(),
+                state.geometry));
+        state.nextProbeTsMs = t0Ms + PROBE_INTERVAL_SEC * 1000L;
+
+        // 上限保护：船长时间不上报时探针会一直积压（每支都带着 31 个点）
+        while (state.probes.size() > PROBE_CAP) {
+            state.probes.removeFirst();
+        }
+    }
+
+    /**
+     * 把到点的探针与本拍观测配对，产出残差样本。
+     *
+     * <p><b>坐标口径</b>：残差在参考线的曲线坐标 {@code (s, e)} 里算，不在经纬度里算。
+     * 因为 NEES 的分母是「沿航道 σ∥ × 横向 σ⊥」，分子也必须是同一组坐标轴上的分量；
+     * 用经纬度差再旋回航道坐标系，等于把参考线走向误差也算进残差。
+     *
+     * <p><b>时域内插</b>：预测点步长是 {@code stepSec}（默认 60 s），而评估时刻几乎不可能
+     * 正好落在点上，故按时刻在相邻两点间线性内插 {@code s}/{@code e}/σ；切向按最短弧内插
+     * （直接线性内插会在 350°→10° 处算出 180° 的假转向）。
+     *
+     * <p><b>直接丢弃探针的四种情况（不产样本、不记错）</b>：
+     * <ol>
+     *   <li>参考线换过（{@code probe.geometry != state.geometry}）——换线后 {@code s} 的原点变了，
+     *       两版 {@code s} 相减没有物理意义，硬算出来的是一笔假残差；</li>
+     *   <li>观测时刻不在「(t0, 末点]」区间内——τ ≤ 0 无信息量，超出时域则预测没覆盖那一刻；</li>
+     *   <li>内插出的 σ 非正（数值退化）——{@link ResidualSample} 会拒收，这里提前挡掉；</li>
+     *   <li>构造样本抛参数异常（非有限观测）——残差是增强项，绝不能打断预测。</li>
+     * </ol>
+     */
+    private void evaluateDueProbes(ShipState state, AisMessage observation) {
+        long tObs = observation.ts();
+        WaterwayGeometry.Projection measured = null;
+
+        while (!state.probes.isEmpty()) {
+            PredictionProbe probe = state.probes.peekFirst();
+            if (probe.evalAtMs() > tObs) {
+                // 队列按评估时刻升序：队头还没到点，后面的更不会到
+                break;
+            }
+            state.probes.removeFirst();
+            if (probe.geometry() != state.geometry) {
+                continue;
+            }
+            List<MultiStepPredictor.Sample> samples = probe.samples();
+            if (samples.size() < 2) {
+                continue;
+            }
+            MultiStepPredictor.Sample first = samples.get(0);
+            MultiStepPredictor.Sample last = samples.get(samples.size() - 1);
+            if (tObs <= first.tMs() || tObs > last.tMs()) {
+                continue;
+            }
+
+            MultiStepPredictor.Sample before = first;
+            MultiStepPredictor.Sample after = samples.get(1);
+            for (int index = 1; index < samples.size(); index++) {
+                if (samples.get(index).tMs() >= tObs) {
+                    after = samples.get(index);
+                    before = samples.get(index - 1);
+                    break;
+                }
+            }
+            long spanMs = after.tMs() - before.tMs();
+            if (spanMs <= 0L) {
+                continue;
+            }
+            double fraction = (tObs - before.tMs()) / (double) spanMs;
+
+            double predictedS = lerp(before.s(), after.s(), fraction);
+            double predictedE = lerp(before.e(), after.e(), fraction);
+            double sigmaAlong = lerp(before.sigmaAlongM(), after.sigmaAlongM(), fraction);
+            double sigmaCross = lerp(before.sigmaCrossM(), after.sigmaCrossM(), fraction);
+            if (!(sigmaAlong > 0.0) || !(sigmaCross > 0.0)) {
+                continue;
+            }
+            double predictedCourse = before.courseDeg()
+                    + signedArcDeg(before.courseDeg(), after.courseDeg()) * fraction;
+            if (measured == null) {
+                measured = state.geometry.project(observation.lon(), observation.lat());
+            }
+
+            emitResidual(state, observation, probe.version(), tObs,
+                    (int) Math.round((tObs - probe.t0Ms()) / 1000.0),
+                    measured, predictedS, predictedE, predictedCourse, sigmaAlong, sigmaCross);
+        }
+    }
+
+    /** 组装并缓存一条残差样本（符号口径见 {@link ResidualSample}）。 */
+    private void emitResidual(ShipState state, AisMessage observation, long version, long tObs,
+            int tauSec, WaterwayGeometry.Projection measured, double predictedS, double predictedE,
+            double predictedCourse, double sigmaAlong, double sigmaCross) {
+        ResidualSample sample;
+        try {
+            sample = new ResidualSample(
+                    observation.mmsi(),
+                    version,
+                    tauSec,
+                    measured.s() - predictedS,
+                    measured.e() - predictedE,
+                    signedArcDeg(predictedCourse, observation.cog()),
+                    sigmaAlong,
+                    sigmaCross,
+                    state.along == null ? 0.0 : state.along.vAlongMs(),
+                    tObs);
+        } catch (IllegalArgumentException malformed) {
+            log.debug("残差样本不合口径，已跳过：mmsi={} 原因={}", observation.mmsi(), malformed.getMessage());
+            return;
+        }
+
+        state.residuals.addLast(sample);
+        long cutoffMs = tObs - (settings.horizonSec() + RESIDUAL_RETENTION_MARGIN_SEC) * 1000L;
+        while (!state.residuals.isEmpty()
+                && (state.residuals.size() > RESIDUAL_CAP
+                        || state.residuals.peekFirst().sampleTsMs() < cutoffMs)) {
+            state.residuals.removeFirst();
+        }
+    }
+
+    private static double lerp(double from, double to, double fraction) {
+        return from + (to - from) * fraction;
+    }
+
+    /**
+     * 两个方位间的<b>带符号</b>最短弧，度，取值 {@code [-180, 180)}（{@code to − from}）。
+     *
+     * <p>与 {@code PredictionService.shortestArcDeg} 的区别：那个返回绝对值，用于判「航向跳变
+     * 是否超阈值」，只关心幅度；残差要的是<b>方向</b>——偏左偏右对偏差校准器是不同的修正，
+     * 取绝对值会把系统性左偏抹成随机误差。
+     */
+    static double signedArcDeg(double fromDeg, double toDeg) {
+        double delta = ConstantVelocityPredictor.normalizeDeg(toDeg)
+                - ConstantVelocityPredictor.normalizeDeg(fromDeg);
+        return ((delta % 360.0) + 540.0) % 360.0 - 180.0;
+    }
+
+    /**
      * 用一条观测推进该船状态并给出新一版预测。
      *
      * <p><b>空返回只有一种情况</b>（调用方据此回落匀速版，不得当异常）：
@@ -297,7 +606,8 @@ public class PrecisePredictionEngine {
                 if (!state.initialized) {
                     return Optional.empty();
                 }
-                return Optional.of(predictFromState(state, state.lastAppliedTsMs, observation.mmsi()));
+                return Optional.of(predictFromState(state, state.lastAppliedTsMs, observation.mmsi())
+                        .outcome());
             }
 
             if (state.geometry == null) {
@@ -319,6 +629,9 @@ public class PrecisePredictionEngine {
                 }
             } else if (observation.ts() > state.lastAppliedTsMs) {
                 applyObservation(state, observation);
+                // 评估到点的探针必须放在 applyObservation <b>之后</b>：v_along 取的是后验速度估计。
+                // 探针里存的是「过去某一版的点列」，与本次状态推进无关，先后顺序不影响残差本身。
+                evaluateDueProbes(state, observation);
             }
             // 时标相同或更旧的观测：不推进状态，直接按当前状态出预测（F3 的重算就走这条）
 
@@ -340,7 +653,9 @@ public class PrecisePredictionEngine {
                 }
             }
 
-            return Optional.of(predictFromState(state, observation.ts(), observation.mmsi()));
+            Computed computed = predictFromState(state, observation.ts(), observation.mmsi());
+            scheduleProbe(state, computed);
+            return Optional.of(computed.outcome());
         }
     }
 
@@ -553,7 +868,16 @@ public class PrecisePredictionEngine {
                 params.laneHalfWidthM());
     }
 
-    private Outcome predictFromState(ShipState state, long t0Ms, String mmsi) {
+    /**
+     * 一版预测的计算结果：对外契约投影 ＋ 内部点列。
+     *
+     * @param outcome 对外产出（点列已投影成 {@link EstimatedPoint}）
+     * @param samples 内部点列（带曲线坐标、σ、切向），撒探针时要整份留档
+     */
+    private record Computed(Outcome outcome, List<MultiStepPredictor.Sample> samples) {
+    }
+
+    private Computed predictFromState(ShipState state, long t0Ms, String mmsi) {
         MultiStepPredictor.Params predictParams = predictorParams();
 
         MultiStepPredictor.Input input = new MultiStepPredictor.Input(
@@ -574,7 +898,7 @@ public class PrecisePredictionEngine {
                 .map(MultiStepPredictor.Sample::toEstimatedPoint)
                 .toList();
 
-        return new Outcome(
+        Outcome outcome = new Outcome(
                 mmsi,
                 t0Ms,
                 samples.get(0).courseDeg(),
@@ -582,6 +906,7 @@ public class PrecisePredictionEngine {
                 state.premiseStatus,
                 points,
                 new ArrayList<>(state.zSeries));
+        return new Computed(outcome, samples);
     }
 
     // ───────────── 内部：小工具 ─────────────

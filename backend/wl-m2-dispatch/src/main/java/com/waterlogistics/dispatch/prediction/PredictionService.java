@@ -388,6 +388,10 @@ public class PredictionService {
                 return constantSnapshot(version, message, calibrated);
             }
 
+            // 11-03 D1：版本号必须先登记再出预测——引擎会用它在「本版点列」上盖版本戳，
+            // 下一拍配对残差时才能标出「这条残差对应哪一版快照」。顺序反了会让样本永远
+            // 比快照慢一版，而四元组唯一键（mmsi+version+tau+ts）正是靠这个版本号去重。
+            profile.engine().recordVersion(message.mmsi(), version);
             Optional<PrecisePredictionEngine.Outcome> computed = profile.engine().predict(message);
             if (computed.isPresent()) {
                 PrecisePredictionEngine.Outcome outcome = computed.get();
