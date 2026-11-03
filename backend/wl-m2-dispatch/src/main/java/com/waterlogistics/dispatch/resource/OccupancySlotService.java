@@ -90,7 +90,7 @@ public class OccupancySlotService {
             throw new IllegalStateException(
                 "对象 " + objectType + "/" + objectId + " 在 [" + t1 + ", " + t2 + ") 已有有效占位");
         }
-        return insertSlot(objectType, objectId, t1, t2, type);
+        return insertSlot(objectType, objectId, t1, t2, type, null);
     }
 
     /**
@@ -99,13 +99,14 @@ public class OccupancySlotService {
      * <p>判定顺序：机巢存在且可用 → 到达时窗内已占位数小于容量 → 插入。
      * <b>三步在同一事务内、且以 {@code nest} 行锁串行化</b>，不存在「查时空、插时已被占」的窗口。
      *
-     * @param nestId 目标机巢标识
-     * @param window 到达时窗（含两端缓冲，半开区间）
+     * @param nestId  目标机巢标识
+     * @param window  到达时窗（含两端缓冲，半开区间）
+     * @param orderId 关联订单（用于终态按订单释放占位），可为空
      * @return 占位成功返回新 slotId；机巢不可用、容量已满或时窗冲突时返回空（由调用方顺延候选）
      * @throws IllegalArgumentException nestId 为空或 window 为空（调用方缺陷）
      */
     @Transactional
-    public Optional<String> tryReserve(String nestId, TimeWindow window) {
+    public Optional<String> tryReserve(String nestId, TimeWindow window, String orderId) {
         if (nestId == null || nestId.isBlank()) {
             throw new IllegalArgumentException("tryReserve 须带 nestId，否则无从锁定目标机巢");
         }
@@ -142,7 +143,7 @@ public class OccupancySlotService {
             return Optional.empty();
         }
 
-        String slotId = insertSlot(OBJECT_TYPE_FORCED_STOP, nestId, start, end, TYPE_EMERGENCY_STOP);
+        String slotId = insertSlot(OBJECT_TYPE_FORCED_STOP, nestId, start, end, TYPE_EMERGENCY_STOP, orderId);
         log.info("迫停占位成功：nestId={} slotId={} 已占={}/{} 窗口=[{}, {})",
                 nestId, slotId, occupied + 1, capacity, start, end);
         return Optional.of(slotId);
@@ -176,6 +177,40 @@ public class OccupancySlotService {
                 .set(OccupancySlotEntity::getStatus, STATUS_RELEASED));
         if (rows == 0) {
             throw new IllegalStateException("占位 slotId=" + slotId + " 状态已被并发改动，释放未生效");
+        }
+    }
+
+    /**
+     * 按订单释放其关联的迫停占位（M2 终态释放）。
+     *
+     * <p>订单到达「已完成」／「失败」终态时调用，避免迫停占位泄漏导致容量统计持续偏高。
+     * <b>幂等且不抛异常</b>（C3 释放失败处置）：无对应有效占位时静默返回；
+     * 释放过程中 {@link #release(String)} 抛出的状态异常只记日志、不向调用方传播，
+     * 订单态不回滚（与 {@code FlightPhaseAdvancer.emit}「审计已落库，推送失败只告警」同口径）。
+     *
+     * @param orderId 关联订单；为空时直接返回
+     */
+    @Transactional
+    public void releaseByOrder(String orderId) {
+        if (orderId == null || orderId.isBlank()) {
+            return;
+        }
+        List<OccupancySlotEntity> slots = occupancySlotMapper.selectList(
+                new LambdaQueryWrapper<OccupancySlotEntity>()
+                        .eq(OccupancySlotEntity::getOrderId, orderId)
+                        .eq(OccupancySlotEntity::getObjectType, OBJECT_TYPE_FORCED_STOP)
+                        .eq(OccupancySlotEntity::getStatus, STATUS_ACTIVE));
+        if (slots.isEmpty()) {
+            return;
+        }
+        for (OccupancySlotEntity slot : slots) {
+            try {
+                release(slot.getSlotId());
+                log.info("订单终态释放迫停占位：orderId={} slotId={}", orderId, slot.getSlotId());
+            } catch (IllegalStateException e) {
+                log.warn("订单终态释放迫停占位失败（不影响订单态）：orderId={} slotId={} err={}",
+                        orderId, slot.getSlotId(), e.getMessage());
+            }
         }
     }
 
@@ -239,12 +274,13 @@ public class OccupancySlotService {
     }
 
     private String insertSlot(String objectType, String objectId, LocalDateTime t1,
-                              LocalDateTime t2, String type) {
+                              LocalDateTime t2, String type, String orderId) {
         OccupancySlotEntity slot = new OccupancySlotEntity();
         // LOW.10：完整 UUID（原截断 8 位只留 32 bit，碰撞概率不可接受）
         slot.setSlotId("SLOT-" + UUID.randomUUID());
         slot.setObjectType(objectType);
         slot.setObjectId(objectId);
+        slot.setOrderId(orderId);
         slot.setT1(t1);
         slot.setT2(t2);
         slot.setType(type);
