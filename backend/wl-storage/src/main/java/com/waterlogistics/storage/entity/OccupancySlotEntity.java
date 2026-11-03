@@ -26,6 +26,9 @@ public class OccupancySlotEntity {
     /** 关联对象 Id：droneId/nestId/orderId/迫降点Id */
     private String objectId;
 
+    /** 关联订单（迫停占位于终态释放时按此定位，其他类型为 NULL） */
+    private String orderId;
+
     /** 占用开始时刻 t₁ */
     private LocalDateTime t1;
 

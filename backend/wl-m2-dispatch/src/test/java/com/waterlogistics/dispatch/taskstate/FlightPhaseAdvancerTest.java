@@ -172,7 +172,8 @@ class FlightPhaseAdvancerTest {
                 },
                 null,
                 null,
-                Clock.fixed(Instant.ofEpochMilli(NOW), ZONE));
+                Clock.fixed(Instant.ofEpochMilli(NOW), ZONE),
+                null);
     }
 
     private static OrderTaskEntity order(long meetMs, long createMs) {

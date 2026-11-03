@@ -6,6 +6,7 @@ import com.waterlogistics.algo.meeting.GeoApprox;
 import com.waterlogistics.contract.order.OrderView;
 import com.waterlogistics.contract.state.OrderStatus;
 import com.waterlogistics.dispatch.order.OrderStateChangedEvent;
+import com.waterlogistics.dispatch.resource.OccupancySlotService;
 import com.waterlogistics.rendezvous.port.DroneContext;
 import com.waterlogistics.rendezvous.port.DroneContextPort;
 import com.waterlogistics.storage.entity.DroneEntity;
@@ -120,6 +121,7 @@ public class FlightPhaseAdvancer {
     private final DroneMapper droneMapper;
     private final TransactionTemplate transactionTemplate;
     private final Clock clock;
+    private final OccupancySlotService occupancySlotService;
 
     /** orderId → 版本兜底计数器（task_log 自增主键不可用时用）。 */
     private final Map<String, AtomicLong> fallbackVersions = new ConcurrentHashMap<>();
@@ -157,9 +159,10 @@ public class FlightPhaseAdvancer {
             SysParamLoader sysParamLoader,
             ApplicationEventPublisher eventPublisher,
             DroneMapper droneMapper,
-            TransactionTemplate transactionTemplate) {
+            TransactionTemplate transactionTemplate,
+            OccupancySlotService occupancySlotService) {
         this(orderTaskMapper, taskLogMapper, droneContextPort, dronePositionPort, sysParamLoader,
-                eventPublisher, droneMapper, transactionTemplate, Clock.systemDefaultZone());
+                eventPublisher, droneMapper, transactionTemplate, Clock.systemDefaultZone(), occupancySlotService);
     }
 
     FlightPhaseAdvancer(OrderTaskMapper orderTaskMapper,
@@ -169,7 +172,7 @@ public class FlightPhaseAdvancer {
             ApplicationEventPublisher eventPublisher,
             Clock clock) {
         this(orderTaskMapper, taskLogMapper, droneContextPort, null, sysParamLoader,
-                eventPublisher, null, null, clock);
+                eventPublisher, null, null, clock, null);
     }
 
     FlightPhaseAdvancer(OrderTaskMapper orderTaskMapper,
@@ -180,7 +183,7 @@ public class FlightPhaseAdvancer {
             DroneMapper droneMapper,
             Clock clock) {
         this(orderTaskMapper, taskLogMapper, droneContextPort, null, sysParamLoader,
-                eventPublisher, droneMapper, null, clock);
+                eventPublisher, droneMapper, null, clock, null);
     }
 
     FlightPhaseAdvancer(OrderTaskMapper orderTaskMapper,
@@ -191,7 +194,8 @@ public class FlightPhaseAdvancer {
             ApplicationEventPublisher eventPublisher,
             DroneMapper droneMapper,
             TransactionTemplate transactionTemplate,
-            Clock clock) {
+            Clock clock,
+            OccupancySlotService occupancySlotService) {
         this.orderTaskMapper = orderTaskMapper;
         this.taskLogMapper = taskLogMapper;
         this.droneContextPort = droneContextPort;
@@ -201,6 +205,7 @@ public class FlightPhaseAdvancer {
         this.droneMapper = droneMapper;
         this.transactionTemplate = transactionTemplate;
         this.clock = clock;
+        this.occupancySlotService = occupancySlotService;
     }
 
     @PostConstruct
@@ -479,6 +484,10 @@ public class FlightPhaseAdvancer {
         if (written[0]) {
             log.info("飞行阶段推进：orderId={} {} → {} op={} ts={}",
                     order.getOrderId(), from.getValue(), to.getValue(), opType, tsMs);
+            // C3：订单到达「已完成」终态时释放迫停占位（事务外执行，释放失败不回滚订单态）
+            if (to == OrderStatus.FINISHED && occupancySlotService != null) {
+                occupancySlotService.releaseByOrder(order.getOrderId());
+            }
         }
         return written[0];
     }

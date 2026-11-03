@@ -16,7 +16,6 @@ import com.waterlogistics.contract.rest.GeoPoint;
 import com.waterlogistics.contract.state.DroneStatus;
 import com.waterlogistics.contract.state.OrderStatus;
 import com.waterlogistics.dispatch.resource.OccupancySlotService;
-import com.waterlogistics.rendezvous.facade.RendezvousFacade;
 import com.waterlogistics.rendezvous.trajectory.GenerateRouteCommand;
 import com.waterlogistics.storage.entity.DroneEntity;
 import com.waterlogistics.storage.entity.NestEntity;
@@ -48,7 +47,7 @@ import org.springframework.stereotype.Service;
  * <p><b>判定在算法层，本类只做编排与落子</b>：三级降级逻辑全在 {@link HomecomingReview}；
  * 本类负责把结论送到三处下游（《84》§4.2 输出表）：
  * <ul>
- *   <li><b>B 组</b>：第一／二级落点 → 经 {@link RendezvousFacade#generateTrack} 生成返航航迹，
+ *   <li><b>B 组</b>：第一／二级落点 → 经 {@link HomecomingTrackPort#generateTrack} 生成返航航迹，
  *       取 {@code tauFine}／{@code energyExact} 并落 {@code task_log}；</li>
  *   <li><b>D 组</b>：<b>仅第二级</b> —— {@link OccupancySlotService#tryReserve} 锁 {@code occupancy_slot}，
  *       失败则按审计顺序顺延次优候选，全部失败降级第三级（占位即锁定、不可回切）；</li>
@@ -113,7 +112,7 @@ public class HomecomingService {
     private final OrderTaskMapper orderTaskMapper;
     private final TaskLogMapper taskLogMapper;
     private final SysParamLoader sysParamLoader;
-    private final RendezvousFacade rendezvousFacade;
+    private final HomecomingTrackPort returnTrackPort;
 
     /** 上一轮落点结论（仅供第一级双阈值迟滞；有界 LRU） */
     private final Map<String, HomecomingTier> previousTiers = Collections.synchronizedMap(
@@ -141,14 +140,14 @@ public class HomecomingService {
             OrderTaskMapper orderTaskMapper,
             TaskLogMapper taskLogMapper,
             SysParamLoader sysParamLoader,
-            RendezvousFacade rendezvousFacade) {
+            HomecomingTrackPort returnTrackPort) {
         this.slotService = slotService;
         this.nestMapper = nestMapper;
         this.droneMapper = droneMapper;
         this.orderTaskMapper = orderTaskMapper;
         this.taskLogMapper = taskLogMapper;
         this.sysParamLoader = sysParamLoader;
-        this.rendezvousFacade = rendezvousFacade;
+        this.returnTrackPort = returnTrackPort;
     }
 
     /**
@@ -184,7 +183,7 @@ public class HomecomingService {
 
         HomecomingDecision decision = HomecomingReview.review(
                 input, effectiveParams, ledger, previousTierOf(input.orderId()));
-        decision = reserveForcedStop(decision, effectiveParams);
+        decision = reserveForcedStop(decision, effectiveParams, input.orderId());
         rememberTier(input.orderId(), decision.tier());
 
         log.info("返航落点结论：orderId={} tier={} targetId={} 占位请求={} 候选审计={}条 风险标记={} 判定说明={}",
@@ -274,7 +273,8 @@ public class HomecomingService {
      * 第二级占位落子：按审计顺序对「准入通过」的候选逐个 {@code tryReserve}，
      * 成功即锁定；全部失败则降级第三级迫降野外（不可回切第一级）。
      */
-    private HomecomingDecision reserveForcedStop(HomecomingDecision decision, HomecomingParams params) {
+    private HomecomingDecision reserveForcedStop(HomecomingDecision decision, HomecomingParams params,
+            String orderId) {
         if (decision.tier() != HomecomingTier.FORCE_STOP_OTHER_NEST || !hasDependencies()) {
             return decision;
         }
@@ -291,7 +291,7 @@ public class HomecomingService {
             }
             attempted++;
             try {
-                Optional<String> slotId = slotService.tryReserve(check.nestId(), window);
+                Optional<String> slotId = slotService.tryReserve(check.nestId(), window, orderId);
                 if (slotId.isPresent()) {
                     return new HomecomingDecision(HomecomingTier.FORCE_STOP_OTHER_NEST,
                             check.nestId(), null, true, decision.candidateAudit(), decision.riskFlags(),
@@ -349,7 +349,7 @@ public class HomecomingService {
     }
 
     /**
-     * ① 落点结论 → <b>B 组</b>：返航航迹经 {@link RendezvousFacade#generateTrack} 生成，
+     * ① 落点结论 → <b>B 组</b>：返航航迹经 {@link HomecomingTrackPort#generateTrack} 生成，
      * 精算时长与能耗随结论落 {@code task_log}（B 不得自行改点，见《84》E-3）。
      */
     private void toRoutePlannerAndEnergy(HomecomingDecision decision, HomecomingInput input,
@@ -367,7 +367,7 @@ public class HomecomingService {
             return;
         }
         try {
-            B_FlyableRoute route = rendezvousFacade.generateTrack(new GenerateRouteCommand(
+            B_FlyableRoute route = returnTrackPort.generateTrack(new GenerateRouteCommand(
                     identifier(input.orderId()),
                     identifier("RTN-" + input.orderId()),
                     start.lon(), start.lat(), target.lon(), target.lat(),
@@ -464,6 +464,8 @@ public class HomecomingService {
                         OrderStatus.FAILED.getValue());
                 log.warn("有货迫降野外：订单置失败并标记待人工回收 orderId={} 原状态={}",
                         input.orderId(), fromStatus);
+                // C3：订单终态释放迫停占位（迫降野外通常无占位，此处为防御性释放，幂等无副作用）
+                slotService.releaseByOrder(input.orderId());
             } else {
                 log.info("有货迫降野外：订单状态已被并发改写，本次未落失败 orderId={}", input.orderId());
             }
@@ -601,6 +603,6 @@ public class HomecomingService {
     private boolean hasDependencies() {
         return slotService != null && nestMapper != null && droneMapper != null
                 && orderTaskMapper != null && taskLogMapper != null
-                && sysParamLoader != null && rendezvousFacade != null;
+                && sysParamLoader != null && returnTrackPort != null;
     }
 }
