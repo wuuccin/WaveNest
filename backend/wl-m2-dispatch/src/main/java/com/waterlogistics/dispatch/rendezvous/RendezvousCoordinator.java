@@ -1,6 +1,8 @@
 package com.waterlogistics.dispatch.rendezvous;
 
+import com.waterlogistics.algo.meeting.GeoApprox;
 import com.waterlogistics.algo.meeting.model.B_RendezvousSolution;
+import com.waterlogistics.algo.meeting.model.ShipPoint;
 import com.waterlogistics.algo.meeting.model.ShipTrackSnapshot;
 import com.waterlogistics.algo.meeting.model.Wind;
 import com.waterlogistics.dispatch.weather.WeatherSnapshotPort;
@@ -13,6 +15,7 @@ import com.waterlogistics.storage.param.SysParamLoader;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -60,10 +63,14 @@ public class RendezvousCoordinator {
     /** 代表风况：风向（度） */
     private static final String WIND_DIR_DEG_KEY = "windDirDeg";
 
+    /** 交接时长下界（秒），用于推算交接完成位置与末段伴飞速度 */
+    private static final String HANDOVER_SEC_KEY = "tHandoverMinSec";
+
     private static final int DEFAULT_HORIZON_SEC = 1800;
     private static final int DEFAULT_WINDOW_MARGIN_SEC = 120;
     private static final double DEFAULT_EPSILON_SEC = 1.0;
     private static final int DEFAULT_MAX_ITER = 50;
+    private static final int DEFAULT_HANDOVER_SEC = 120;
 
     /** 库内时间统一按东八区解释，不随运行环境的默认时区漂移。 */
     private static final ZoneId DB_ZONE = ZoneId.of("Asia/Shanghai");
@@ -93,9 +100,17 @@ public class RendezvousCoordinator {
      * @param meetTime 会面时刻（组合级回填与航迹起点推算的依据）
      * @param solutionId 算法层解标识（留痕用）
      * @param snapshotVersion 求解所用快照版本（与 M2 常驻层一致，便于事后核对）
+     * @param nestLon 执行机归属机巢经度
+     * @param nestLat 执行机归属机巢纬度
+     * @param droneSpeedMs 执行机巡航速度
+     * @param handoverEndLon 交接完成位置经度
+     * @param handoverEndLat 交接完成位置纬度
+     * @param terminalSpeedMs 末段伴飞速度
      */
     public record MeetPlan(double meetLon, double meetLat, LocalDateTime meetTime,
-            String solutionId, String snapshotVersion) {
+            String solutionId, String snapshotVersion,
+            double nestLon, double nestLat, double droneSpeedMs,
+            double handoverEndLon, double handoverEndLat, double terminalSpeedMs) {
     }
 
     /**
@@ -142,12 +157,33 @@ public class RendezvousCoordinator {
             throw new IllegalStateException("组合 " + comboId + " 会面求解无解，原因="
                     + solution.noSolutionReason() + "：按《22》§5 第 3 步判「追不上」，不得派发");
         }
+        long meetMs = solution.meetTMin();
+        int handoverSec = Math.max(1, sysParamLoader.getInt(HANDOVER_SEC_KEY, DEFAULT_HANDOVER_SEC));
+        ShipPoint handoverPoint = pointAt(snapshot, meetMs + handoverSec * 1000L);
+        double handoverEndLon = handoverPoint.lon();
+        double handoverEndLat = handoverPoint.lat();
+        double handoverDistance = GeoApprox.distanceM(
+                solution.meetLon(), solution.meetLat(), handoverEndLon, handoverEndLat);
+        if (handoverDistance < 1.0) {
+            double[] offset = offsetMeters(solution.meetLon(), solution.meetLat(),
+                    handoverPoint.cog(), 1.0);
+            handoverEndLon = offset[0];
+            handoverEndLat = offset[1];
+            handoverDistance = 1.0;
+        }
+        double terminalSpeedMs = Math.max(0.1, Math.min(100.0, handoverDistance / handoverSec));
         return new MeetPlan(
                 solution.meetLon(),
                 solution.meetLat(),
-                toLocalDateTime(solution.meetTMin()),
+                toLocalDateTime(meetMs),
                 solution.solutionId(),
-                solution.snapshotVersion());    }
+                solution.snapshotVersion(),
+                drone.nestLon(),
+                drone.nestLat(),
+                drone.cruiseSpeedMs(),
+                handoverEndLon,
+                handoverEndLat,
+                terminalSpeedMs);    }
 
     /**
      * 代表风况。
@@ -188,6 +224,43 @@ public class RendezvousCoordinator {
             return Double.isFinite(fallback) ? fallback % 360.0 : 0.0;
         }
         return direction % 360.0;
+    }
+
+    /**
+     * 取预测轨迹上指定时刻的位置：落在两点之间时按时间线性插值，超出首末点时取端点。
+     */
+    private static ShipPoint pointAt(ShipTrackSnapshot snapshot, long targetMs) {
+        List<ShipPoint> points = snapshot.points();
+        ShipPoint first = points.get(0);
+        if (targetMs <= first.t()) {
+            return first;
+        }
+        ShipPoint last = points.get(points.size() - 1);
+        if (targetMs >= last.t()) {
+            return last;
+        }
+        for (int i = 1; i < points.size(); i++) {
+            ShipPoint right = points.get(i);
+            if (targetMs <= right.t()) {
+                ShipPoint left = points.get(i - 1);
+                double span = (double) (right.t() - left.t());
+                double ratio = span <= 0.0 ? 0.0 : (double) (targetMs - left.t()) / span;
+                return new ShipPoint(targetMs,
+                        left.lon() + ratio * (right.lon() - left.lon()),
+                        left.lat() + ratio * (right.lat() - left.lat()),
+                        right.cog(), right.sigmaAlong(), right.sigmaCross());
+            }
+        }
+        return last;
+    }
+
+    /** 沿指定方位推进若干米，返回新的经纬度。 */
+    private static double[] offsetMeters(double lon, double lat, double bearingDeg, double meters) {
+        double rad = Math.toRadians(bearingDeg);
+        double dLat = meters * Math.cos(rad) / 111_320.0;
+        double dLon = meters * Math.sin(rad)
+                / (111_320.0 * Math.cos(Math.toRadians(lat)));
+        return new double[]{lon + dLon, lat + dLat};
     }
 
     /** Unix 毫秒 → 本地时间（库内统一东八区，与 {@code application.yml} 的 TimeZone 一致）。 */

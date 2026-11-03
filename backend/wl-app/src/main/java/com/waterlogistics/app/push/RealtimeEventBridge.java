@@ -9,6 +9,7 @@ import com.waterlogistics.contract.ws.AlarmFrame;
 import com.waterlogistics.contract.ws.DroneStateFrame;
 import com.waterlogistics.contract.ws.WsFrameType;
 import com.waterlogistics.dispatch.order.OrderStateChangedEvent;
+import com.waterlogistics.dispatch.plan.MissionTrackPlannedEvent;
 import com.waterlogistics.dispatch.prediction.PredictionUpdatedEvent;
 import com.waterlogistics.dispatch.rendezvous.RendezvousPlanCommittedEvent;
 import com.waterlogistics.dispatch.taskstate.FlightPhaseAdvancer;
@@ -71,6 +72,12 @@ public final class RealtimeEventBridge {
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
     public void onRendezvousPlanCommitted(RendezvousPlanCommittedEvent event) {
         endpoint.publish(WsFrameType.RENDEZVOUS, event.frame());
+    }
+
+    /** M2 装配完三段航迹后发布；本层只转发规划航迹帧。 */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
+    public void onMissionTrackPlanned(MissionTrackPlannedEvent event) {
+        endpoint.publish(WsFrameType.PLAN_TRACK, event.frame());
     }
 
     /** M5 独立队列消费机位；不与 M4 的检测队列竞争消息。 */

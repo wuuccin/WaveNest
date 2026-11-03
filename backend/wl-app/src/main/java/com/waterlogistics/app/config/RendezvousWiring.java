@@ -1,6 +1,7 @@
 package com.waterlogistics.app.config;
 
 import com.waterlogistics.dispatch.homecoming.HomecomingTrackPort;
+import com.waterlogistics.dispatch.plan.MissionTrackPort;
 import com.waterlogistics.dispatch.rendezvous.RendezvousPort;
 import com.waterlogistics.rendezvous.facade.RendezvousFacade;
 import com.waterlogistics.rendezvous.port.DroneContextPort;
@@ -60,6 +61,17 @@ public class RendezvousWiring {
      */
     @Bean
     public HomecomingTrackPort homecomingTrackPort(RendezvousFacade facade) {
+        return facade::generateTrack;
+    }
+
+    /**
+     * 航迹生成端口：M2 编排层只依赖 M2 自己的接口，实现转调 M3 门面的单段航迹生成方法。
+     *
+     * @param facade 动态会面门面
+     * @return 航迹生成端口的实现
+     */
+    @Bean
+    public MissionTrackPort missionTrackPort(RendezvousFacade facade) {
         return facade::generateTrack;
     }
 }
