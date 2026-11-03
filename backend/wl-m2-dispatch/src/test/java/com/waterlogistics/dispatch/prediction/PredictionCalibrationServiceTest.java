@@ -255,4 +255,146 @@ class PredictionCalibrationServiceTest {
         assertEquals(0, service.neesResult().sampleCount());
         assertEquals(5, service.calibrate(MMSI).newSamples(), "水位已清，同一批应可重新消费");
     }
+
+    @Test
+    @DisplayName("★ 唯一键重复计「跳过」不计失败，并清零连续失败计数")
+    void duplicateKey_shouldCountAsSkippedNotFailed() {
+        PredictionCalibrationService service = PredictionCalibrationService.forTesting(
+                mmsi -> idealSamples(3),
+                throwingMapper(new org.springframework.dao.DuplicateKeyException(
+                        "Duplicate entry '413000001-1-60-...' for key 'uk_pes_pair'")),
+                null);
+
+        PredictionCalibrationService.CalibrationOutcome outcome = service.calibrate(MMSI);
+
+        assertEquals(3, outcome.newSamples(), "重复只影响落库，不影响内存里的统计");
+        assertEquals(0, service.persistedSampleCount(), "一行都没真写进去");
+        assertEquals(3, service.duplicateSkippedCount(), "三条都应记成「跳过」");
+        assertEquals(0, service.consecutivePersistFailures(),
+                "重复键恰好证明库通、表在，必须把连续失败计数清零——否则每次重启都会误报 error");
+    }
+
+    @Test
+    @DisplayName("★ 连续落库失败按阈值计数（3 次），一次成功即清零")
+    void consecutiveFailures_shouldReachThresholdThenReset() {
+        // 阶段一：三条全失败 → 连续失败计数到达阈值 3
+        PredictionCalibrationService failingService = PredictionCalibrationService.forTesting(
+                mmsi -> List.of(
+                        sample(T0, 60, 1.0, 1.0),
+                        sample(T0 + 1000L, 60, 1.0, 1.0),
+                        sample(T0 + 2000L, 60, 1.0, 1.0)),
+                throwingMapper(new IllegalStateException("表不存在")),
+                null);
+
+        failingService.calibrate(MMSI);
+
+        assertEquals(PredictionCalibrationService.PERSIST_FAILURE_ALERT_THRESHOLD, 3,
+                "阈值是 C6 裁定的 3，改这里必须同步改 007 注释与 PR 描述");
+        assertEquals(3, failingService.consecutivePersistFailures(), "三条连续失败应计数到 3（触发 error）");
+
+        // 阶段二：前三条失败、第四条成功 → 计数清零，成功计数为 1
+        AtomicInteger attempt = new AtomicInteger();
+        PredErrorSampleMapper flaky = (PredErrorSampleMapper) Proxy.newProxyInstance(
+                PredErrorSampleMapper.class.getClassLoader(),
+                new Class<?>[] {PredErrorSampleMapper.class},
+                (proxy, method, args) -> {
+                    if ("insert".equals(method.getName())) {
+                        if (attempt.incrementAndGet() <= 3) {
+                            throw new IllegalStateException("表不存在");
+                        }
+                        return 1;
+                    }
+                    if ("hashCode".equals(method.getName())) {
+                        return System.identityHashCode(proxy);
+                    }
+                    if ("equals".equals(method.getName())) {
+                        return proxy == args[0];
+                    }
+                    if ("toString".equals(method.getName())) {
+                        return "flakyMapper";
+                    }
+                    return null;
+                });
+
+        PredictionCalibrationService recoveringService = PredictionCalibrationService.forTesting(
+                mmsi -> List.of(
+                        sample(T0, 60, 1.0, 1.0),
+                        sample(T0 + 1000L, 60, 1.0, 1.0),
+                        sample(T0 + 2000L, 60, 1.0, 1.0),
+                        sample(T0 + 3000L, 60, 1.0, 1.0)),
+                flaky, null);
+
+        recoveringService.calibrate(MMSI);
+
+        assertEquals(1L, recoveringService.persistedSampleCount());
+        assertEquals(0, recoveringService.consecutivePersistFailures(),
+                "一次成功必须把连续失败清零，否则「偶发失败」会永久累积成假告警");
+    }
+
+    @Test
+    @DisplayName("★ v_along_ms 必须随样本落库（偏差校准器按船速分桶）")
+    void vAlong_shouldBePersisted() {
+        List<PredErrorSampleEntity> captured = new ArrayList<>();
+        PredictionCalibrationService service = PredictionCalibrationService.forTesting(
+                mmsi -> List.of(new ResidualSample(MMSI, 9L, 60, 12.0, -3.0, 1.5, 10.0, 10.0, 4.2, T0)),
+                capturingMapper(captured), null);
+
+        service.calibrate(MMSI);
+
+        assertEquals(1, captured.size());
+        PredErrorSampleEntity row = captured.get(0);
+        assertEquals(4.2, row.getVAlongMs(), 1e-9, "船速是分桶键，丢了就重建不出分桶建议");
+        assertEquals(9L, row.getPredVersion());
+        assertEquals(60, row.getTauSec());
+        assertEquals(12.0, row.getErrAlongM(), 1e-9);
+        assertEquals(-3.0, row.getErrCrossM(), 1e-9);
+        assertEquals(1.5, row.getErrCourseDeg(), 1e-9);
+    }
+
+    // ───────────── 库桩 ─────────────
+
+    /** 无论 insert 什么都抛指定异常的 Mapper 桩。 */
+    private static PredErrorSampleMapper throwingMapper(RuntimeException error) {
+        return (PredErrorSampleMapper) Proxy.newProxyInstance(
+                PredErrorSampleMapper.class.getClassLoader(),
+                new Class<?>[] {PredErrorSampleMapper.class},
+                (proxy, method, args) -> {
+                    if ("insert".equals(method.getName())) {
+                        throw error;
+                    }
+                    if ("hashCode".equals(method.getName())) {
+                        return System.identityHashCode(proxy);
+                    }
+                    if ("equals".equals(method.getName())) {
+                        return proxy == args[0];
+                    }
+                    if ("toString".equals(method.getName())) {
+                        return "throwingMapper";
+                    }
+                    return null;
+                });
+    }
+
+    /** 截获落库载荷的 Mapper 桩（验列映射用）。 */
+    private static PredErrorSampleMapper capturingMapper(List<PredErrorSampleEntity> sink) {
+        return (PredErrorSampleMapper) Proxy.newProxyInstance(
+                PredErrorSampleMapper.class.getClassLoader(),
+                new Class<?>[] {PredErrorSampleMapper.class},
+                (proxy, method, args) -> {
+                    if ("insert".equals(method.getName())) {
+                        sink.add((PredErrorSampleEntity) args[0]);
+                        return 1;
+                    }
+                    if ("hashCode".equals(method.getName())) {
+                        return System.identityHashCode(proxy);
+                    }
+                    if ("equals".equals(method.getName())) {
+                        return proxy == args[0];
+                    }
+                    if ("toString".equals(method.getName())) {
+                        return "capturingMapper";
+                    }
+                    return null;
+                });
+    }
 }

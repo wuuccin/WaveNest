@@ -55,6 +55,15 @@ public class PredErrorSampleEntity {
     /** 横向 σ⊥，m（标准差非方差） */
     private Double sigmaCrossM;
 
+    /**
+     * 该拍后验纵向速度估计，m/s（带符号）。
+     *
+     * <p>11-03 D2 补：偏差校准器按「时域 × 船速」分桶，船速是分桶键的一部分。
+     * 只在内存里带一下、不落库，离线复标就无法重建分桶——同一批样本在库里
+     * 只能重算出全局结论，重算不出分桶建议。
+     */
+    private Double vAlongMs;
+
     /** 样本时刻（实测点时刻，毫秒精度） */
     private LocalDateTime sampleTs;
 

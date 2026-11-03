@@ -14,6 +14,7 @@ import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -83,6 +84,9 @@ public class PredictionCalibrationService {
     /** 节流间隔缺省值，s：1 Hz 输入下每船每分钟最多校准一次。 */
     static final int DEFAULT_INTERVAL_SEC = 60;
 
+    /** 落库失败连续达到该次数记 error（11-03 D2 · C6 裁定）。 */
+    static final int PERSIST_FAILURE_ALERT_THRESHOLD = 3;
+
     /** 残差样本来源；容器内无实现时为 {@code null}（校准链路整体不可用，不影响预测）。 */
     private final ObjectProvider<ResidualSampleSource> sampleSources;
 
@@ -118,6 +122,18 @@ public class PredictionCalibrationService {
 
     /** 落库成功条数（联调与判据核对用）。 */
     private final AtomicLong persistedCount = new AtomicLong();
+
+    /** 因唯一键重复而跳过的条数（重启后重放同一批样本的正常结果，不是故障）。 */
+    private final AtomicLong duplicateSkippedCount = new AtomicLong();
+
+    /**
+     * 连续落库失败次数（成功或跳过即清零）。
+     *
+     * <p>为什么用「连续」而不是「累计」：偶发单条失败（连接抖动、单行数据异常）不该惊动运维；
+     * 连续失败才说明表不见了／库不可写，这类问题会让整条回流校准悄悄停摆，
+     * 必须升级成 error 而不是淹没在 warn 里。
+     */
+    private final AtomicInteger consecutivePersistFailures = new AtomicInteger();
 
     /**
      * 生产装配用。
@@ -262,9 +278,18 @@ public class PredictionCalibrationService {
         fresh.sort(Comparator.comparingLong(ResidualSample::sampleTsMs));
 
         int accepted = 0;
+        int inserted = 0;
+        int duplicated = 0;
+        int failed = 0;
         Double deviation = recentDeviation.get(mmsi);
         for (ResidualSample sample : fresh) {
-            persist(sample);
+            PersistResult persistResult = persist(sample);
+            switch (persistResult) {
+                case INSERTED -> inserted++;
+                case DUPLICATE -> duplicated++;
+                case FAILED -> failed++;
+                case NOT_ATTEMPTED -> { }
+            }
             watermark = Math.max(watermark, sample.sampleTsMs());
             deviation = Math.hypot(sample.errAlongM(), sample.errCrossM());
 
@@ -295,10 +320,15 @@ public class PredictionCalibrationService {
         if (accepted > 0) {
             latest = nees.result();
             publishSuggestions();
-            log.info("校准完成：mmsi={} 新样本={} 累计={} c={} 区间宽={} 可采信={}",
+        }
+        if (!fresh.isEmpty()) {
+            // 成功的／跳过的／失败的三个计数成对出现：只看「成功=0」分不清是「没有新样本」
+            // 还是「全被唯一键挡了」还是「库写不进去」，三种情况的处置完全不同
+            log.info("校准完成：mmsi={} 新样本={} 累计={} c={} 区间宽={} 可采信={} 落库[成功={} 跳过={} 失败={}]",
                     mmsi, accepted, latest.sampleCount(),
                     String.format("%.3f", latest.calibrationFactor()),
-                    String.format("%.4f", latest.confidenceWidth()), latest.acceptable());
+                    String.format("%.4f", latest.confidenceWidth()), latest.acceptable(),
+                    inserted, duplicated, failed);
         }
         return new CalibrationOutcome(accepted, latest.sampleCount(), factorOrNull(),
                 deviation, latest.acceptable(), latest.confidenceWidth());
@@ -329,6 +359,16 @@ public class PredictionCalibrationService {
         return persistedCount.get();
     }
 
+    /** 因四元组重复被唯一键挡下的条数（重启重放的正常结果）。 */
+    public long duplicateSkippedCount() {
+        return duplicateSkippedCount.get();
+    }
+
+    /** 当前连续落库失败次数（成功或跳过即清零）。 */
+    public int consecutivePersistFailures() {
+        return consecutivePersistFailures.get();
+    }
+
     /** 清空内存态（复标前用；不动已落库的样本）。 */
     public void reset() {
         nees.reset();
@@ -336,6 +376,7 @@ public class PredictionCalibrationService {
         consumedUpToTs.clear();
         lastRunMs.clear();
         recentDeviation.clear();
+        consecutivePersistFailures.set(0);
     }
 
     private CalibrationOutcome currentOutcome(Double deviation) {
@@ -347,10 +388,43 @@ public class PredictionCalibrationService {
         return latest.acceptable() ? latest.calibrationFactor() : null;
     }
 
-    /** 落库：失败只记 warn——库抖动不能让预测停摆。 */
-    private void persist(ResidualSample sample) {
+    /** 单条样本的落库结果（按轮汇总成日志里的三个计数）。 */
+    enum PersistResult {
+
+        /** 新插入一行。 */
+        INSERTED,
+
+        /** 四元组已存在，被唯一键挡下——正常现象，不是故障。 */
+        DUPLICATE,
+
+        /** 落库失败（表不存在、库不可写等）。 */
+        FAILED,
+
+        /** 没有库出口（单测装配），什么都没做。 */
+        NOT_ATTEMPTED
+    }
+
+    /**
+     * 落库一条样本：<b>重复键记「跳过」、真失败才计数</b>（11-03 D2）。
+     *
+     * <h3>为什么重复要单独成一类</h3>
+     * <p>本类的去重水位（{@link #consumedUpToTs}）住在内存里，<b>重启即清零</b>；
+     * 而生产方（引擎）是无状态地吐「最近一窗」样本，重启后第一轮必定把同一批样本再吐一遍。
+     * 这时唯一键 {@code uk_pes_pair} 会拒掉它们——若把这种拒绝算作「失败」，
+     * 每次重启都会触发连续 3 次失败的 error 告警，真正的故障反而没人信。
+     * 故重复键既不计失败、<b>还要清零连续失败计数</b>：它证明「库是通的、表是有的」。
+     *
+     * <h3>为什么失败要连续计数</h3>
+     * <p>偶发单条失败（连接抖动）不该惊动运维；连续 3 次说明表不见了或库不可写，
+     * 而这类故障的表现是「校准永远不生效」，只有 error 级别才能被看见。
+     * 到阈值时打一次 error（越界点），之后降回 warn 带累计次数——避免库长时间不可用时刷屏。
+     *
+     * @param sample 待落库样本
+     * @return 落库结果
+     */
+    private PersistResult persist(ResidualSample sample) {
         if (sampleMapper == null) {
-            return;
+            return PersistResult.NOT_ATTEMPTED;
         }
         try {
             PredErrorSampleEntity row = new PredErrorSampleEntity();
@@ -362,14 +436,64 @@ public class PredictionCalibrationService {
             row.setErrCourseDeg(sample.errCourseDeg());
             row.setSigmaAlongM(sample.sigmaAlongM());
             row.setSigmaCrossM(sample.sigmaCrossM());
+            row.setVAlongMs(sample.vAlongMs());
             row.setSampleTs(LocalDateTime.ofInstant(
                     Instant.ofEpochMilli(sample.sampleTsMs()), DB_ZONE));
             sampleMapper.insert(row);
             persistedCount.incrementAndGet();
+            consecutivePersistFailures.set(0);
+            return PersistResult.INSERTED;
         } catch (RuntimeException e) {
-            log.warn("误差样本落库失败，已跳过：mmsi={} 版本={} ts={} 异常={}",
-                    sample.mmsi(), sample.predVersion(), sample.sampleTsMs(), e.toString());
+            if (isDuplicateKey(e)) {
+                duplicateSkippedCount.incrementAndGet();
+                consecutivePersistFailures.set(0);
+                log.debug("误差样本已存在，跳过：mmsi={} 版本={} τ={}s ts={}",
+                        sample.mmsi(), sample.predVersion(), sample.tauSec(), sample.sampleTsMs());
+                return PersistResult.DUPLICATE;
+            }
+            int failures = consecutivePersistFailures.incrementAndGet();
+            if (failures == PERSIST_FAILURE_ALERT_THRESHOLD) {
+                log.error("误差样本连续 {} 次落库失败——回流校准已停止沉淀，"
+                        + "请检查 007 是否执行、库是否可写（mmsi={} 异常={}）",
+                        failures, sample.mmsi(), e.toString(), e);
+            } else if (failures < PERSIST_FAILURE_ALERT_THRESHOLD) {
+                log.warn("误差样本落库失败，已跳过：mmsi={} 版本={} ts={} 异常={}",
+                        sample.mmsi(), sample.predVersion(), sample.sampleTsMs(), e.toString());
+            } else {
+                log.warn("误差样本落库仍失败（已连续 {} 次）：mmsi={} 异常={}",
+                        failures, sample.mmsi(), e.toString());
+            }
+            return PersistResult.FAILED;
         }
+    }
+
+    /**
+     * 判定异常是否为「唯一键冲突」。
+     *
+     * <p>为什么不能只 catch {@code DuplicateKeyException}：Spring 的异常转换依赖
+     * {@code MyBatisExceptionTranslator} 能否把 {@code SQLException} 认出来；接了自定义
+     * 数据源代理、或在没有 Spring 上下文的地方直接调 Mapper 时，抛出来的是 MyBatis 的
+     * {@code PersistenceException}。故再顺一次 cause 链，按 SQLState（{@code 23000}）
+     * 与错误码（MySQL {@code 1062}）兜底——按错误码判，比按错误文案判稳。
+     */
+    private static boolean isDuplicateKey(Throwable error) {
+        Throwable current = error;
+        int guard = 0;
+        while (current != null && guard++ < 8) {
+            if (current instanceof org.springframework.dao.DuplicateKeyException) {
+                return true;
+            }
+            if (current instanceof java.sql.SQLIntegrityConstraintViolationException sql
+                    && "23000".equals(sql.getSQLState())) {
+                return true;
+            }
+            if (current instanceof java.sql.SQLException sql
+                    && sql.getErrorCode() == 1062) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 
     /**

@@ -111,16 +111,33 @@ class PredErrorSampleIntegrationTest {
             assertEquals(-7.5, sixty.getErrCourseDeg(), 1e-9);
             assertEquals(6.0, sixty.getSigmaAlongM(), 1e-9);
             assertEquals(2.2, sixty.getSigmaCrossM(), 1e-9);
+            assertEquals(1.2, sixty.getVAlongMs(), 1e-9,
+                    "v_along_ms 是偏差校准器的分桶键，丢了就重建不出分桶建议");
 
             // 毫秒精度 + 时区往返：写入用 Asia/Shanghai，读回按同一时区还原成 epoch 毫秒
             assertEquals(BASE_TS_MS + 60_000L,
                     sixty.getSampleTs().atZone(DB_ZONE).toInstant().toEpochMilli(),
                     "DATETIME(3) 的毫秒不能被截断，否则同秒内多条样本的水位会打平");
 
-            // 水位去重：同一批样本再喂一遍不应重复落库
+            // 水位去重：同一批样本再喂一遍不应重复消费
             PredictionCalibrationService.CalibrationOutcome again = service.calibrate(mmsi);
             assertEquals(0, again.newSamples(), "sampleTsMs 水位未推进，不应重复消费");
             assertEquals(2, sampleMapper.selectCount(mine), "去重失效会让样本数虚增、区间宽虚假收窄");
+
+            // ── 跨重启不重复落库（11-03 D2 的四元组唯一键）──
+            // 新建一个服务实例 = 模拟重启：内存水位清零，同一批样本会被重新吐出。
+            // 此时唯一键 uk_pes_pair 必须挡住，且记「跳过」而不是「失败」。
+            PredictionCalibrationService afterRestart =
+                    PredictionCalibrationService.forTesting(ignored -> samples, sampleMapper, sysParamLoader);
+            PredictionCalibrationService.CalibrationOutcome replayed = afterRestart.calibrate(mmsi);
+
+            assertEquals(1, replayed.newSamples(),
+                    "重启后同一批样本仍会进内存统计（1 = 只剩 τ=60 那条；τ=0 只落库不计数）");
+            assertEquals(0L, afterRestart.persistedSampleCount(), "但一行都不该再写进去");
+            assertEquals(2L, afterRestart.duplicateSkippedCount(), "两条都应记成「跳过」");
+            assertEquals(0, afterRestart.consecutivePersistFailures(),
+                    "重复键不是失败：库通、表在，连续失败计数必须保持 0");
+            assertEquals(2, sampleMapper.selectCount(mine), "表里仍应只有两行");
         } finally {
             sampleMapper.delete(mine);
         }
