@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
+import com.waterlogistics.algo.estimation.MultiStepPredictor.SpeedLimitLookup;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -25,7 +26,8 @@ class PredictionConfigTest {
 
     private PredictionProfile profile(String modeCode) {
         return config.predictionProfile(settings, assurance, modeCode,
-                50.0, 180.0, 40.0, 300.0, 1.0e-6, 75.0, 6.0, 0.5, 120.0, "");
+                50.0, 180.0, 40.0, 300.0, 1.0e-6, 75.0, 6.0, 0.5, 120.0, "",
+                SpeedLimitLookup.unbounded());
     }
 
     @Test
@@ -33,7 +35,7 @@ class PredictionConfigTest {
     void centerlineSpec_shouldStillAssemblePreciseProfile() {
         PredictionProfile profile = config.predictionProfile(settings, assurance, "precise",
                 50.0, 180.0, 40.0, 300.0, 1.0e-6, 75.0, 6.0, 0.5, 120.0,
-                "115.852,28.646;115.879,28.692");
+                "115.852,28.646;115.879,28.692", SpeedLimitLookup.unbounded());
 
         assertEquals(PredictionMode.PRECISE, profile.mode());
         assertNotNull(profile.engine());
