@@ -14,7 +14,9 @@
     "test:t3:browser": "node tests/t3-browser.mjs",
     "test:t4:outage": "node tests/t4-outage-browser.mjs",
     "test:prediction": "node tests/prediction-circuit.mjs",
-    "test:prediction:browser": "node tests/prediction-browser.mjs"
+    "test:prediction:browser": "node tests/prediction-browser.mjs",
+    "test:plantrack": "node tests/plan-track-circuit.mjs",
+    "test:plantrack:browser": "node tests/plan-track-browser.mjs"
   },
   "dependencies": {
     "echarts": "6.1.0",

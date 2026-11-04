@@ -3,14 +3,15 @@ import { reactive } from 'vue'
 import { normalizeOrders, normalizeFrame, isRenderableFrame } from '../api/adapter'
 import { droneIdForOrder, normalizeReplayTasks } from '../replay/model'
 import { SCENES } from './mock'
-import { useShipStore, useDroneStore, useAlertStore, useEventStore, useOrderStore } from '../stores'
+import { useShipStore, useDroneStore, useAlertStore, useEventStore, useOrderStore, usePlanTrackStore } from '../stores'
 
 export function createRealtime() {
   const ship = useShipStore(), drone = useDroneStore(), alert = useAlertStore(), events = useEventStore(), orders = useOrderStore()
+  const planTrack = usePlanTrackStore()
   let ws, sse, poll, retry, scriptTimer, generation = 0, buffered = [], priming = false, mockStep = 0
   const status = reactive({ mode: 'live', connection: '未连接', error: '' })
   const listeners = new Set(), recording = []
-  const clearLiveMap = () => { ship.apply(null); drone.apply(null); orders.applyRendezvous(null); alert.clear() }
+  const clearLiveMap = () => { ship.apply(null); drone.apply(null); orders.applyRendezvous(null); planTrack.reset(); alert.clear() }
   const subscribe = fn => { listeners.add(fn); return () => listeners.delete(fn) }
   const emit = (type, data, replay = false) => {
     if (priming && !replay) { buffered.push({ type, data }); return }
@@ -22,6 +23,11 @@ export function createRealtime() {
     else if (type === 'rendezvous') orders.applyRendezvous(data)
     else if (type === 'alarm') alert.apply(data)
     else if (type === 'order_state') { if (!orders.apply(data)) return }
+    else if (type === 'plan_track') {
+      // 规划航迹按订单分槽：同一订单重派会产新 routeId，后到覆盖先到。
+      // 归一失败（缺 orderId / segments 非数组）计入 rejected，不静默吞掉契约漂移。
+      if (!planTrack.accept(data)) { status.error = '规划航迹帧不符合契约，已丢弃'; return }
+    }
     else return
     if (!replay && status.mode === 'live') { const frame = { type, data, receivedAt: Date.now() }; recording.push(frame); for (const fn of listeners) fn(frame) }
     if (type === 'alarm' || type === 'order_state' || type === 'rendezvous') events.add(type, data)

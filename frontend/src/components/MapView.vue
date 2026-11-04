@@ -1,21 +1,24 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import L from 'leaflet'
-import { useShipStore, useDroneStore, useOrderStore, useAlertStore, useNestStore, useFleetStore, useAirspaceStore, usePredictionStore } from '../stores'
+import { useShipStore, useDroneStore, useOrderStore, useAlertStore, useNestStore, useFleetStore, useAirspaceStore, usePredictionStore, usePlanTrackStore } from '../stores'
 import { drawShip } from '../layers/shipLayer'
 import { drawMeeting } from '../layers/meetingLayer'
 import { drawDrone } from '../layers/droneTrackLayer'
 import { drawAlerts } from '../layers/alertLayer'
 import { drawPredictionTrack, clearPredictionTrack } from '../layers/predictionLayer.js'
+import { drawPlanTrack, clearPlanTrack, markMissingSegments } from '../layers/planTrackLayer'
 import { drawNests } from '../layers/nestLayer'
 import { drawFleet, drawStaticFeatures } from '../layers/staticFeatureLayer'
 import { systemMapPoint, toMapLatLng } from '../map/coordinates'
 import { candidateAssessment } from '../realtime/candidateAssessment'
 
 const props = defineProps({ comparison: { type: Object, default: null }, branchRoute: { type: Object, default: null }, focusRoute: { type: Boolean, default: false }, droneId: { type: String, default: '' }, orderId: { type: String, default: '' }, connectionError: { type: String, default: '' } })
-const ship = useShipStore(), drone = useDroneStore(), order = useOrderStore(), alert = useAlertStore(), nest = useNestStore(), fleet = useFleetStore(), airspace = useAirspaceStore(), prediction = usePredictionStore()
-let map, staticGroup, comparisonGroup, shipGroup, meetingGroup, droneGroup, branchGroup, alertGroup, nestGroup, fleetGroup, debugReferenceGroup, predictionGroup
+const ship = useShipStore(), drone = useDroneStore(), order = useOrderStore(), alert = useAlertStore(), nest = useNestStore(), fleet = useFleetStore(), airspace = useAirspaceStore(), prediction = usePredictionStore(), planTrack = usePlanTrackStore()
+let map, staticGroup, comparisonGroup, shipGroup, meetingGroup, droneGroup, branchGroup, alertGroup, nestGroup, fleetGroup, debugReferenceGroup, predictionGroup, planTrackGroup
 let lastOverlaidMmsi = ''
+// 规划航迹（阶段二 2）：独立图层组，清它不碰预测组——共用 group 时 clearLayers() 会误伤别人的线。
+let lastPlanOrderId = ''
 let activeBaseLayer = null, activeBaseType = 'imagery'
 let tileFailure = false
 const valid = point => point && Number.isFinite(point.lat) && Number.isFinite(point.lon)
@@ -221,6 +224,24 @@ function drawPredictionOverlay() {
   drawPredictionTrack(predictionGroup, overlay, { fit })
 }
 
+/**
+ * 画/清规划航迹叠加。
+ *
+ * <p>选哪一条：{@code props.orderId} 有值就画那一笔；没有就画最新收到的一笔。
+ * <b>不画全部</b>——多笔订单的计划航线叠在一起，与大屏「当前任务」的口径打架。
+ */
+function drawPlanTrackOverlay() {
+  if (!planTrackGroup) return
+  const tracks = planTrack.tracks
+  if (!tracks.length) { clearPlanTrack(planTrackGroup); lastPlanOrderId = ''; return }
+  const target = (props.orderId && planTrack.ofOrder(props.orderId)) || tracks.at(-1)
+  if (!target) { clearPlanTrack(planTrackGroup); lastPlanOrderId = ''; return }
+  const fit = target.orderId !== lastPlanOrderId
+  lastPlanOrderId = target.orderId
+  drawPlanTrack(planTrackGroup, target, { fit, highlightKind: planTrack.highlightKind })
+  markMissingSegments(planTrackGroup, target)
+}
+
 const update = () => {
   if (!map) return
   drawComparison()
@@ -233,6 +254,7 @@ const update = () => {
   drawBranchRoute()
   drawAlerts(map, alertGroup, alert.items, order.orders, visibleDrone.value, ship.current)
   drawPredictionOverlay()
+  drawPlanTrackOverlay()
   const rawPoints = (props.focusRoute
     ? [ship.current, visibleDrone.value, order.rendezvous, previousMeeting.value, ...(props.branchRoute?.points || [])]
     : [ship.current, ...(ship.current?.points || []), visibleDrone.value,
@@ -270,6 +292,7 @@ onMounted(() => {
   droneGroup = L.layerGroup().addTo(map)
   alertGroup = L.layerGroup().addTo(map)
   predictionGroup = L.layerGroup().addTo(map)
+  planTrackGroup = L.layerGroup().addTo(map)
   nestGroup = L.layerGroup().addTo(map)
   fleetGroup = L.layerGroup().addTo(map)
   debugReferenceGroup = L.layerGroup().addTo(map)
@@ -279,12 +302,16 @@ onMounted(() => {
   map.on('resize', () => { map.invalidateSize(); fitServiceArea() })
   if (debugEnabled) map.on('click', pickMapPoint)
   update()
-  setTimeout(() => { if (map) { map.invalidateSize(); fitServiceArea(); update() } }, 100)
+  // 100ms 后的这拍本意是「布局稳定后再校一次视野」；但若规划航迹已把视野 fit 到走廊上，
+  // 这里再 fitServiceArea 会把它覆盖回全景——表现就是「线画了但小得看不见」。
+  // 有规划航迹时就让它说了算（重新触发一次 update，借 invalidateSize 后的正确尺寸重画）。
+  setTimeout(() => { if (map) { map.invalidateSize(); if (!planTrack.count) fitServiceArea(); update() } }, 100)
 })
 watch([() => ship.current, () => visibleDrone.value, () => order.rendezvous, () => alert.items.length,
   () => order.previousRendezvous, () => order.orders, () => props.comparison, () => props.branchRoute, () => props.droneId, () => props.orderId, () => nest.items,
-  () => fleet.items, () => airspace.items, () => prediction.overlay], update, { deep: true })
-onUnmounted(() => { if (map && debugEnabled) map.off('click', pickMapPoint); map?.remove(); map = null; activeBaseLayer = null; debugReferenceGroup = null; predictionGroup = null; lastOverlaidMmsi = '' })
+  () => fleet.items, () => airspace.items, () => prediction.overlay,
+  () => planTrack.byOrder, () => planTrack.highlightKind], update, { deep: true })
+onUnmounted(() => { if (map && debugEnabled) map.off('click', pickMapPoint); map?.remove(); map = null; activeBaseLayer = null; debugReferenceGroup = null; predictionGroup = null; planTrackGroup = null; lastOverlaidMmsi = ''; lastPlanOrderId = '' })
 </script>
 
 <template>
@@ -315,6 +342,9 @@ onUnmounted(() => { if (map && debugEnabled) map.off('click', pickMapPoint); map
       <span v-if="displayAirspace.some(item => item.kind === 'waterway') || displayAirspace.filter(item => item.kind === 'bridge').length >= 2"><i class="map-line map-line-waterway"></i> 航道参考</span>
       <span v-if="branchRoute"><i class="map-line" :class="branchRoute.type === 'continue' ? 'map-line-continue' : 'map-line-abandon'"></i> {{ branchRoute.type === 'continue' ? '原机改道续送' : '原机带货返航' }}</span>
       <span v-if="prediction.overlay"><i class="map-line" :class="prediction.overlay.premise === 'VALID' ? 'map-line-ship' : 'map-line-change'"></i> 预测看台 · {{ prediction.overlay.mmsi }}</span>
+      <span v-if="planTrack.count"><i class="map-line map-line-plan-outbound"></i> 计划去程</span>
+      <span v-if="planTrack.count"><i class="map-line map-line-plan-terminal"></i> 计划末段交接</span>
+      <span v-if="planTrack.count"><i class="map-line map-line-plan-return"></i> 计划返程</span>
     </div>
     <div class="map-shell">
       <div id="operations-map"></div>

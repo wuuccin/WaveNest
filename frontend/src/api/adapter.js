@@ -19,6 +19,11 @@ export function normalizeFrame(type, data) {
         ? { sigmaAlong: last.sigmaAlong, sigmaCross: last.sigmaCross } : data.cov }
   }
   if (type === 'alarm') return { ...data, level: displayEnum(data.alertLevel ?? data.level), alarmType: displayEnum(data.alertType ?? data.alarmType), targetId: data.target ?? data.targetId }
+  if (type === 'plan_track') {
+    // 只在类型层面过一遍：字段归一在 api/planTrack.js（契约唯一来源），
+    // 这里重复做一遍会让两处规则分叉。segments 非数组即原样交下去，由 store 计入 rejected。
+    return data
+  }
   return data
 }
 export function isRenderableFrame(type, data) {

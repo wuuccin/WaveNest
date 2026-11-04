@@ -108,3 +108,6 @@ export const useOrderStore = defineStore('order', {
 // 预测看台状态（阶段二 1 · 杨添爻）：实现与注释在 stores/prediction.js，
 // 这里只做一次再导出，保持既有「全部 store 从 ../stores 取」的用法不变。
 export { usePredictionStore } from './prediction.js'
+
+// 规划航迹状态（阶段二 2 · 杨添爻）：实现与注释在 stores/planTrack.js，同样只做再导出。
+export { usePlanTrackStore } from './planTrack.js'
