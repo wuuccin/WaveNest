@@ -126,12 +126,12 @@ class SmokeM6M2Test {
         assertThatThrownBy(() -> taskQueueService.accept(after))
             .isInstanceOf(IllegalStateException.class);
 
-        // task_log 与流转同步留痕：订单接入(OrderAdmissionService) + 受理 + 组批调度 + 派发 = 4 条，
-        // 且无「重入队」——首次派发不走 requeue（C0 判据）
+        // 首次派发留下四条状态日志和一条规划航迹摘要（M1）；不走重入队。
         List<TaskLogEntity> logs = taskLogMapper.selectList(
             new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<TaskLogEntity>()
                 .eq(TaskLogEntity::getOrderId, orderId));
-        assertThat(logs).hasSize(4);
+        assertThat(logs).extracting(TaskLogEntity::getOpType)
+                .containsExactly("订单接入", "受理", "组批调度", "派发", "规划航迹");
         assertThat(logs).noneMatch(entry -> "重入队".equals(entry.getOpType()));
 
         // F2 飞行阶段推进：把会面时刻回拨到已过时刻，模拟一次完整飞行；
@@ -152,7 +152,7 @@ class SmokeM6M2Test {
                 .containsExactly("去程中", "末段交接中", "返航中", "已完成");
         assertThat(flightLogs).extracting(TaskLogEntity::getOpType)
                 .containsExactly("起飞确认", "进入末段交接", "交接完成", "落巢完成");
-        assertThat(logs).hasSize(4);
+        assertThat(logs).hasSize(5);
         // a41d6fb（-23）起 emit 同事务写 order_task.status：飞行阶段推进即主状态流转，
         // 一次完整飞行后主状态为「已完成」（旧行为「仍停在已派发」已废弃）
         assertThat(orderTaskMapper.selectById(orderId).getStatus())
