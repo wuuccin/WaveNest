@@ -50,6 +50,12 @@ public record OrderRequeueCommand(
         if (landingPointId == null || landingPointId.isBlank()) {
             throw new IllegalArgumentException("落点标识不得为空：野外迫降与落巢走不同的货物去向（《21》§8）");
         }
+        // 评审 OrderRequeueCommand:53：回收确认以「落巢」为前提（《21》§8），
+        // 未落巢却已确认回收在物理上不成立，须在构造层拒绝，不能留给下游某个调用方
+        if (!landedAtNest && recyclingConfirmed) {
+            throw new IllegalArgumentException(
+                    "回收确认与落巢冲突：货物须随原机成功落巢后才可被回收为可用（《21》§8）");
+        }
         if (lossConfirmed && recyclingConfirmed) {
             throw new IllegalArgumentException("灭失与回收确认互斥：货物已灭失就不可能再确认回收");
         }
