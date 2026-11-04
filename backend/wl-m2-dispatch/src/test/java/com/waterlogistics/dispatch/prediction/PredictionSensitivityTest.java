@@ -162,7 +162,7 @@ class PredictionSensitivityTest {
         PredictionSettings settings = new PredictionConfig().predictionSettings(emptyLoader);
 
         assertEquals(20.0, settings.sigma0AlongM(), 1e-9);
-        assertEquals(0.05, settings.alphaAlongMs(), 1e-9);
+        assertEquals(0.10, settings.alphaAlongMs(), 1e-9);
         assertEquals(15.0, settings.sigma0CrossM(), 1e-9);
         assertEquals(0.03, settings.alphaCrossMs(), 1e-9);
         assertEquals(1800L, settings.horizonSec());

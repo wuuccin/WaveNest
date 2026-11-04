@@ -115,12 +115,19 @@ public final class PredictionBiasCalibrator {
             speedBucketEdgesMs = speedBucketEdgesMs.clone();
         }
 
-        /** 附录 B 仿真初值：60 s 分桶 × 30 段、船速档 {@code 1.5/3.5 m/s}、窗 200、
+        /** 缺省配置：60 s 分桶 × 30 段、船速档 {@code 1.5/3.5 m/s}、窗 200、
          *  层内 30 样本、连续 5 周期、{@code kBias=1.0}、{@code kBand=1.5}、{@code kTight=0.7}、
-         *  单次 ≤ 10%、偏置 ≤ 0.5 m/s，α 基准取附录 B 的 0.15／0.02。 */
+         *  单次 ≤ 10%、偏置 ≤ 0.5 m/s。
+         *
+         * <p>{@code α_along} 基准取 C5 定稿 0.10，{@code α_cross} 基准取 0.03，
+         * 分别与 {@code sys_param.alphaAlongMs}／{@code sys_param.alphaCrossMs}、
+         * {@code predAlphaAlongMs}／{@code predAlphaCrossMs} 及测试显式 Params 同值——
+         * 校准器的「当前 α」必须等于预测引擎实际用的值，否则
+         * {@code suggestedValue = currentAlpha × (1+ratio)} 会基于错误基准给出偏高
+         * 或偏低的调整建议。 */
         public static Params defaults() {
             return new Params(60.0, 30, new double[] {1.5, 3.5}, 200, 30, 5,
-                    1.0, 1.5, 0.7, 0.10, 0.5, 0.15, 0.02);
+                    1.0, 1.5, 0.7, 0.10, 0.5, 0.10, 0.03);
         }
 
         /** 船速分档边界副本。 */

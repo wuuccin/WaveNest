@@ -69,10 +69,10 @@ public class PredictionCalibrationService {
      */
     private static final ZoneId DB_ZONE = ZoneId.of("Asia/Shanghai");
 
-    /** 校准参数键：纵向 α 基准（{@code 80} 附录 B 初值 0.15 m/s）。 */
+    /** 校准参数键：纵向 α 基准（与主链路同值 0.10 m/s）。 */
     public static final String KEY_ALPHA_ALONG = "predAlphaAlongMs";
 
-    /** 校准参数键：横向 α 基准（附录 B 初值 0.02 m/s）。 */
+    /** 校准参数键：横向 α 基准（与主链路同值 0.03 m/s）。 */
     public static final String KEY_ALPHA_CROSS = "predAlphaCrossMs";
 
     /** 校准参数键：沿航道速度偏置（回写目标，初值 0）。 */
@@ -558,7 +558,9 @@ public class PredictionCalibrationService {
     }
 
     /**
-     * 从 {@code sys_param} 组装分桶参数；缺键时回落附录 B 初值。
+     * 从 {@code sys_param} 组装分桶参数；缺键时回落 {@link PredictionBiasCalibrator.Params#defaults()}
+     * 的 C5 定稿基准（{@code α_along = 0.10}、{@code α_cross = 0.03}，分别与 002 主链路的
+     * {@code alphaAlongMs}／{@code alphaCrossMs} 及 {@code predAlphaAlongMs}／{@code predAlphaCrossMs} 同值）。
      *
      * <p>只覆盖三个随时间变化的键（分桶宽／α 基准），其余沿用
      * {@link PredictionBiasCalibrator.Params#defaults()}——它们是算法结构参数，

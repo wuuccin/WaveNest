@@ -22,7 +22,7 @@ import org.springframework.context.annotation.Configuration;
  *   <tr><th>sys_param 键</th><th>值</th><th>含义</th><th>映射到</th></tr>
  *   <tr><td>{@code sigmaPosM}</td><td>20</td><td>AIS 位置误差</td><td>σ∥ 初值</td></tr>
  *   <tr><td>{@code sigmaEM}</td><td>15</td><td>横向稳态标准差</td><td>σ⊥ 初值</td></tr>
- *   <tr><td>{@code alphaAlongMs}</td><td>0.05</td><td>纵向模型误差率</td><td>σ∥ 增长率</td></tr>
+ *   <tr><td>{@code alphaAlongMs}</td><td>0.10</td><td>纵向模型误差率</td><td>σ∥ 增长率</td></tr>
  *   <tr><td>{@code alphaCrossMs}</td><td>0.03</td><td>横向模型误差率</td><td>σ⊥ 增长率</td></tr>
  *   <tr><td>{@code horizonSec}</td><td>1800</td><td>精算时域</td><td>预测时长</td></tr>
  * </table>
@@ -80,7 +80,7 @@ public class PredictionConfig {
     public PredictionSettings predictionSettings(SysParamLoader sysParamLoader) {
         return new PredictionSettings(
                 sysParamLoader.getDouble(KEY_SIGMA_POS_M, 20.0),
-                sysParamLoader.getDouble(KEY_ALPHA_ALONG_MS, 0.05),
+                sysParamLoader.getDouble(KEY_ALPHA_ALONG_MS, 0.10),
                 sysParamLoader.getDouble(KEY_SIGMA_E_M, 15.0),
                 sysParamLoader.getDouble(KEY_ALPHA_CROSS_MS, 0.03),
                 sysParamLoader.getInt(KEY_HORIZON_SEC, 1800),
