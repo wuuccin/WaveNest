@@ -147,20 +147,21 @@ class RescheduleServiceTest {
                 "须点明缺的是落巢确认：" + thrown.getMessage());
     }
 
-    /** 野外迫降后人工回收是合法状态：构造不得拦截，重入队裁决仍须拒绝 */
+    /**
+     * 评审 OrderRequeueCommand:53：回收确认以落巢为前提——野外迫降点（非机巢）却已确认回收
+     * 在物理上不成立，构造层即拒绝，不再依赖服务端兜底（其他消费方也不会静默接受）。
+     */
     @Test
-    void requeueOrder_shouldAllowFieldRecoveryCommandButRejectRequeue() {
-        OrderRequeueCommand cmd = OrderRequeueCommand.builder()
-                .orderId("ORDER-1").goodsId("GOODS-1").droneId("DRONE-1")
-                .landedAtNest(false).landingPointId("FIELD-POINT")
-                .recyclingConfirmed(true).lossConfirmed(false)
-                .build();
+    void requeueOrder_shouldRejectFieldRecoveryClaimAtConstruction() {
+        IllegalArgumentException thrown = assertThrows(IllegalArgumentException.class,
+                () -> OrderRequeueCommand.builder()
+                        .orderId("ORDER-1").goodsId("GOODS-1").droneId("DRONE-1")
+                        .landedAtNest(false).landingPointId("FIELD-POINT")
+                        .recyclingConfirmed(true).lossConfirmed(false)
+                        .build());
 
-        IllegalStateException thrown = assertThrows(IllegalStateException.class,
-                () -> service.requeueOrder(cmd));
-
-        assertTrue(thrown.getMessage().contains("尚未确认落巢"),
-                "野外迫降即使已人工回收也不得重入队：" + thrown.getMessage());
+        assertTrue(thrown.getMessage().contains("落巢"),
+                "须点明回收确认缺落巢前提：" + thrown.getMessage());
     }
 
     /** 落巢但未确认回收不得重入队：回收确认才把货物转为可用 */
