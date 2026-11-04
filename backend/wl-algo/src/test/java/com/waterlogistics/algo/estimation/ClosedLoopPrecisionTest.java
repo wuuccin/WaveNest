@@ -68,12 +68,12 @@ class ClosedLoopPrecisionTest {
     /**
      * 真值船速的不可观测扰动：σ_v 与回复时间常数（不是模型参数，是「世界」的属性）。
      *
-     * <p>取 {@code σ_v = 0.25 m/s}（≈0.5 kn）的依据：附录 B 的 {@code α_along = 0.15 m/s}
-     * 只算了<b>模型误差项</b>，而 §3.2.7 第 5 步的总带宽还要再加上 {@code sqrt(P⁻_ss(τ))}——
-     * 其中 {@code P_vv·τ²} 一项在实测稳态 {@code P_vv ≈ 2.6e-3} 下等价于额外 {@code ~0.05 m/s}。
-     * 也就是说这套参数的<b>实际</b>带宽增长率约 {@code 0.20 m/s}；要与之匹配，世界的真实速度
-     * 扰动就应取 {@code 0.20~0.25}。取 0.18 时实测归一化比只有 0.63（带偏保守）。
-     * 这个差值正是 {@link PredictionBiasCalibrator}（步骤 H）应当报出来的东西。
+     * <p>取 {@code σ_v = 0.25 m/s}（≈0.5 kn）：这是仿真「世界」的速度扰动，须与模型带宽
+     * {@code α_along·τ} 匹配，闭环才自洽。C5 裁定把 {@code α_along} 从附录 B 初值 0.15 收到
+     * {@code 0.10}（见 {@link #productionParams()}），此时纵向归一化比 0.910、覆盖率 97.74%，
+     * 说明 {@code σ_v = 0.25} 恰好匹配 {@code α_along = 0.10} 的带宽。若取 0.18 则归一化比
+     * 会跌破 0.6（带宽偏保守）。这个「模型带宽 vs 世界扰动」的差值正是
+     * {@link PredictionBiasCalibrator}（步骤 H）应当报出来的东西。
      */
     private static final double TRUE_SIGMA_V_MS = 0.25;
     private static final double TRUE_TAU_V_SEC = 1800.0;
@@ -142,8 +142,28 @@ class ClosedLoopPrecisionTest {
         return cachedDataset;
     }
 
+    /**
+     * 显式 Params，与模块层生产配置 {@code sys_param}（{@code 002_sys_param.sql}）同值：
+     * {@code alphaAlongMs = 0.10}、{@code alphaCrossMs = 0.03}。其余字段沿用附录 B 初值。
+     *
+     * <p>{@code α_along = 0.10} 是 C5 裁定的定稿值：实测 {@code 0.15} 时纵向 2σ 覆盖率 99.33%
+     * （过保守、超上界 99%），降到 {@code 0.05} 时覆盖率 87.68%（过乐观、击穿下界 90%），
+     * 只有 {@code 0.10} 使覆盖率落回 {@code [90%, 99%]}（实测 97.74%）且归一化比 0.910、标定
+     * 因子 c=0.638 同时过护栏。生产侧 {@code sys_param} 与 {@code PredictionConfig} 默认值
+     * 已同步改为 0.10，实现「测试与生产两处同值」。
+     *
+     * <p>不得用 {@link MultiStepPredictor.Params#defaults()}：其 {@code α_along = 0.15} 仅用于
+     * 本地冒烟与单测，与本测试要验收的「生产带宽」不是同一套参数——用 defaults 调 α 只改测试、
+     * 不动生产带宽，验收无效。
+     */
+    private static MultiStepPredictor.Params productionParams() {
+        return new MultiStepPredictor.Params(
+                MultiStepPredictor.DEFAULT_PROCESS_NOISE_Q, MultiStepPredictor.DEFAULT_TAU_V_SEC,
+                0.10, 0.03, 50.0, 180.0, 40.0, 60L, 1800L);
+    }
+
     private static Dataset simulate() {
-        MultiStepPredictor.Params predictParams = MultiStepPredictor.Params.defaults();
+        MultiStepPredictor.Params predictParams = productionParams();
         int pointCount = predictParams.pointCount();
         double[] tauSec = new double[pointCount];
         for (int i = 0; i < pointCount; i++) {

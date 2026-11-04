@@ -128,7 +128,7 @@ PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 -- 《80》§5.1 的验收门槛（算法常量），不配成参数——配成可改就会出现
 -- 「同一批数据跑出两种采信结论」，复标结果无法互相比较。
 --
--- 注意：这四个键是「校准器回写目标」，与预测引擎实际读的 alphaAlongMs（002，现 0.05）
+-- 注意：这四个键是「校准器回写目标」，与预测引擎实际读的 alphaAlongMs（002，现 0.10）
 -- 是两个键。两者的同值问题由《11-03 计划一》C5 裁定，不在此处改。
 -- ---------------------------------------------------------------------
 INSERT IGNORE INTO `sys_param` (`param_key`, `param_value`, `category`, `description`) VALUES

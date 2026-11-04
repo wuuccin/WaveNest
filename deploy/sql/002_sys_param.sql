@@ -48,7 +48,7 @@ INSERT INTO `sys_param` (`param_key`, `param_value`, `category`, `description`) 
 ('lcStepM',             '5',      '阈值', '换道步进门限'),
 ('lcCount',             '3',      '阈值', '换道确认数'),
 ('lcInflate',           '2.0',    '阈值', '机动期带宽膨胀'),
-('alphaAlongMs',        '0.05',   '阈值', '纵向模型误差率'),
+('alphaAlongMs',        '0.10',   '阈值', '纵向模型误差率'),
 ('alphaCrossMs',        '0.03',   '阈值', '横向模型误差率'),
 ('lTolM',               '150',    '阈值', '纵向容忍上限'),
 ('wTolM',               '40',     '阈值', '横向容忍上限'),
