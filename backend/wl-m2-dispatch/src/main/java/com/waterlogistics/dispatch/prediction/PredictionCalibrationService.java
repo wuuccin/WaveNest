@@ -558,7 +558,8 @@ public class PredictionCalibrationService {
     }
 
     /**
-     * 从 {@code sys_param} 组装分桶参数；缺键时回落附录 B 初值。
+     * 从 {@code sys_param} 组装分桶参数；缺键时回落 {@link PredictionBiasCalibrator.Params#defaults()}
+     * 的 C5 定稿基准（{@code α_along = 0.10}，与 {@code predAlphaAlongMs} 及 002 主链路同值）。
      *
      * <p>只覆盖三个随时间变化的键（分桶宽／α 基准），其余沿用
      * {@link PredictionBiasCalibrator.Params#defaults()}——它们是算法结构参数，

@@ -129,10 +129,12 @@ PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 -- 「同一批数据跑出两种采信结论」，复标结果无法互相比较。
 --
 -- 注意：这四个键是「校准器回写目标」，与预测引擎实际读的 alphaAlongMs（002，现 0.10）
--- 是两个键。两者的同值问题由《11-03 计划一》C5 裁定，不在此处改。
+-- 是两个键。按《11-03 计划一》C5 裁定，纵向基准 predAlphaAlongMs 取定稿值 0.10，
+-- 与 002 的 alphaAlongMs 及测试显式 Params 三处同值；Java 侧的同一兜底见
+-- PredictionBiasCalibrator.Params.defaults()。横向 predAlphaCrossMs 仍取附录 B 初值 0.02。
 -- ---------------------------------------------------------------------
 INSERT IGNORE INTO `sys_param` (`param_key`, `param_value`, `category`, `description`) VALUES
 ('calCalibrateIntervalSec', '60',     '间隔', '每船回流校准的节流间隔（s）；0 或负值按缺省 60 处理'),
-('predAlphaAlongMs',        '0.15',   '阈值', '纵向 σ 增长率 α_along 基准（80 附录 B 初值，校准器回写目标）'),
+('predAlphaAlongMs',        '0.10',   '阈值', '纵向 σ 增长率 α_along 基准（C5 定稿 0.10，与 002 主链路同值；校准器回写目标）'),
 ('predAlphaCrossMs',        '0.02',   '阈值', '横向 σ 增长率 α_cross 基准（80 附录 B 初值，校准器回写目标）'),
 ('predAlongSpeedBiasMs',    '0.0',    '阈值', '沿航道速度偏置（m/s，CALIBRATOR 回写目标，初值 0）');
