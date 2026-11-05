@@ -341,4 +341,60 @@ class OrderAdmissionServiceTest {
         org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
                 () -> OrderPriority.fromCode("HIGH"));
     }
+
+    @Test
+    @DisplayName("★ 11-05：货型超 64 字符 → GOODS_TYPE_TOO_LONG（不让库层去截断或报 500）")
+    void tooLongGoodsType_shouldBeRejected() {
+        String tooLong = "医".repeat(OrderSubmitRequest.GOODS_TYPE_MAX_LENGTH + 1);
+
+        OrderSubmitResponse response = service.submit(
+                new OrderSubmitRequest(MMSI, 5.5, tooLong, inOneHour(), "NORMAL"));
+
+        assertFalse(response.accepted());
+        assertEquals("GOODS_TYPE_TOO_LONG", response.reasonCode());
+        assertEquals(0, service.orderCount(), "被拒请求不得建单");
+    }
+
+    @Test
+    @DisplayName("11-05：恰好 64 字符不触发长度闸（边界不是「小于」，继续走到白名单判据）")
+    void goodsTypeAtLimit_shouldPassLengthGate() {
+        feedShip(MMSI);
+        String atLimit = "医".repeat(OrderSubmitRequest.GOODS_TYPE_MAX_LENGTH);
+
+        OrderSubmitResponse response = service.submit(
+                new OrderSubmitRequest(MMSI, 5.5, atLimit, inOneHour(), "NORMAL"));
+
+        // 64 字符合法，故不会被长度闸拦；它当然不在货型白名单里，落点应是 CARGO_TYPE。
+        // 断言这两个原因码的先后关系，比只断言「被拒」更能证明闸门位置正确。
+        assertEquals("CARGO_TYPE", response.reasonCode(),
+                "64 字符应通过长度闸、交由白名单判据处置");
+    }
+
+    @Test
+    @DisplayName("★ 11-05：MMSI 首尾空白在请求体里就归一，不会带到事件与落库")
+    void mmsiWithSpaces_shouldBeTrimmedAtRequestLevel() {
+        feedShip(MMSI);
+        OrderSubmitRequest padded = new OrderSubmitRequest(
+                "  " + MMSI + " ", 5.5, "医疗物资", inOneHour(), "URGENT");
+
+        assertEquals(MMSI, padded.shipMmsi(), "归一必须发生在请求体，而不是只在校验处");
+
+        OrderSubmitResponse response = service.submit(padded);
+        assertTrue(response.accepted(), "归一后应是合法 MMSI：" + response.reasonCode());
+        assertEquals(OrderStatus.PENDING_ACCEPT, response.order().orderStatus());
+    }
+
+    @Test
+    @DisplayName("11-05：带上 cargoNestId 与不带都能受理（货巢是可选项，不进完整性判据）")
+    void cargoNestId_shouldBeOptional() {
+        feedShip(MMSI);
+        OrderSubmitResponse withNest = service.submit(new OrderSubmitRequest(
+                MMSI, 5.5, "医疗物资", inOneHour(), "URGENT", "NEST-A"));
+        assertTrue(withNest.accepted(), "指定货巢不该被当成异常输入：" + withNest.reasonCode());
+
+        feedShip("413000002");
+        OrderSubmitResponse withoutNest = service.submit(
+                request("413000002", 3.0, inOneHour(), "NORMAL"));
+        assertTrue(withoutNest.accepted(), "不指定货巢走「离船最近」策略，同样受理");
+    }
 }

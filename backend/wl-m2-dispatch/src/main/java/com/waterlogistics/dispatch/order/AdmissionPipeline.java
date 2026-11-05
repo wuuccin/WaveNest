@@ -140,11 +140,34 @@ public final class AdmissionPipeline {
      * @param deadlineMs    期望送达时刻，Unix 毫秒；{@code null} 表示未填
      * @param priority      优先级编码；{@code null} 表示未填
      * @param goodsId       货物单号（查就绪状态用）
+     * @param cargoNestId   货物所在巢；{@code null} 表示由客户端未指定、取离船最近的巢
      */
     public record OrderRequest(String orderId, String mmsi, String cargoType, Double goodsWeightKg,
-            Long deadlineMs, String priority, String goodsId) {
+            Long deadlineMs, String priority, String goodsId, String cargoNestId) {
 
-        /** 信息是否完整（§3.1.2 ①）。{@code priority} 与 {@code deadline} 缺一即转人工。 */
+        /**
+         * 兼容 11-05 之前的 7 参构造（不带货巢）。
+         *
+         * @param orderId       订单号
+         * @param mmsi          船舶 MMSI
+         * @param cargoType     货物类型
+         * @param goodsWeightKg 物资载重，kg
+         * @param deadlineMs    期望送达时刻，Unix 毫秒
+         * @param priority      优先级编码
+         * @param goodsId       货物单号
+         */
+        public OrderRequest(String orderId, String mmsi, String cargoType, Double goodsWeightKg,
+                Long deadlineMs, String priority, String goodsId) {
+            this(orderId, mmsi, cargoType, goodsWeightKg, deadlineMs, priority, goodsId, null);
+        }
+
+        /**
+         * 信息是否完整（§3.1.2 ①）。{@code priority} 与 {@code deadline} 缺一即转人工。
+         *
+         * <p><b>{@code goodsId}／{@code cargoNestId} 不参与本判据</b>：两者都是「可选精化」——
+         * 货单号空＝按订单号查货，货巢空＝取离船最近的巢，都有确定的下游口径。
+         * 把可空字段塞进完整性判据，只会让正常下单被判成「转人工」。
+         */
         public boolean isComplete() {
             return orderId != null && !orderId.isBlank()
                     && mmsi != null && !mmsi.isBlank()

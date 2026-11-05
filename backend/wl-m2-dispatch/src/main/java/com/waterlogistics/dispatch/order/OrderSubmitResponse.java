@@ -28,6 +28,7 @@ import com.waterlogistics.contract.order.OrderView;
  * @param waitReason 延后等待原因（仅延后非 null），取值见
  *                   {@link com.waterlogistics.contract.rest.WaitReason}
  * @param wakeEtaTs  预计唤醒时刻，Unix 毫秒（仅延后且可估计时非 null）
+ * @param etaTs      预计送达时刻，Unix 毫秒；未算出时 {@code null}
  */
 public record OrderSubmitResponse(
         boolean accepted,
@@ -36,22 +37,36 @@ public record OrderSubmitResponse(
         String reasonCode,
         String message,
         String waitReason,
-        Long wakeEtaTs) {
+        Long wakeEtaTs,
+        Long etaTs) {
 
-    /** 受理并调度。 */
+    /**
+     * 兼容 11-05 之前的 7 参构造（不带 {@code etaTs}）。
+     *
+     * <p>保留理由：{@code etaTs} 的来源是 {@code order_task.eta_ts} 列，而该列由张睿哲的
+     * {@code 010_order_cargo_eta.sql} 新增；在迁移合入之前，本响应的取值恒为
+     * {@code null}，与旧构造器等价。调用点不必为「列还没建」这件事改一遍。
+     */
+    public OrderSubmitResponse(boolean accepted, String orderId, OrderView order, String reasonCode,
+            String message, String waitReason, Long wakeEtaTs) {
+        this(accepted, orderId, order, reasonCode, message, waitReason, wakeEtaTs, null);
+    }
+
+    /** 受理并调度。{@code etaTs} 取自订单视图（同一来源 {@code order_task.eta_ts}）。 */
     public static OrderSubmitResponse accepted(OrderView order) {
-        return new OrderSubmitResponse(true, order.orderId(), order, null, null, null, null);
+        return new OrderSubmitResponse(true, order.orderId(), order, null, null, null, null,
+                order == null ? null : order.etaTs());
     }
 
     /** 延后待唤醒：受理通过但不进调度，等待唤醒。 */
     public static OrderSubmitResponse deferred(OrderView order, String reasonCode, String message,
             String waitReason, Long wakeEtaTs) {
         return new OrderSubmitResponse(true, order.orderId(), order, reasonCode, message,
-                waitReason, wakeEtaTs);
+                waitReason, wakeEtaTs, order == null ? null : order.etaTs());
     }
 
     /** 受理拒绝（含转人工：转人工用 {@code reasonCode=INCOMPLETE} 表达）。 */
     public static OrderSubmitResponse rejected(String reasonCode, String message) {
-        return new OrderSubmitResponse(false, null, null, reasonCode, message, null, null);
+        return new OrderSubmitResponse(false, null, null, reasonCode, message, null, null, null);
     }
 }
