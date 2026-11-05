@@ -148,9 +148,11 @@ class AlertDrivenRescheduleTest {
     void lowBatteryAlert_shouldReviewAndBroadcast() {
         String orderId = dispatchedOrder();
 
-        // 电量 18% < 基线 20%＋储备 20%＝40%，候选为空 → 第三级迫降野外
+        // 5% 电量且告警位置在两巢之间：原巢与他巢均不可达 → 第三级迫降野外。
+        // 生产链现在会从 nest/occupancy_slot 组装他巢候选，不能再假定候选为空。
         dispatcher.route(new AlertEventMessage(
-                "EV-L1", "低电量", "警告", 10, DRONE, orderId, NOW, 18.0, 20.0));
+                "EV-L1", "低电量", "警告", 10, DRONE, orderId, NOW, 5.0, 20.0,
+                115.8575, 28.6700));
 
         List<HomecomingDecisionEvent> mine = eventsOf("EV-L1");
         assertThat(mine).hasSize(1);
@@ -205,8 +207,6 @@ class AlertDrivenRescheduleTest {
 
     @Test
     void badMessage_shouldBeSwallowedAndQueueAlive() {
-        dispatchedOrder();
-
         // 未知类型：onAlertEvent 吞掉不向外抛（边界 3）
         assertThatCode(() -> dispatcher.onAlertEvent(new AlertEventMessage(
                 "EV-X1", "不存在的类型", "警告", 1, DRONE, "ORDER-404", NOW, 1.0, 1.0)))
