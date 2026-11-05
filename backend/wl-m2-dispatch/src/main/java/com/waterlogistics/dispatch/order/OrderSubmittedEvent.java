@@ -20,6 +20,10 @@ import java.math.BigDecimal;
  * @param waitReason      延后等待原因（{@code WAIT_SHIP}／{@code WAIT_CARGO}／{@code GATE_OR_DATA}）；
  *                        {@code null} 表示受理并调度，进完整主链
  * @param wakeEtaTs       预计唤醒时刻，Unix 毫秒；不可估计为 {@code null}（仅延后有语义）
+ * @param etaTs           预计送达时刻，Unix 毫秒；未算出为 {@code null}。
+ *                        11-05 序号 2 新增：由 {@code AdmissionPipeline.Decision.etaTsMs} 给出，
+ *                        {@code DispatchTrigger} 落 {@code order_task.eta_ts}。
+ *                        与 {@code wakeEtaTs}（预计唤醒）不同义，不得互赋
  */
 public record OrderSubmittedEvent(
         String orderId,
@@ -30,7 +34,28 @@ public record OrderSubmittedEvent(
         String priority,
         long submitTsMs,
         String waitReason,
-        Long wakeEtaTs) {
+        Long wakeEtaTs,
+        Long etaTs) {
+
+    /**
+     * 兼容 11-05 序号 2 之前的 9 参构造：预计送达时刻未算出。
+     *
+     * @param orderId        订单号
+     * @param shipMmsi       目标船 MMSI
+     * @param goodsWeightKg  物资载重，kg
+     * @param goodsType      物资类型
+     * @param expectedTimeMs 期望送达时刻，Unix 毫秒
+     * @param priority       优先级
+     * @param submitTsMs     下单时刻，Unix 毫秒
+     * @param waitReason     延后等待原因
+     * @param wakeEtaTs      预计唤醒时刻，Unix 毫秒
+     */
+    public OrderSubmittedEvent(String orderId, String shipMmsi, Double goodsWeightKg,
+            String goodsType, Long expectedTimeMs, String priority, long submitTsMs,
+            String waitReason, Long wakeEtaTs) {
+        this(orderId, shipMmsi, goodsWeightKg, goodsType, expectedTimeMs, priority, submitTsMs,
+                waitReason, wakeEtaTs, null);
+    }
 
     /** 载重转 BigDecimal（落库用）；null 安全。 */
     public BigDecimal goodsWeightDecimal() {

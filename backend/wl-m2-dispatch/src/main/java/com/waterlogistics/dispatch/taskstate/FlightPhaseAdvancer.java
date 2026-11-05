@@ -2,6 +2,7 @@ package com.waterlogistics.dispatch.taskstate;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.waterlogistics.algo.estimation.OrderEta;
 import com.waterlogistics.algo.meeting.GeoApprox;
 import com.waterlogistics.contract.order.OrderView;
 import com.waterlogistics.contract.state.OrderStatus;
@@ -92,6 +93,11 @@ public class FlightPhaseAdvancer {
     private static final String HANDOVER_SEC_KEY = "tHandoverMinSec";
 
     private static final int DEFAULT_HANDOVER_SEC = 120;
+
+    /** 飞中 ETA 用的最大巡航速度（{@code sys_param} 键名，与准入侧同源）。 */
+    private static final String VMAX_CRUISE_KEY = "vMaxCruiseMs";
+
+    private static final double DEFAULT_VMAX_CRUISE_MS = 20.0;
 
     /** 位置不可用时的默认接近半径（米），可由 {@code wavenest.m2.approach-radius-m} 覆盖 */
     private static final double DEFAULT_APPROACH_RADIUS_M = 50.0;
@@ -334,13 +340,21 @@ public class FlightPhaseAdvancer {
         List<FlightPhaseTimeline.Transition> schedule = FlightPhaseTimeline.schedule(
                 meetMs, outboundM, drone.cruiseSpeedMs(), handoverSec);
 
+        // 11-05 序号 2：本周期「实际送达时刻」＝会面时刻 ＋ 交接时长，与 HANDOVER→RETURNING
+        // 的迁移时刻同源，派发后即确定、不随时间漂移。飞中 ETA 另算，位置缺失时回落到它。
+        long deliveredTsMs = OrderEta.dispatched(meetMs, handoverSec);
+        double vMaxCruiseMs = sysParamLoader.getDouble(VMAX_CRUISE_KEY, DEFAULT_VMAX_CRUISE_MS);
+        long inFlightEtaMs = outboundEtaMs(order, meetLon, meetLat, nowMs, vMaxCruiseMs,
+                handoverSec, deliveredTsMs);
+
         // 阶段一 17：实时位置进入接近半径则提前切末段；位置不可用/超半径保持时间轴
         if (state.phase() == OrderStatus.OUTBOUND) {
             OptionalLong handoverTs = handoverTsByPosition(
                     order, meetLon, meetLat, nowMs, state.floorMs());
             if (handoverTs.isPresent()) {
                 long tsMs = handoverTs.getAsLong();
-                if (!emit(order, OrderStatus.OUTBOUND, OrderStatus.HANDOVER, "末段切入（位置）", tsMs)) {
+                if (!emit(order, OrderStatus.OUTBOUND, OrderStatus.HANDOVER, "末段切入（位置）",
+                        tsMs, deliveredTsMs)) {
                     return;
                 }
                 state = state.advanceTo(OrderStatus.HANDOVER, tsMs);
@@ -353,7 +367,10 @@ public class FlightPhaseAdvancer {
                 continue;
             }
             long tsMs = FlightPhaseTimeline.auditTs(transition.dueMs(), state.floorMs());
-            if (!emit(order, transition.from(), transition.to(), transition.opType(), tsMs)) {
+            // 起飞进「去程中」写飞中估计值；末段及之后写本周期实际送达值
+            long etaTsMs = transition.to() == OrderStatus.OUTBOUND ? inFlightEtaMs : deliveredTsMs;
+            if (!emit(order, transition.from(), transition.to(), transition.opType(), tsMs,
+                    etaTsMs)) {
                 // 订单态与预期不一致：本轮不推进，等下一拍重新判定
                 return;
             }
@@ -387,6 +404,36 @@ public class FlightPhaseAdvancer {
             return OptionalLong.empty();
         }
         return OptionalLong.of(FlightPhaseTimeline.auditTs(nowMs, floorMs));
+    }
+
+    /**
+     * 飞中预计送达时刻：{@code 当前时刻 + 剩余距离 ÷ vMaxCruise + 交接时长}。
+     *
+     * <p>剩余距离取「机当前位置→会面点」直线距离，与 {@link #handoverTsByPosition} 同一坐标口径。
+     * 位置缺失（遥测未就绪）时返回 {@code fallbackTsMs}（本周期实际送达时刻），
+     * <b>不抛异常、不臆造位置</b>——缺位置只该让 ETA 退化成已知的确定值。
+     *
+     * @param order         订单（取机号）
+     * @param meetLon       会面点经度
+     * @param meetLat       会面点纬度
+     * @param nowMs         当前时刻，Unix 毫秒
+     * @param vMaxCruiseMs  最大巡航速度，m/s
+     * @param handoverSec   交接时长，秒
+     * @param fallbackTsMs  位置不可用时的回落值，Unix 毫秒
+     * @return 飞中预计送达时刻，Unix 毫秒
+     */
+    private long outboundEtaMs(OrderTaskEntity order, double meetLon, double meetLat, long nowMs,
+            double vMaxCruiseMs, int handoverSec, long fallbackTsMs) {
+        if (dronePositionPort == null) {
+            return fallbackTsMs;
+        }
+        Optional<DronePositionPort.Position> position = dronePositionPort.latest(order.getDroneId());
+        if (position.isEmpty()) {
+            return fallbackTsMs;
+        }
+        DronePositionPort.Position pos = position.get();
+        double remainingM = GeoApprox.distanceM(pos.lon(), pos.lat(), meetLon, meetLat);
+        return OrderEta.inFlightOr(nowMs, remainingM, vMaxCruiseMs, handoverSec, fallbackTsMs);
     }
 
     /**
@@ -447,19 +494,33 @@ public class FlightPhaseAdvancer {
      *
      * @param tsMs 审计时刻，调用方须已用 {@link FlightPhaseTimeline#auditTs} 钳制过，
      *             保证同订单严格递增且不早于下单时刻
+     * @param etaTsMs 本次应写入的预计送达时刻，Unix 毫秒；与库中已有值取较大者落库
+     *                （单调收敛，见 {@link OrderEta#notEarlierThan}）
      * @return 是否真正完成本次迁移写入
      */
     private boolean emit(OrderTaskEntity order, OrderStatus from, OrderStatus to,
-            String opType, long tsMs) {
+            String opType, long tsMs, long etaTsMs) {
         if (rank(to) != rank(from) + 1) {
             throw new IllegalStateException("飞行阶段流转不连续：" + from.getValue() + " → " + to.getValue());
         }
+        Long previousEtaTs = order.getEtaTs() == null ? null : toEpochMs(order.getEtaTs());
+        // 末段及之后写的是「实际送达」，是本周期唯一确定的值，必须如实覆盖——
+        // 若也取较大者，一旦下单下界偏晚（下界是保守估计，可能晚于真实送达），
+        // 库里就会永久留下一个错的送达时刻。
+        // 去程中写的是估计值，与已发布值取较大者，避免位置抖动让前端展示回跳。
+        long effectiveEtaTs = rank(to) >= rank(OrderStatus.HANDOVER)
+                ? etaTsMs
+                : OrderEta.notEarlierThan(etaTsMs, previousEtaTs);
+        LocalDateTime etaDb = LocalDateTime.ofInstant(Instant.ofEpochMilli(effectiveEtaTs), DB_ZONE);
         boolean[] written = {false};
         runInTransaction(() -> {
             int rows = orderTaskMapper.update(null, new LambdaUpdateWrapper<OrderTaskEntity>()
                     .eq(OrderTaskEntity::getOrderId, order.getOrderId())
                     .eq(OrderTaskEntity::getStatus, from.getValue())
-                    .set(OrderTaskEntity::getStatus, to.getValue()));
+                    .set(OrderTaskEntity::getStatus, to.getValue())
+                    // 11-05 序号 2：ETA 与状态在同一条件更新里落库，不会出现
+                    // 「状态已推进、ETA 还是上一阶段值」的中间态
+                    .set(OrderTaskEntity::getEtaTs, etaDb));
             if (rows == 0) {
                 log.error("订单态与飞行阶段不一致，跳过本次审计：orderId={} 期望 {} → {}",
                         order.getOrderId(), from.getValue(), to.getValue());
@@ -482,7 +543,8 @@ public class FlightPhaseAdvancer {
                             .incrementAndGet();
             try {
                 eventPublisher.publishEvent(new FlightPhaseChangedEvent(new OrderView(
-                        order.getOrderId(), to, tsMs, version, null, null, null, null)));
+                        order.getOrderId(), to, tsMs, version, null, null, null, null,
+                        effectiveEtaTs)));
             } catch (Exception e) {
                 // 审计已落库，推送失败只告警；下一拍不会重发同一阶段，避免重复刷屏
                 log.warn("飞行阶段广播失败（task_log 已落库）：orderId={} status={} err={}",
@@ -491,8 +553,11 @@ public class FlightPhaseAdvancer {
             written[0] = true;
         });
         if (written[0]) {
-            log.info("飞行阶段推进：orderId={} {} → {} op={} ts={}",
-                    order.getOrderId(), from.getValue(), to.getValue(), opType, tsMs);
+            order.setStatus(to.getValue());
+            order.setEtaTs(etaDb);
+            log.info("飞行阶段推进：orderId={} {} → {} op={} ts={} etaTs={}",
+                    order.getOrderId(), from.getValue(), to.getValue(), opType, tsMs,
+                    effectiveEtaTs);
             // C3：订单到达「已完成」终态时释放迫停占位（事务外执行，释放失败不回滚订单态）
             if (to == OrderStatus.FINISHED && occupancySlotService != null) {
                 occupancySlotService.releaseByOrder(order.getOrderId());

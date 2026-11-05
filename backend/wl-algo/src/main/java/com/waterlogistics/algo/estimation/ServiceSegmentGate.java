@@ -102,6 +102,98 @@ public final class ServiceSegmentGate {
     }
 
     /**
+     * 驶出结果。
+     *
+     * @param exits   预测时域内是否会驶出服务航段
+     * @param exitTsMs 驶出时刻，Unix 毫秒；{@code exits=false} 时无意义（返回 0）
+     * @param exitS   驶出时跨越的弧长边界，m；{@code exits=false} 时为 0
+     */
+    public record ExitResult(boolean exits, long exitTsMs, double exitS) {
+    }
+
+    /**
+     * 求首个驶出时刻——与 {@link #firstEntry} 反向：船在段内，找它越出区间的那一刻。
+     *
+     * <p><b>与 {@code firstEntry} 的三处对称</b>：
+     * <ul>
+     *   <li>同样<b>不假设 {@code s(t)} 单调</b>，按时间顺序扫相邻点；</li>
+     *   <li>同样<b>线性插值</b>跨越点，一趟 {@code O(N)}；</li>
+     *   <li>首个点就不在区间内时返回 {@code exits=false}——那不是"驶出"，是调用方问错了对象
+     *       （船本来就不在服务航段里），由调用方按"驶出时刻不可得"处理。</li>
+     * </ul>
+     *
+     * <p><b>两点之间整段越出又折回不会被捕获</b>：线性插值认为两点之间走直线，
+     * 采样已经稀到"一跨就过去再回来"时，任何插值口径都给不出那一小段。
+     * 对 deadline 的影响是时限偏宽松，不会误拒单。
+     *
+     * @param points   预测点列（时间升序，至少 1 个点）
+     * @param geometry 航道中心线几何
+     * @param sStart   服务航段起点弧长，m
+     * @param sEnd     服务航段终点弧长，m（须 ≥ {@code sStart}）
+     * @return 驶出结果
+     * @throws IllegalArgumentException 入参不满足计算前提时抛出
+     */
+    public static ExitResult firstExit(List<EstimatedPoint> points, WaterwayGeometry geometry,
+            double sStart, double sEnd) {
+
+        if (points == null || points.isEmpty()) {
+            throw new IllegalArgumentException("预测点列不得为空——无预测则无法求解驶出时刻");
+        }
+        if (geometry == null) {
+            throw new IllegalArgumentException("航道几何不得为空");
+        }
+        if (sStart > sEnd) {
+            throw new IllegalArgumentException(
+                    "服务航段区间非法：sStart(" + sStart + ") > sEnd(" + sEnd + ")");
+        }
+
+        int count = points.size();
+        double[] s = new double[count];
+        for (int i = 0; i < count; i++) {
+            EstimatedPoint point = points.get(i);
+            s[i] = geometry.project(point.lon(), point.lat()).s();
+        }
+
+        // 首个点不在区间内：船本就不在段内，不问"何时驶出"
+        if (!inRange(s[0], sStart, sEnd)) {
+            return new ExitResult(false, 0L, 0.0);
+        }
+
+        for (int i = 1; i < count; i++) {
+            double previousS = s[i - 1];
+            double currentS = s[i];
+
+            // 只在「上一刻在段内」时才算驶出：上一刻已在段外的，插值起点不在区间里，
+            // 按边界插出来的时刻没有意义（船早就出去了）
+            if (!inRange(previousS, sStart, sEnd)) {
+                continue;
+            }
+
+            double boundary;
+            // 上一刻在段内、这一刻越出——两个方向都要判：上行船从上界出，下行船从下界出
+            if (currentS > sEnd) {
+                boundary = sEnd;
+            } else if (currentS < sStart) {
+                boundary = sStart;
+            } else {
+                continue;
+            }
+
+            double span = currentS - previousS;
+            double ratio = span == 0.0 ? 0.0 : (boundary - previousS) / span;
+            ratio = Math.max(0.0, Math.min(1.0, ratio));
+
+            long previousT = points.get(i - 1).tMs();
+            long currentT = points.get(i).tMs();
+            long exitTs = previousT + Math.round(ratio * (currentT - previousT));
+
+            return new ExitResult(true, exitTs, boundary);
+        }
+
+        return new ExitResult(false, 0L, 0.0);
+    }
+
+    /**
      * 把预测点列投影成弧长序列（供可解释性与单测核对）。
      *
      * @param points   预测点列

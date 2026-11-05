@@ -75,15 +75,19 @@ public class AdmissionInputAssembler {
             @Value("${wavenest.m2.admission.max-payload-all-types-kg:50.0}") double maxPayloadAllTypesKg,
             @Value("${wavenest.m2.admission.max-payload-margin:0.1}") double maxPayloadMargin,
             @Value("${wavenest.m2.admission.ttl-ais-ms:10000}") long ttlAisMs,
-            // 与预测侧 v-max-craft-ms 同源（6 m/s）：etaMin 的巡航速度上界
-            @Value("${wavenest.m2.admission.v-max-cruise-ms:6.0}") double vMaxCruiseMs,
+            // 机队最大巡航速度（无人机，m/s）：与 sys_param.vMaxCruiseMs=20 同值。
+            // 此前默认 6.0 是照船速上界抄的，会让 etaMin 抬高 3.3 倍（11-05 序号 2 修正）。
+            @Value("${wavenest.m2.admission.v-max-cruise-ms:20.0}") double vMaxCruiseMs,
             @Value("${wavenest.m2.admission.t-handover-min-sec:60}") double tHandoverMinSec,
             @Value("${wavenest.m2.admission.wake-margin-sec:60}") long wakeMarginSec,
             @Value("${wavenest.m2.admission.suspend-retry-sec:60}") long suspendRetrySec,
             // 与预测侧 horizonSec 同源（1800 s）：空间闸门只信一个预测时域内的承诺
             @Value("${wavenest.m2.admission.horizon-sec:1800}") long horizonSec,
             @Value("${wavenest.m2.admission.weight-tol-kg:0.5}") double weightTolKg,
-            @Value("${wavenest.m2.admission.dup-window-sec:300}") long dupWindowSec) {
+            @Value("${wavenest.m2.admission.dup-window-sec:300}") long dupWindowSec,
+            // 11-05 序号 2：系统 deadline 的业务上限（s）。与 horizonSec 分开，因为二者语义不同——
+            // horizonSec 是「预测能看多远」，本值才是「最多允许多久送到」。
+            @Value("${wavenest.m2.admission.max-delivery-sec:1800}") long maxDeliverySec) {
         this.predictionService = predictionService;
         this.nestMapper = nestMapper;
         this.dispatchGateService = dispatchGateService;
@@ -94,7 +98,8 @@ public class AdmissionInputAssembler {
         this.corridorHalfWidthM = corridorHalfWidthM;
         this.policy = new AdmissionPipeline.Policy(parseWhitelist(cargoWhitelist),
                 maxPayloadAllTypesKg, maxPayloadMargin, ttlAisMs, vMaxCruiseMs, tHandoverMinSec,
-                wakeMarginSec, suspendRetrySec, horizonSec, weightTolKg, dupWindowSec);
+                wakeMarginSec, suspendRetrySec, horizonSec, weightTolKg, dupWindowSec,
+                maxDeliverySec);
     }
 
     /**

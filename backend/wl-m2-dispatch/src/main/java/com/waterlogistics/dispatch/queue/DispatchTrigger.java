@@ -90,6 +90,7 @@ public class DispatchTrigger {
                     deferred.setExpectedTime(LocalDateTime.ofInstant(
                             Instant.ofEpochMilli(event.expectedTimeMs()), DB_ZONE));
                 }
+                deferred.setEtaTs(toDbTime(event.etaTs()));
                 deferred.setPriority(event.priority());
                 deferred.setCreateTime(LocalDateTime.ofInstant(
                         Instant.ofEpochMilli(event.submitTsMs()), DB_ZONE));
@@ -115,6 +116,7 @@ public class DispatchTrigger {
                 entity.setExpectedTime(LocalDateTime.ofInstant(
                         Instant.ofEpochMilli(event.expectedTimeMs()), DB_ZONE));
             }
+            entity.setEtaTs(toDbTime(event.etaTs()));
             entity.setPriority(event.priority());
             entity.setCreateTime(LocalDateTime.ofInstant(
                     Instant.ofEpochMilli(event.submitTsMs()), DB_ZONE));
@@ -143,6 +145,16 @@ public class DispatchTrigger {
             // 事件由下单请求同步发布；失败留在日志中，由监控和重试链路处理，
             // 不把调度异常伪装成下单接口失败。
         }
+    }
+
+    /**
+     * Unix 毫秒转库内 {@code LocalDateTime}（{@code Asia/Shanghai}）。
+     *
+     * @param tsMs Unix 毫秒；{@code null} 原样返回 {@code null}（未算出的 ETA 就该是 NULL）
+     * @return 库内时刻，可空
+     */
+    private static LocalDateTime toDbTime(Long tsMs) {
+        return tsMs == null ? null : LocalDateTime.ofInstant(Instant.ofEpochMilli(tsMs), DB_ZONE);
     }
 
     /**

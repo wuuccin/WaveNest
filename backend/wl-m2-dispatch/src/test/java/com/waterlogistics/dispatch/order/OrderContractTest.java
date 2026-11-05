@@ -129,8 +129,12 @@ class OrderContractTest {
 
         AdmissionPipeline.OrderRequest noDeadline = new AdmissionPipeline.OrderRequest(
                 "ORD-1", "413000001", "医疗物资", 5.5, null, "URGENT", null);
-        assertFalse(noDeadline.isComplete(),
-                "deadline 仍参与判据：本序只把字段改可空，deadline 系统计算与判据解除是序号 2 的事");
+        assertTrue(noDeadline.isComplete(),
+                "11-05 序号 2：deadline 改由系统算，客户端不填是正常输入，不再转人工");
+
+        AdmissionPipeline.OrderRequest noPriority = new AdmissionPipeline.OrderRequest(
+                "ORD-1", "413000001", "医疗物资", 5.5, null, null, null);
+        assertFalse(noPriority.isComplete(), "优先级仍是必填，缺了才转人工补录");
     }
 
     @Test

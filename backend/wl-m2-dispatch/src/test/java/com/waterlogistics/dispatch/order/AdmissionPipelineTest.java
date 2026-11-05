@@ -98,11 +98,11 @@ class AdmissionPipelineTest {
     }
 
     @Test
-    @DisplayName("① 信息不完整 → 转人工 INCOMPLETE（不流转）")
+    @DisplayName("① 信息不完整（缺载重） → 转人工 INCOMPLETE（不流转）")
     void incompleteRequest_shouldGoManual() {
         AdmissionPipeline.Input input = new AdmissionPipeline.Input(
-                new AdmissionPipeline.OrderRequest("ORD-1", "413800001", "MEDICINE", 10.0, null,
-                        "NORMAL", "G-1"),
+                new AdmissionPipeline.OrderRequest("ORD-1", "413800001", "MEDICINE", null,
+                        DEADLINE_MS, "NORMAL", "G-1"),
                 NOW_MS, shipAt(5000.0, true), snapshotFrom(5000.0), nests(), segment(), Boolean.TRUE,
                 Boolean.FALSE, List.of(), Boolean.TRUE, policy());
 
@@ -110,6 +110,50 @@ class AdmissionPipelineTest {
         assertEquals(AdmissionPipeline.Outcome.MANUAL, decision.outcome());
         assertEquals(AdmissionPipeline.Reason.INCOMPLETE, decision.reason());
         assertFalse(decision.allowsSchedule());
+    }
+
+    @Test
+    @DisplayName("★ ① 不填期望送达时间 → 仍然受理（11-05 序号 2：deadline 改由系统算）")
+    void missingClientDeadline_shouldStillAccept() {
+        AdmissionPipeline.Input input = new AdmissionPipeline.Input(
+                new AdmissionPipeline.OrderRequest("ORD-1", "413800001", "MEDICINE", 10.0, null,
+                        "NORMAL", "G-1"),
+                NOW_MS, shipAt(5000.0, true), snapshotFrom(5000.0), nests(), segment(), Boolean.TRUE,
+                Boolean.FALSE, List.of(), Boolean.TRUE, policy());
+
+        AdmissionPipeline.Decision decision = AdmissionPipeline.admit(input);
+
+        assertEquals(AdmissionPipeline.Outcome.ACCEPT_TRIGGER_SCHEDULE, decision.outcome(),
+                "客户端不填期望时间不是「信息不完整」，此前这里会全部转人工");
+        assertEquals(AdmissionPipeline.Reason.NONE, decision.reason());
+    }
+
+    @Test
+    @DisplayName("★ ④ 系统 deadline＝min(船驶出航段, 下单+1800 s)；不填客户端值时取系统值")
+    void systemDeadline_shouldBeApplied() {
+        AdmissionPipeline.Decision decision = AdmissionPipeline.admit(new AdmissionPipeline.Input(
+                new AdmissionPipeline.OrderRequest("ORD-1", "413800001", "MEDICINE", 10.0, null,
+                        "NORMAL", "G-1"),
+                NOW_MS, shipAt(5000.0, true), snapshotFrom(5000.0), nests(), segment(), Boolean.TRUE,
+                Boolean.FALSE, List.of(), Boolean.TRUE, policy()));
+
+        // 夹具里船 2 m/s 从 5000 m 走到段末 8000 m：1500 s 后驶出，早于业务上限 1800 s
+        assertEquals(NOW_MS + 1_500_000L, decision.deadlineMs(),
+                "船驶出航段时刻（1500 s）早于最大配送时限（1800 s），取前者");
+        assertTrue(decision.etaTsMs() != null && decision.etaTsMs() > NOW_MS,
+                "未派单阶段的预计送达时刻由 etaMin 换算，应已算出");
+    }
+
+    @Test
+    @DisplayName("★ ④ 客户端值更早时取客户端值（用户给自己定的更严约束不被系统覆盖）")
+    void earlierClientDeadline_shouldWin() {
+        AdmissionPipeline.Decision decision = AdmissionPipeline.admit(new AdmissionPipeline.Input(
+                new AdmissionPipeline.OrderRequest("ORD-1", "413800001", "MEDICINE", 10.0,
+                        NOW_MS + 600_000L, "NORMAL", "G-1"),
+                NOW_MS, shipAt(5000.0, true), snapshotFrom(5000.0), nests(), segment(), Boolean.TRUE,
+                Boolean.FALSE, List.of(), Boolean.TRUE, policy()));
+
+        assertEquals(NOW_MS + 600_000L, decision.deadlineMs());
     }
 
     @Test
