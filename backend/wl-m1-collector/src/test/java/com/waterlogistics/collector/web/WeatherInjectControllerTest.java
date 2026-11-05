@@ -38,7 +38,7 @@ class WeatherInjectControllerTest {
     }
 
     @Test
-    @DisplayName("注入 11 m/s：回显发 4 个位置，实际也发 4 条")
+    @DisplayName("注入 11 m/s：回显发 9 个位置，实际也发 9 条")
     void injectReportsMultiplePositions() {
         ResponseEntity<Map<String, Object>> resp = controller.inject(11.0, 135.0, null, true);
 
@@ -47,14 +47,14 @@ class WeatherInjectControllerTest {
         assertNotNull(body);
         assertEquals("injectWeather", body.get("action"));
         assertEquals("data.weather", body.get("topic"));
-        assertEquals(4, body.get("publishedCount"));
+        assertEquals(9, body.get("publishedCount"));
         assertEquals(11.0, body.get("windMs"));
 
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> grid = (List<Map<String, Object>>) body.get("gridPoints");
-        assertEquals(4, grid.size(), "回显应给出 4 个网格点，便于核对'按位置多条'");
+        assertEquals(9, grid.size(), "回显应给出 9 个网格点，便于核对'按位置多条'");
 
-        assertEquals(4, publisher.weather().size(), "实际发出的条数应等于网格点数");
+        assertEquals(9, publisher.weather().size(), "实际发出的条数应等于网格点数");
     }
 
     @Test
@@ -83,7 +83,7 @@ class WeatherInjectControllerTest {
         Map<String, Object> s = controller.status().getBody();
         assertNotNull(s);
         assertEquals(true, s.get("biasActive"));
-        assertEquals(4, s.get("gridPointCount"));
+        assertEquals(9, s.get("gridPointCount"));
         assertEquals(1L, s.get("injectedCount"));
 
         controller.clearBias();

@@ -43,14 +43,49 @@ import org.springframework.stereotype.Component;
  *
  * <p><b>单条异常不得中断后续消息</b>：坐标／风速非法的脏帧只记警告并丢弃
  * （不建快照、不动闸门），避免一条脏数据把 M2 的气象消费带停。
+ *
+ * <h3>11-05 评审关闭要点（本文件承载 2 条）</h3>
+ * <ul>
+ *   <li><b>{@code HIGH.37}</b>：{@code gateTrigger.evaluate(...)} 原来在 {@code try} 块
+ *       <b>外面</b>——脏帧能被拦住，但<b>闸门评估抛出的异常没人接</b>。{@code evaluate} 里
+ *       调了 {@code gateService.trip/clear/summary} 这三个外部依赖，任一抛
+ *       {@code RuntimeException}，异常就会从 {@code @RabbitListener} 方法里冒出去，
+ *       Spring AMQP 默认把这条消息判为处理失败并按重试配置重投／丢弃，
+ *       <b>一条风况的评估失败会变成整条消费链路的一次抖动</b>。现在把入仓与评估
+ *       分两个 {@code try}：入仓失败＝丢帧，评估失败＝记 WARN 后放弃本次评估
+ *       （下一条风况到达时会再评估一次，闸门状态不会因此永久错位）。</li>
+ *   <li><b>{@code MED-PERF.11}</b>：<b>每帧都评估熔断</b>。11-05 起 M1 的网格由 2×2 改 3×3，
+ *       每节拍消息数从 4 涨到 9；{@code evaluate} 是 {@code synchronized} 且内部要遍历
+ *       全部新鲜格算「最不利风」（O(格数)），每帧一次等于把这些成本乘 9。
+ *       现在加<b>最小评估间隔</b> {@link #MIN_EVALUATE_INTERVAL_MS}（200 ms）：
+ *       同一节拍内到达的九条风况只评估一次，最后一条到达后的下一次评估必然覆盖到
+ *       全部九格的值。间隔远小于 M1 的发布节拍（秒级），熔断响应时间不受影响。</li>
+ * </ul>
  */
 @Component
 public class WeatherIngestListener {
 
     private static final Logger log = LoggerFactory.getLogger(WeatherIngestListener.class);
 
+    /**
+     * 两次熔断评估之间的最小间隔，ms。
+     *
+     * <p>取 200 ms：M1 每节拍 9 条消息几乎同时到达（同一 tick 内串行发布），
+     * 间隔设 200 ms 正好把一拍内的九条合并成一次评估；而演示中「注入大风 → 熔断」
+     * 的可见延迟仍是亚秒级，评审看不出差别。
+     *
+     * <p>为什么宁可漏评估也不漏判：本字段只做<b>节流</b>，不做「丢弃」——
+     * 被节流跳过的那一条不会改变结论，因为下一次评估读的是快照仓的<b>当前全量</b>，
+     * 而不是这一条消息本身。反过来若某条真的把最不利风推过阈值，它也一定会留在仓里，
+     * 下一次评估必然看到。
+     */
+    static final long MIN_EVALUATE_INTERVAL_MS = 200L;
+
     private final WeatherSnapshotStore store;
     private final WeatherGateTrigger gateTrigger;
+
+    /** 上次评估的时刻，ms（节流用；0 表示从未评估）。 */
+    private long lastEvaluateMs;
 
     public WeatherIngestListener(WeatherSnapshotStore store, WeatherGateTrigger gateTrigger) {
         this.store = store;
@@ -83,6 +118,29 @@ public class WeatherIngestListener {
                     e.getMessage());
             return;
         }
-        gateTrigger.evaluate(System.currentTimeMillis());
+        evaluateThrottled(System.currentTimeMillis());
+    }
+
+    /**
+     * 节流后的闸门评估（{@code MED-PERF.11}）。
+     *
+     * <p><b>HIGH.37</b>：本方法自己吞掉评估期的 {@code RuntimeException}——
+     * 闸门评估失败只该影响这一次评估，不该让 MQ 把整条消息判失败。
+     *
+     * @param nowMs 当前时刻，Unix 毫秒
+     */
+    private void evaluateThrottled(long nowMs) {
+        synchronized (this) {
+            if (lastEvaluateMs != 0L && nowMs - lastEvaluateMs < MIN_EVALUATE_INTERVAL_MS) {
+                return;
+            }
+            lastEvaluateMs = nowMs;
+        }
+        try {
+            gateTrigger.evaluate(nowMs);
+        } catch (RuntimeException e) {
+            // HIGH.37：评估失败不得从 @RabbitListener 方法冒出去（否则消息被判处理失败、重投）
+            log.warn("气象熔断评估失败，本次跳过（下一条风况到达时会重新评估）：{}", e.toString(), e);
+        }
     }
 }

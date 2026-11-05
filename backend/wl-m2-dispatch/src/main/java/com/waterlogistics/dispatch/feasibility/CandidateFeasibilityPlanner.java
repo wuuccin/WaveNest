@@ -60,9 +60,30 @@ public class CandidateFeasibilityPlanner {
     // 状态词不在这里定义：查询条件统一由 CandidateQueries 提供（逐字审查），
     // 避免「本类一份、Selector 一份」的状态词副本各自漂移。
 
-    // 以下两个能耗标定值在 sys_param 中无对应键，按纪律不臆造键名，
-    // 沿用 FeasibilityJudge.Params.defaults() 的演示标定值（1.5 %/km、0.2 %/kg）。
+    /**
+     * 单位距离耗电（%/km）——<b>演示标定值，不是实测值</b>（MED-MAINT.7）。
+     *
+     * <p><b>为什么还硬编码</b>：{@code sys_param} 里没有对应键（已逐个核对
+     * {@code 002_sys_param.sql}），按纪律<b>不臆造键名</b>，所以不能写成
+     * {@code sysParamLoader.getDouble("batteryPerKmPercent", 1.5)}——那等于在代码里
+     * 造了一个数据库里不存在的参数名，运维照名字去查会查不到，且日后真登记时
+     * 两边含义未必一致。
+     *
+     * <p><b>MED-MAINT.7 关闭的做法</b>：把系数从「散落在判定调用点的两个裸字面量」
+     * 收成一个具名常量并在此写明出处与限制，同时<b>每单把它打进 DEBUG 日志</b>
+     * （见 {@link #judgeParams}）——演示时按 1.5 %/km 算出来的电量余量，
+     * 现场能一眼看出「这是标定值不是实测值」，不会把结论当成真实续航。
+     * 真值仍需实测标定后登记 {@code sys_param}，届时只改这两行。
+     */
     private static final double BATTERY_PER_KM_PERCENT = 1.5;
+
+    /**
+     * 载荷附加耗电（%/kg）——<b>演示标定值</b>，理由同 {@link #BATTERY_PER_KM_PERCENT}。
+     *
+     * <p>0.2 %/kg 意味着 10 kg 货物多耗 2 个百分点：与 1.5 %/km 相比，
+     * 一次 2 km 的往返（3 %）就已盖过载荷项，故本值对结论影响很小；
+     * 真正决定电量闸的是距离与保留比例。
+     */
     private static final double BATTERY_PER_KG_PERCENT = 0.2;
 
     private final DroneMapper droneMapper;
@@ -98,8 +119,16 @@ public class CandidateFeasibilityPlanner {
             String model,
             String nestId,
             String droneId,
-            /** 机巢到取货点距离（km，粗估直线，与组合同口径；组合缺失时 {@code NaN}） */
+            /** 机巢到货点距离（km，粗估直线，与组合同口径；组合缺失时 {@code NaN}） */
             double distKm,
+            /**
+             * 该组合是否「从无人机当前所在巢出发」（11-05 新增）。
+             *
+             * <p>硬判据 1 要求「候选中出现至少一个非无人机当前所在巢的组合」——
+             * 光看 {@code nestId} 无法判断，必须与该机自己的巢比对。值由生成器在
+             * 组装时算好随组合透传，避免前端/核对脚本再去查一次机台账。
+             */
+            boolean fromDroneHomeNest,
             FeasibilityJudge.Verdict verdict,
             List<String> reasons) {
 
@@ -201,6 +230,7 @@ public class CandidateFeasibilityPlanner {
                     combo != null ? combo.nestId() : null,
                     combo != null ? combo.droneId() : null,
                     combo != null ? combo.distKm() : Double.NaN,
+                    combo != null && combo.nestId().equals(nestOfDrone(evaluated, combo.droneId())),
                     result.verdict(),
                     result.reasons()));
         }
@@ -213,7 +243,9 @@ public class CandidateFeasibilityPlanner {
     private record Evaluated(
             FeasibleCandidatePicker.Selection selection,
             List<CandidateGenerator.CandidateCombo> combos,
-            double worstWindMs) {
+            double worstWindMs,
+            /** 本次组装出的输入（11-05 新增：判定结果需要回查机的归属巢） */
+            CandidateInput input) {
     }
 
     /**
@@ -240,7 +272,7 @@ public class CandidateFeasibilityPlanner {
 
         FeasibleCandidatePicker.Selection selection = FeasibleCandidatePicker.pick(
                 combos, worstWindMs, payloadKg, judgeParams(input));
-        return new Evaluated(selection, combos, worstWindMs);
+        return new Evaluated(selection, combos, worstWindMs, input);
     }
 
     // ───────────── 参数与台账 ─────────────
@@ -259,12 +291,21 @@ public class CandidateFeasibilityPlanner {
      *   <li>{@code maxWindMs}（机型抗风未登记时的回落上限）← <b>见 {@link #conservativeWindFallbackMs}</b>
      *       （评审 MEDIUM.16：不再用 {@code criticalWindMs=12.0}，那是全部已登记机型里最宽松的一档）；</li>
      *   <li>{@code reserveBatteryPercent} ← {@code minBatteryPercent}（30）；</li>
-     *   <li>两个能耗系数无登记键，见本类常量。</li>
+     *   <li>两个能耗系数无登记键，见 {@link #BATTERY_PER_KM_PERCENT} 与
+     *       {@link #BATTERY_PER_KG_PERCENT}（MED-MAINT.7：具名常量＋DEBUG 留痕）。</li>
      * </ul>
      */
     private FeasibilityJudge.Params judgeParams(CandidateInput input) {
+        double maxWindMs = conservativeWindFallbackMs(input);
+        if (log.isDebugEnabled()) {
+            // MED-MAINT.7：把「用的是标定值」写进日志，避免演示结论被当成实测续航
+            log.debug("可行性判定参数：maxWindMs={}（抗风未登记时的回落上限）reserveBattery={}% "
+                            + "batteryPerKm={}%/km batteryPerKg={}%/kg（后两项为演示标定值，sys_param 无对应键）",
+                    maxWindMs, sysParamLoader.getDouble("minBatteryPercent", 30.0),
+                    BATTERY_PER_KM_PERCENT, BATTERY_PER_KG_PERCENT);
+        }
         return new FeasibilityJudge.Params(
-                conservativeWindFallbackMs(input),
+                maxWindMs,
                 sysParamLoader.getDouble("minBatteryPercent", 30.0),
                 BATTERY_PER_KM_PERCENT,
                 BATTERY_PER_KG_PERCENT);
@@ -314,9 +355,25 @@ public class CandidateFeasibilityPlanner {
      * 0 会被 {@code FeasibilityJudge} 当成「完全不能吹风」，把所有该机型判死；
      * 填默认值则造假机型差异。详见 {@link CandidateInput.DroneView#windLimitMs()}。
      */
+    /**
+     * 该无人机当前所在巢（11-05 新增）。
+     *
+     * <p>只用于给 {@link CandidateVerdict#fromDroneHomeNest()} 供值，不参与任何判定；
+     * 查不到时返回 {@code null}，比较结果即为 {@code false}（＝不认定「同巢」，
+     * 方向安全：宁可多说一个跨巢候选，也不要把跨巢候选误报成同巢而漏掉判据）。
+     */
+    private static String nestOfDrone(Evaluated evaluated, String droneId) {
+        for (CandidateInput.DroneView drone : evaluated.input().drones()) {
+            if (drone.droneId().equals(droneId)) {
+                return drone.nestId();
+            }
+        }
+        return null;
+    }
+
     private CandidateInput buildInput(OrderTaskEntity order) {
         List<DroneEntity> drones = droneMapper.selectList(CandidateQueries.idleAndHealthyDrones());
-        List<NestEntity> nests = nestMapper.selectList(CandidateQueries.availableNests());
+        List<NestEntity> nests = nestMapper.selectList(CandidateQueries.availableNestsWithOccupancy());
 
         // 组装逻辑收敛到 CandidateInputAssembler（Open CodeReview：两份同源副本
         // 必须收敛成一份）。mapper 查询口径（空闲＋健康 / 巢可用）由 CandidateQueries

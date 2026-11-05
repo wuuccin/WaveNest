@@ -82,6 +82,12 @@ public class FeasibilityJudge {
         requireFiniteNonNegative("distKm", distKm);
         requireFiniteNonNegative("worstWindMs", worstWindMs);
         requireFiniteNonNegative("payloadKg", payloadKg);
+        if (combo == null) {
+            throw new IllegalArgumentException("combo 不能为 null");
+        }
+        // MED-BUG.12：distKm 只要求「非负有限」，NaN 会被这里拦下；电量/载荷
+        // 在下面各自那一闸里单独判（NaN 有明确业务含义＝未登记，不是坏参数）。
+        requireFiniteNonNegative("combo.distKm", combo.distKm());
 
         List<String> reasons = new ArrayList<>();
 
@@ -110,7 +116,7 @@ public class FeasibilityJudge {
         // 2) 电量闸（三段里程估算：巢→取货→交货 + 交货→巢）
         //    <p>taskDistKm 是调用方传的「取货点→交货点」单程；<b>机巢→取货段由
         //    combo 自带的 distKm 提供</b>（CandidateGenerator 用 haversine 算好的
-        //    「巢→取货点」距离）。真实航程 = 巢→取 + 取→交 + 交→巢。
+        //    「巢→货点」距离）。真实航程 = 巢→取 + 取→交 + 交→巢。
         //    交货→巢一段没有交货点坐标无法精确计算，按<b>保守上界</b>取
         //    「巢→取 + 取→交」（把交货点视作在取货点外侧 taskDistKm 处）——
         //    宁可多算能耗，不漏算。<b>此前只算 2×taskDistKm，机巢→取货的往返整段
@@ -119,19 +125,28 @@ public class FeasibilityJudge {
         Legs legs = legsOf(combo, distKm);
         double consume = legs.totalKm() * params.batteryPerKmPercent()
                 + payloadKg * params.batteryPerKgPercent();
-        double remaining = combo.battery() - consume;
-        if (remaining < params.reserveBatteryPercent()) {
-            // 文案用「巢↔取／取↔交／往返里程」，与 legsOf 的算法逐字对应：
-            // 原写法「三段里程 + 两个 2× 分项」对不上账（两个往返分项之和就是合计，
-            // 中间并没有第三段），现场按文案复算会以为公式错了。
-            // 「↔」已表明是往返，故合计只写「往返里程」，单位紧随数字不空格
-            // （断言按此逐字匹配，改文案要同步改 FeasibilityJudgeBatteryLegTest）。
-            reasons.add(String.format(
-                    "电量不足：%.0f%% − 往返里程 %.1fkm（巢↔取 %.1f + 取↔交 %.1f）× %.1f%%/km"
-                            + " − 载荷附加 ≈ 余 %.0f%% < 保留 %.0f%%",
-                    combo.battery(), legs.totalKm(), legs.nestLegKm(), legs.taskLegKm(),
-                    params.batteryPerKmPercent(),
-                    remaining, params.reserveBatteryPercent()));
+        // ★ 11-05（MED-BUG.12 配套）：电量未登记（NaN）时不做减法。
+        // 原实现 NaN − consume = NaN，`NaN < reserve` 恒 false → <b>电量闸静默通过</b>，
+        // 一架台账漏填电量的机反而最"能飞"，是最危险的方向。生成端已不再把缺失填 0，
+        // 这里必须显式拦住：判不了就判不了，写明原因交给人。
+        if (!Double.isFinite(combo.battery())) {
+            reasons.add("电量未登记：drone.battery 为空，电量闸无法判定——"
+                    + "请补全台账后重评（不按 0 判死，也不按满电放行）");
+        } else {
+            double remaining = combo.battery() - consume;
+            if (remaining < params.reserveBatteryPercent()) {
+                // 文案用「巢↔取／取↔交／往返里程」，与 legsOf 的算法逐字对应：
+                // 原写法「三段里程 + 两个 2× 分项」对不上账（两个往返分项之和就是合计，
+                // 中间并没有第三段），现场按文案复算会以为公式错了。
+                // 「↔」已表明是往返，故合计只写「往返里程」，单位紧随数字不空格
+                // （断言按此逐字匹配，改文案要同步改 FeasibilityJudgeBatteryLegTest）。
+                reasons.add(String.format(
+                        "电量不足：%.0f%% − 往返里程 %.1fkm（巢↔取 %.1f + 取↔交 %.1f）× %.1f%%/km"
+                                + " − 载荷附加 ≈ 余 %.0f%% < 保留 %.0f%%",
+                        combo.battery(), legs.totalKm(), legs.nestLegKm(), legs.taskLegKm(),
+                        params.batteryPerKmPercent(),
+                        remaining, params.reserveBatteryPercent()));
+            }
         }
 
         return new FeasibilityResult(combo.comboId(),
