@@ -69,7 +69,7 @@ class OrderAdmissionServiceTest {
                 predictionService, nestMapper, gateService,
                 "115.852,28.646;115.859,28.663;115.879,28.692", 0.0, 0.0, 50.0,
                 "医疗物资,应急药品,食品,生活物资", 50.0, 0.1, 10_000L, 6.0, 60.0,
-                60L, 60L, 1800L, 0.5, 300L);
+                60L, 60L, 1800L, 0.5, 300L, 1800L);
         // 唤醒器桩掉定时注册（唤醒行为由 reschedule 链自己的测试覆盖）
         AdmissionWakeScheduler wakeScheduler = new AdmissionWakeScheduler(null) {
             @Override
@@ -213,11 +213,23 @@ class OrderAdmissionServiceTest {
     }
 
     @Test
-    @DisplayName("★ 四分流·转人工：优先级缺失时由判定链 ① 判信息不完整")
-    void missingDeadline_shouldGoManual() {
+    @DisplayName("★ 不填期望送达时间 → 正常受理（11-05 序号 2：deadline 由系统算）")
+    void missingDeadline_shouldStillAccept() {
         feedShip(MMSI);
-        // expectedTime 为 null：判定链 ①（信息完整性）要求 deadline 必填 → MANUAL
+        // expectedTime 为 null：此前判 ① 要求 deadline 必填 → 每一笔正常下单都转人工
         OrderSubmitResponse response = service.submit(request(MMSI, 5.5, null, "URGENT"));
+
+        assertTrue(response.accepted(), "客户端不填期望时间不该被判「信息不完整」");
+        assertEquals(1, service.orderCount(), "受理即建单");
+    }
+
+    @Test
+    @DisplayName("★ 四分流·转人工：货型缺失时由判定链 ① 判信息不完整")
+    void missingGoodsType_shouldGoManual() {
+        feedShip(MMSI);
+        // goodsType 为 null：仍是必填项，缺了转人工补录
+        OrderSubmitResponse response = service.submit(
+                new OrderSubmitRequest(MMSI, 5.5, null, inOneHour(), "URGENT"));
 
         assertFalse(response.accepted());
         assertEquals("INCOMPLETE", response.reasonCode(), "转人工以 INCOMPLETE 表达");

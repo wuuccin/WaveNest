@@ -161,4 +161,68 @@ class ServiceSegmentGateTest {
         assertThrows(IllegalArgumentException.class,
                 () -> ServiceSegmentGate.firstEntry(points, STRAIGHT_NORTH, 3000.0, 1000.0));
     }
+
+    // ───────────── firstExit（11-05 序号 2：deadline 用「船驶出航段时刻」） ─────────────
+
+    @Test
+    @DisplayName("驶出：2000 m → 4000 m 跨过 sEnd=3000，按中点插值得 30 s")
+    void exitingFromUpstream_shouldInterpolate() {
+        List<EstimatedPoint> points = track(2000.0, 4000.0);
+
+        ServiceSegmentGate.ExitResult result =
+                ServiceSegmentGate.firstExit(points, STRAIGHT_NORTH, 1000.0, 3000.0);
+
+        assertTrue(result.exits());
+        assertEquals(30_000L, result.exitTsMs(), 1000L, "2000→4000 的中点是 3000，t0=0、t1=60s → 约 30 s");
+        assertEquals(3000.0, result.exitS(), 30.0, "驶出时跨越的是上界 sEnd");
+    }
+
+    @Test
+    @DisplayName("驶出：上行船 2500 m → 500 m 跨过 sStart=1000，比例 0.75 → 45 s")
+    void exitingFromDownstream_shouldInterpolate() {
+        List<EstimatedPoint> points = track(2500.0, 500.0);
+
+        ServiceSegmentGate.ExitResult result =
+                ServiceSegmentGate.firstExit(points, STRAIGHT_NORTH, 1000.0, 3000.0);
+
+        assertTrue(result.exits());
+        assertEquals(45_000L, result.exitTsMs(), 1000L);
+        assertEquals(1000.0, result.exitS(), 30.0, "驶出时跨越的是下界 sStart");
+    }
+
+    @Test
+    @DisplayName("时域内始终在段内 → exits=false（模块层据此退化为「下单+最大配送时限」）")
+    void neverExiting_shouldReportFalse() {
+        List<EstimatedPoint> points = track(1500.0, 2500.0, 1800.0);
+
+        ServiceSegmentGate.ExitResult result =
+                ServiceSegmentGate.firstExit(points, STRAIGHT_NORTH, 1000.0, 3000.0);
+
+        assertFalse(result.exits());
+        assertEquals(0L, result.exitTsMs());
+    }
+
+    @Test
+    @DisplayName("★ 首个点就在段外 → exits=false（船本来就不在服务航段里，不是「驶出」）")
+    void startingOutside_shouldReportFalse() {
+        List<EstimatedPoint> points = track(100.0, 200.0);
+
+        ServiceSegmentGate.ExitResult result =
+                ServiceSegmentGate.firstExit(points, STRAIGHT_NORTH, 1000.0, 3000.0);
+
+        assertFalse(result.exits(), "问错了对象：船从未在段内，不存在驶出时刻");
+    }
+
+    @Test
+    @DisplayName("入参校验：firstExit 同样拒绝空点列 / 空几何 / 区间反向")
+    void firstExit_shouldRejectInvalidInput() {
+        List<EstimatedPoint> points = track(1500.0);
+
+        assertThrows(IllegalArgumentException.class,
+                () -> ServiceSegmentGate.firstExit(List.of(), STRAIGHT_NORTH, 1000.0, 3000.0));
+        assertThrows(IllegalArgumentException.class,
+                () -> ServiceSegmentGate.firstExit(points, null, 1000.0, 3000.0));
+        assertThrows(IllegalArgumentException.class,
+                () -> ServiceSegmentGate.firstExit(points, STRAIGHT_NORTH, 3000.0, 1000.0));
+    }
 }

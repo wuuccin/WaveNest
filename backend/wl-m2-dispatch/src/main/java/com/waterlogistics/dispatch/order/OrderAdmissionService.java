@@ -135,23 +135,27 @@ public class OrderAdmissionService {
                 null,
                 null,
                 null,
-                null);
+                null,
+                decision.etaTsMs());
 
         orders.put(orderId, view);
         taskLogRecorder.record(orderId, "订单接入", null, OrderStatus.PENDING_ACCEPT.getValue(), nowMs);
 
-        log.info("建单成功：orderId={} mmsi={} 载重={}kg 优先级={} 状态={}",
+        log.info("建单成功：orderId={} mmsi={} 载重={}kg 优先级={} 状态={} deadline={} etaTs={}",
                 orderId, pipelineRequest.mmsi(), request.goodsWeight(),
-                priority, OrderStatus.PENDING_ACCEPT.getValue());
+                priority, OrderStatus.PENDING_ACCEPT.getValue(), decision.deadlineMs(),
+                decision.etaTsMs());
 
         // 先发布版本 1，保证实时端按「待受理 → 后续状态」的顺序看到完整时间线。
         eventPublisher.publishEvent(new OrderStateChangedEvent(view));
 
         // B0：发布「订单已受理」事件（waitReason=null → 完整主链），由 DispatchTrigger 驱动
-        // 落库 → 受理 → 组批调度；priority 写枚举名（HIGH.18），不透传原始请求串
+        // 落库 → 受理 → 组批调度；priority 写枚举名（HIGH.18），不透传原始请求串。
+        // 11-05 序号 2：expectedTimeMs 改传系统算出的 deadline（不再是客户端提交值），
+        // etaTs 传未派单阶段的下界，两者都由 DispatchTrigger 落库。
         eventPublisher.publishEvent(new OrderSubmittedEvent(
                 orderId, pipelineRequest.mmsi(), request.goodsWeight(), request.goodsType(),
-                request.expectedTimeMs(), priority.name(), nowMs, null, null));
+                decision.deadlineMs(), priority.name(), nowMs, null, null, decision.etaTsMs()));
 
         return OrderSubmitResponse.accepted(view);
     }
@@ -171,7 +175,8 @@ public class OrderAdmissionService {
                 waitReason,
                 wakeEtaTs,
                 null,
-                null);
+                null,
+                decision.etaTsMs());
 
         orders.put(orderId, view);
         // opType 沿用 B3 既有口径：闸门类延后记「闸门熔断-延后」，其余延后记「接单延后」，
@@ -181,16 +186,17 @@ public class OrderAdmissionService {
         taskLogRecorder.record(orderId, deferOpType, null,
                 OrderStatus.ACCEPTED_WAIT_WAKE.getValue(), nowMs);
 
-        log.info("接单延后：orderId={} mmsi={} 原因={} 等待={} 唤醒时刻={}",
-                orderId, pipelineRequest.mmsi(), decision.reason(), waitReason, wakeEtaTs);
+        log.info("接单延后：orderId={} mmsi={} 原因={} 等待={} 唤醒时刻={} deadline={} etaTs={}",
+                orderId, pipelineRequest.mmsi(), decision.reason(), waitReason, wakeEtaTs,
+                decision.deadlineMs(), decision.etaTsMs());
 
         eventPublisher.publishEvent(new OrderStateChangedEvent(view));
 
         // 延后事件：DispatchTrigger 只落库为「已受理待唤醒」，不受理、不组批
         eventPublisher.publishEvent(new OrderSubmittedEvent(
                 orderId, pipelineRequest.mmsi(), request.goodsWeight(), request.goodsType(),
-                request.expectedTimeMs(), pipelineRequest.priority(), nowMs,
-                waitReason.name(), wakeEtaTs));
+                decision.deadlineMs(), pipelineRequest.priority(), nowMs,
+                waitReason.name(), wakeEtaTs, decision.etaTsMs()));
 
         // 定时唤醒：tEnter−wakeMargin（等船）与 suspendRetrySec 重评点（数据不足／未进段）
         // 都给出确定时刻；事件型唤醒（闸门解除／货就绪）由既有链路兜住，wakeAtMs=0 不注册

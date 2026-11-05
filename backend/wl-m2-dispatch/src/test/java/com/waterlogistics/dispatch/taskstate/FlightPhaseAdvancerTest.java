@@ -3,6 +3,7 @@ package com.waterlogistics.dispatch.taskstate;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.waterlogistics.contract.order.OrderView;
 import com.waterlogistics.contract.state.OrderStatus;
@@ -155,15 +156,49 @@ class FlightPhaseAdvancerTest {
         assertEquals(0, advancer.trackedCycleCount(), "推进到「已完成」当拍即淘汰缓存");
     }
 
+    @Test
+    @DisplayName("★ ETA 落库：从派发到完成至少写 3 次、逐次不减、末值＝会面时刻＋交接时长")
+    void etaTs_shouldBeWrittenMonotonicallyAndEndAtDelivered() {
+        long meetMs = NOW - 300_000L;
+        long createMs = NOW - 900_000L;
+        List<Long> etas = new ArrayList<>();
+        FlightPhaseAdvancer advancer = advancer(
+                List.of(order(meetMs, createMs)), dispatchLog(createMs), List.of(),
+                new ArrayList<>(), null, etas);
+
+        advancer.tick();
+
+        // 夹具无位置端口 → 飞中 ETA 回落到「会面 + 交接」，四段迁移各写一次
+        assertTrue(etas.size() >= 3,
+                "《11-05 任务清单》§八 硬判据 4：从下单到完成至少更新 3 次，实际 " + etas.size());
+        for (int i = 1; i < etas.size(); i++) {
+            assertTrue(etas.get(i) >= etas.get(i - 1), "ETA 必须单调不减：" + etas);
+        }
+        // 交接时长取 sys_param 默认值 120 s（测试的 SysParamLoader 无库，走默认）
+        assertEquals(meetMs + 120_000L, etas.get(etas.size() - 1),
+                "末值＝实际送达时刻＝会面时刻＋交接时长，实际序列 " + etas);
+    }
+
     // ---------------------------------------------------------------- 被测对象装配
 
     private static FlightPhaseAdvancer advancer(List<OrderTaskEntity> orders,
             TaskLogEntity dispatchLog, List<TaskLogEntity> history,
             List<TaskLogEntity> inserted, DronePositionPort positionPort) {
+        return advancer(orders, dispatchLog, history, inserted, positionPort, null);
+    }
+
+    /**
+     * 带 ETA 采集的装配：{@code etaSink} 非空时，每次 {@code order_task} 更新里写入的
+     * {@code eta_ts} 都会按写入顺序追加进去（{@code LambdaUpdateWrapper} 的参数值里
+     * 只有 ETA 是 {@code LocalDateTime}，可直接识别）。
+     */
+    private static FlightPhaseAdvancer advancer(List<OrderTaskEntity> orders,
+            TaskLogEntity dispatchLog, List<TaskLogEntity> history,
+            List<TaskLogEntity> inserted, DronePositionPort positionPort, List<Long> etaSink) {
         DroneContextPort droneContextPort =
                 droneId -> new DroneContext("D1", "N1", "N1", NEST_LON, NEST_LAT, 10.0, "C1");
         return new FlightPhaseAdvancer(
-                orderTaskMapper(orders),
+                orderTaskMapper(orders, etaSink),
                 taskLogMapper(dispatchLog, history, inserted),
                 droneContextPort,
                 positionPort,
@@ -212,9 +247,24 @@ class FlightPhaseAdvancerTest {
     // ---------------------------------------------------------------- mapper 桩
 
     private static OrderTaskMapper orderTaskMapper(List<OrderTaskEntity> orders) {
+        return orderTaskMapper(orders, null);
+    }
+
+    private static OrderTaskMapper orderTaskMapper(List<OrderTaskEntity> orders,
+            List<Long> etaSink) {
         return stub(OrderTaskMapper.class, (proxy, method, args) -> switch (method.getName()) {
             case "selectList" -> orders;
-            case "update" -> 1;
+            case "update" -> {
+                if (etaSink != null && args != null && args.length >= 2
+                        && args[1] instanceof LambdaUpdateWrapper<?> wrapper) {
+                    for (Object value : wrapper.getParamNameValuePairs().values()) {
+                        if (value instanceof LocalDateTime time) {
+                            etaSink.add(epochMs(time));
+                        }
+                    }
+                }
+                yield 1;
+            }
             default -> defaultValue(method.getReturnType());
         });
     }

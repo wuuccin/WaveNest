@@ -99,11 +99,15 @@ wavenest:
       max-payload-all-types-kg: 50.0
       max-payload-margin: 0.1     # 上界裕度：有效上界＝50×0.9＝45 kg
       ttl-ais-ms: 10000           # AIS 1 Hz，10 s 无有效观测即「数据不足」延后
-      v-max-cruise-ms: 6.0        # 与预测侧 v-max-craft-ms 同源
+      # 11-05 序号 2 修正：这里是无人机最大巡航速度，不是船速。此前取 6.0 是照船速上界
+      # （sys_param.vMaxCraftMs）抄的，会让 etaMin 抬高 3.3 倍——船靠近航段末端时被
+      # TIME_INFEASIBLE 误拒。与 sys_param.vMaxCruiseMs=20 同值。
+      v-max-cruise-ms: 20.0
       t-handover-min-sec: 60
       wake-margin-sec: 60         # 等船唤醒提前量：tEnter − 60 s 唤醒
       suspend-retry-sec: 60       # 数据不足／未进段的重评周期
       horizon-sec: 1800           # 与预测侧 horizonSec 同源
+      max-delivery-sec: 1800      # 系统 deadline 的业务上限：下单 + 本值 与 船驶出航段 取小
       weight-tol-kg: 0.5          # 重复单重量容差
       dup-window-sec: 300         # 重复单时间窗
 
