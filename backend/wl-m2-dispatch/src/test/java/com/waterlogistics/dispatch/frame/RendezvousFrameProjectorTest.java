@@ -58,11 +58,11 @@ class RendezvousFrameProjectorTest {
     @Test
     void project_shouldCarryChosenNestAndFullCandidates() {
         FeasibleSelection selection = new FeasibleSelection(null, List.of(
-                new CandidateVerdict("C-A", "M400", "NEST-01", "UAV-02", 4.57,
+                new CandidateVerdict("C-A", "M400", "NEST-01", "UAV-02", 4.57, true,
                         Verdict.FEASIBLE, List.of()),
-                new CandidateVerdict("C-B", "M30T", "NEST-02", "UAV-03", 2.19,
+                new CandidateVerdict("C-B", "M30T", "NEST-02", "UAV-03", 2.19, false,
                         Verdict.FEASIBLE, List.of()),
-                new CandidateVerdict("C-C", "M3T", "NEST-02", "UAV-04", 2.19,
+                new CandidateVerdict("C-C", "M3T", "NEST-02", "UAV-04", 2.19, false,
                         Verdict.INFEASIBLE, List.of("载重不足"))));
 
         List<CandidateView> views =
@@ -98,7 +98,7 @@ class RendezvousFrameProjectorTest {
     @Test
     void candidateViewsOf_shouldTurnNanDistKmIntoNull() {
         FeasibleSelection selection = new FeasibleSelection(null, List.of(
-                new CandidateVerdict("C-A", "M400", "NEST-01", "UAV-02", Double.NaN,
+                new CandidateVerdict("C-A", "M400", "NEST-01", "UAV-02", Double.NaN, true,
                         Verdict.FEASIBLE, List.of())));
 
         List<CandidateView> views =
@@ -119,11 +119,12 @@ class RendezvousFrameProjectorTest {
     }
 
     private static CandidateVerdict feasible(String model, String droneId) {
-        return new CandidateVerdict("C-" + droneId, model, "N1", droneId, 3.5, Verdict.FEASIBLE, List.of());
+        return new CandidateVerdict("C-" + droneId, model, "N1", droneId, 3.5, true,
+                Verdict.FEASIBLE, List.of());
     }
 
     private static CandidateVerdict infeasible(String model, String droneId, String... reasons) {
-        return new CandidateVerdict("C-" + droneId, model, "N1", droneId, 2.8,
+        return new CandidateVerdict("C-" + droneId, model, "N1", droneId, 2.8, true,
                 Verdict.INFEASIBLE, List.of(reasons));
     }
 }
