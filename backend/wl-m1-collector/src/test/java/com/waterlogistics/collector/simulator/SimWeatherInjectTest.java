@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -22,7 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *
  * <p>本类守两条：
  * <ol>
- *   <li><b>粒度</b>：注入一片风＝每个网格点各一条（多位置），不是一条全局代表值；</li>
+ *   <li><b>粒度</b>：注入一片风＝每个网格点各一条（3×3 ＝ 9 条，多位置），不是一条全局代表值；</li>
  *   <li><b>持续</b>：注入后自产风保持这片海况，不在一秒后被打回基准值
  *       （否则演示时"风来了又把机型刷掉了"看不见）。</li>
  * </ol>
@@ -46,17 +47,17 @@ class SimWeatherInjectTest {
     void injectPublishesOnePerGridPoint() {
         int sent = sim.inject(11.0, 135.0, Double.NaN, true);
 
-        assertEquals(4, sent, "2×2 网格应发 4 条");
+        assertEquals(9, sent, "3×3 网格应发 9 条");
         List<WeatherData> out = publisher.weather();
-        assertEquals(4, out.size());
+        assertEquals(9, out.size());
 
         Set<String> positions = new HashSet<>();
         for (WeatherData w : out) {
             positions.add(w.lon() + "," + w.lat());
-            assertEquals(11.0, w.windSpeedMs(), 1e-9, "注入值应逐点一致");
+            assertEquals(11.0, w.windSpeedMs(), 1e-9, "注入值应逐点一致（注入不加空间梯度）");
             assertEquals(135.0, w.windDirDeg(), 1e-9);
         }
-        assertEquals(4, positions.size(), "四个网格点坐标必须互不相同——这就是'按位置多条'");
+        assertEquals(9, positions.size(), "九个网格点坐标必须互不相同——这就是'按位置多条'");
     }
 
     @Test
@@ -67,8 +68,9 @@ class SimWeatherInjectTest {
 
         sim.pollOnce(1_000L);
         for (WeatherData w : publisher.weather()) {
-            // 偏置 11-5=6，叠加波动 ±1.5 与抖动 ±0.3 → 应落在 11±1.8 附近
-            assertTrue(w.windSpeedMs() >= 11.0 - 1.8 - 1e-9 && w.windSpeedMs() <= 11.0 + 1.8 + 1e-9,
+            // 偏置 11-5=6，叠加波动 ±1.5、空间梯度 0..2.0 与抖动 ±0.2
+            // → 下界 11-1.5-0.2=9.3，上界 11+2.0+1.5+0.2=14.7
+            assertTrue(w.windSpeedMs() >= 9.3 - 1e-9 && w.windSpeedMs() <= 14.7 + 1e-9,
                     "注入后自产风应保持在注入海况附近，实际 " + w.windSpeedMs());
         }
     }
@@ -77,13 +79,14 @@ class SimWeatherInjectTest {
     @DisplayName("persist=false：只发这一轮，不改后续自产海况")
     void transientInjectionDoesNotBias() {
         sim.inject(11.0, 135.0, Double.NaN, false);
-        assertEquals(4, publisher.weather().size(), "这一轮照发 4 条");
+        assertEquals(9, publisher.weather().size(), "这一轮照发 9 条");
         assertNull(sim.currentBias(), "不应留下偏置");
 
         publisher.clear();
         sim.pollOnce(1_000L);
         for (WeatherData w : publisher.weather()) {
-            assertTrue(w.windSpeedMs() < 8.0, "后续自产风应回到基准带，实际 " + w.windSpeedMs());
+            // 回基准带：5 - 1.5 - 0.2 = 3.3 至 5 + 2.0 + 1.5 + 0.2 = 8.7
+            assertTrue(w.windSpeedMs() < 9.0, "后续自产风应回到基准带，实际 " + w.windSpeedMs());
         }
     }
 
@@ -99,7 +102,8 @@ class SimWeatherInjectTest {
         publisher.clear();
         sim.pollOnce(1_000L);
         for (WeatherData w : publisher.weather()) {
-            assertTrue(w.windSpeedMs() >= 5.0 - 1.8 - 1e-9 && w.windSpeedMs() <= 5.0 + 1.8 + 1e-9,
+            assertTrue(w.windSpeedMs() >= 5.0 - 1.5 - 0.2 - 1e-9
+                            && w.windSpeedMs() <= 5.0 + 2.0 + 1.5 + 0.2 + 1e-9,
                     "清偏置后应回基准 5.0 附近，实际 " + w.windSpeedMs());
         }
     }
@@ -151,12 +155,27 @@ class SimWeatherInjectTest {
     }
 
     @Test
-    @DisplayName("注入的时间语义与自产一致：obsTs ＝ targetTs ＝ ts")
+    @DisplayName("注入的时间语义与自产一致：obsTs ＝ ts，targetTs ＝ obsTs + 300 s")
     void injectedTimestampsFollowSameRule() {
         sim.inject(11.0, 135.0, Double.NaN, false);
         for (WeatherData w : publisher.weather()) {
-            assertEquals(w.obsTs(), w.targetTs(), "首版 targetTs 必须等于 obsTs");
             assertEquals(w.ts(), w.obsTs());
+            assertNotEquals(w.obsTs(), w.targetTs(), "targetTs 不得再等于 obsTs");
+            assertEquals(300_000L, w.targetTs() - w.obsTs(), "注入帧也应带预报时距");
         }
+    }
+
+    @Test
+    @DisplayName("注入九点同值同向：演示按参数报数、系统按同值判定，账要对得上")
+    void injectedGridIsUniformForDemoAccounting() {
+        sim.inject(13.0, 135.0, Double.NaN, false);
+        Set<Double> winds = new HashSet<>();
+        Set<Double> dirs = new HashSet<>();
+        for (WeatherData w : publisher.weather()) {
+            winds.add(w.windSpeedMs());
+            dirs.add(w.windDirDeg());
+        }
+        assertEquals(1, winds.size(), "注入的风速九点应完全一致");
+        assertEquals(1, dirs.size(), "注入的风向九点应完全一致");
     }
 }
