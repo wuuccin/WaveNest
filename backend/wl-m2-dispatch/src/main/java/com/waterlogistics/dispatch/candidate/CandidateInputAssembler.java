@@ -9,7 +9,9 @@ import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -25,6 +27,9 @@ import org.slf4j.LoggerFactory;
 public final class CandidateInputAssembler {
 
     private static final Logger log = LoggerFactory.getLogger(CandidateInputAssembler.class);
+
+    /** {@code drone.position_type} 的「停在自己巢里」取值（001_init.sql §5.2）。 */
+    static final String POSITION_AT_HOME = "原巢";
 
     private CandidateInputAssembler() {
     }
@@ -63,6 +68,35 @@ public final class CandidateInputAssembler {
         double pickupLat = order.getShipLat().doubleValue();
         double payloadKg = order.getGoodsWeight().doubleValue();
 
+        // ── 货物所在巢（11-05 新增）：先建巢索引，再按 cargoNestId 取货点 ──
+        // 索引只收「坐标齐全」的巢——缺坐标的巢既不能当货点也不能当候选起点，
+        // 建索引时一并过滤，后面两处判断共用同一份口径。
+        Map<String, NestEntity> nestById = new LinkedHashMap<>();
+        for (NestEntity n : nests) {
+            if (n.getLon() == null || n.getLat() == null) {
+                continue;
+            }
+            nestById.put(n.getNestId(), n);
+        }
+
+        String cargoNestId = normalizeCargoNestId(order.getCargoNestId());
+        double cargoLon = Double.NaN;
+        double cargoLat = Double.NaN;
+        if (cargoNestId != null) {
+            NestEntity cargoNest = nestById.get(cargoNestId);
+            if (cargoNest == null) {
+                // 货巢查不到坐标：记为「货点不可用」，生成端据此不产出任何组合。
+                // 不抛——这是台账问题不是调用方缺陷；但必须 WARN，否则现场只看到
+                // 「无可用候选」而不知道是货巢缺坐标（与 MED-BUG.12 同一类静默问题）。
+                log.warn("订单 {} 的货物所在巢 {} 不在本轮可用巢中（不存在／状态不可用／缺经纬度），"
+                        + "货点不可用，本轮不生成任何候选——请核对 nest 台账",
+                        order.getOrderId(), cargoNestId);
+            } else {
+                cargoLon = cargoNest.getLon().doubleValue();
+                cargoLat = cargoNest.getLat().doubleValue();
+            }
+        }
+
         List<CandidateInput.NestView> nestViews = new ArrayList<>(nests.size());
         // 已纳入的机巢（只有坐标齐全的才在里面）——下面组装无人机时用它判断归属巢是否可用
         Set<String> usableNestIds = new HashSet<>();
@@ -75,25 +109,33 @@ public final class CandidateInputAssembler {
                 continue;
             }
             usableNestIds.add(n.getNestId());
+            int occupied = occupiedCountOf(n, drones);
             nestViews.add(new CandidateInput.NestView(
                     n.getNestId(),
                     n.getLon().doubleValue(),
                     n.getLat().doubleValue(),
-                    splitModels(n.getSupportedModels())));
+                    splitModels(n.getSupportedModels()),
+                    freeSlotsOf(n, occupied),
+                    occupied));
         }
 
         List<CandidateInput.DroneView> droneViews = new ArrayList<>(drones.size());
         for (DroneEntity d : drones) {
             // 归属巢不在本轮候选集里（坐标缺失被跳过 / 巢不可用 / 巢号为空）时，
-            // 这架机的候选<b>必然</b>在生成端被 nestMap.get(nestId) == null 丢弃。
+            // 这架机的候选<b>必然</b>在生成端被丢弃。
             // 逐字审查：原来仍把它塞进 droneViews，生成端静默 continue——
             // 「机明明空闲健康却不出候选」在现场无从解释。这里提前跳过并 warn，
             // 把「是哪架机、挂在哪个巢」显式写进日志。
+            //
+            // ★ 11-05：巢×机枚举后「归属巢不可用」不再等于「这架机不可用」——
+            // 它仍可以从<b>别的巢</b>出发。但机型能力、电量、载荷是 <b>机自身</b>的属性，
+            // 与从哪个巢出发无关，故这里只在「巢号全空」时跳过（那时连机型校验都做不了），
+            // 巢号存在但不在可用列表时保留该机，由生成端按巢×机组合判定。
             String nestId = d.getCurrentNestId() != null ? d.getCurrentNestId() : d.getHomeNestId();
-            if (nestId == null || nestId.isBlank() || !usableNestIds.contains(nestId)) {
-                log.warn("无人机 {} 的归属机巢 {} 本轮不可用（巢缺失/无坐标/未在可用列表），"
-                                + "本轮不生成该机候选——请核对该机 current_nest_id/home_nest_id",
-                        d.getDroneId(), nestId);
+            if (nestId == null || nestId.isBlank()) {
+                log.warn("无人机 {} 既无 current_nest_id 也无 home_nest_id，本轮不生成该机候选"
+                                + "——请核对该机台账",
+                        d.getDroneId());
                 continue;
             }
             droneViews.add(new CandidateInput.DroneView(
@@ -101,18 +143,92 @@ public final class CandidateInputAssembler {
                     nestId,
                     d.getModel(),
                     d.getStatus(),
-                    // battery/maxPayload 缺失按 0.0＝有意保守（缺数据当"没电/载不动"，被闸淘汰）。
-                    // 切不可学 windLimit 的 NaN 口径——NaN 参与 > / < 比较恒 false，
-                    // 会让没电的机器通过电量闸（那才是危险方向）。缺失数据在台账里补。
-                    d.getBattery() != null ? d.getBattery().doubleValue() : 0.0,
-                    d.getMaxPayload() != null ? d.getMaxPayload().doubleValue() : 0.0,
+                    // ★ 11-05 起缺失给 NaN（＝未登记），不再给 0.0（MED-BUG.12）。
+                    // 原「缺失按 0＝保守」的理由站不住：0.0 让这架机在电量闸与载荷闸上
+                    // 双双被判死，而日志里看不出「它是因为台账漏填才落选」——
+                    // 现场只会说「这架机明明满电却不出候选」。改成 NaN 后由判定端
+                    // 按「未登记」显式处理并记 WARN，缺数据在台账里补。
+                    optionalDouble(d.getBattery()),
+                    optionalDouble(d.getMaxPayload()),
                     // 机型能力两列：DB 缺失时给 NaN 表示"未登记"，
                     // 由 FeasibilityJudge 按保守回落口径处理——既不臆造 0，也不填默认值冒充真值
                     optionalDouble(d.getWindLimitMs()),
                     optionalDouble(d.getCruiseSpeedMs())));
         }
 
-        return new CandidateInput(pickupLon, pickupLat, payloadKg, nestViews, droneViews);
+        return new CandidateInput(pickupLon, pickupLat, payloadKg, nestViews, droneViews,
+                cargoNestId, cargoLon, cargoLat);
+    }
+
+    /**
+     * 该巢当前停着的机数（11-05 新增）。
+     *
+     * <p><b>口径</b>：同巢且 {@code position_type = '原巢'} 的机算占位。
+     * 依据 {@code 001_init.sql} §5.2 的 {@code position_type} 取值
+     * （{@code 原巢／空中／他巢临时停靠／迫降点}）：只有 {@code 原巢} 表示「停在自己的巢里」，
+     * 空中飞着的不占位，迫降在野外的不占位。
+     *
+     * <p><b>数的是本轮查出的全部空闲健康机，不是「空位数」</b>：占用要数「停在巢里的全部机」
+     * （含充电中、满载、告警），但组装器只拿得到空闲健康机那一批。故口径是
+     * <b>占用数的下界</b>——真实占用只会更多。配合 {@link #freeSlotsOf} 的「占用未登记不拦」
+     * 口径，方向是安全的：不会因为少算而误拦可用巢。
+     *
+     * <p><b>为什么在 Java 里数而不是让 SQL 带一列子查询</b>：见
+     * {@code CandidateQueries.availableNestsWithOccupancy()} 的注释——子查询列依赖
+     * MyBatis-Plus 表元数据，纯单测下直接 NPE，把候选主链的可测试性换掉了，不划算。
+     *
+     * @param nest   机巢
+     * @param drones 本轮查出的无人机
+     * @return 停在该巢的机数（≥0）
+     */
+    static int occupiedCountOf(NestEntity nest, List<DroneEntity> drones) {
+        if (nest == null || nest.getNestId() == null || drones == null) {
+            return 0;
+        }
+        int count = 0;
+        for (DroneEntity d : drones) {
+            if (!nest.getNestId().equals(d.getCurrentNestId())) {
+                continue;
+            }
+            if (POSITION_AT_HOME.equals(d.getPositionType())) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /**
+     * 巢容量 → 剩余可停数（11-05 新增）。
+     *
+     * <p>取值语义（与 {@code CandidateInput.NestView.freeSlots()} 的契约一致）：
+     * <ul>
+     *   <li>{@code capacity} 未登记（{@code null} 或 ≤0）→ {@link Integer#MAX_VALUE}＝不限制；</li>
+     *   <li>占用数未登记（负数）→ {@code capacity}，即<b>按空巢放行</b>——
+     *       台账里没有占用信息时不拦，缺口由日志提示；</li>
+     *   <li>正常 → {@code max(0, capacity − occupied)}。</li>
+     * </ul>
+     *
+     * <p><b>为什么在这里算而不是在算法层算</b>：占用数来自台账，算法包不查库；
+     * 组装器是唯一同时握有 {@code capacity} 与无人机行的地方。
+     *
+     * @param n        机巢
+     * @param occupied 已占用数（{@link #occupiedCountOf} 的结果；负数表示未登记）
+     * @return 剩余可停数
+     */
+    static int freeSlotsOf(NestEntity n, int occupied) {
+        Integer capacity = n.getCapacity();
+        if (capacity == null || capacity <= 0) {
+            return Integer.MAX_VALUE;
+        }
+        if (occupied < 0) {
+            return capacity;
+        }
+        return Math.max(0, capacity - occupied);
+    }
+
+    /** 货巢 Id 归一：空白视作未指定。 */
+    static String normalizeCargoNestId(String raw) {
+        return (raw == null || raw.isBlank()) ? null : raw.trim();
     }
 
     /** {@code BigDecimal} → {@code double}；为 {@code null} 时给 {@code NaN}（＝未登记，不是 0）。 */
