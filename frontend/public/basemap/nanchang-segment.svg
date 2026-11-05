@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="1280" viewBox="0 0 900 1280">
+  <rect width="900" height="1280" fill="#edf3e9"/>
+  <path d="M0 0h900v1280H0z" fill="#e8efe5"/>
+  <path d="M0 95 205 190 340 95 520 220 770 120 900 175M0 480 220 405 420 500 660 390 900 440M0 860 195 800 390 915 650 805 900 890" fill="none" stroke="#d0dfd0" stroke-width="7"/>
+  <path d="M185-25C205 95 270 205 250 300S330 490 390 590 425 760 500 850 560 1030 695 1130 780 1210 820 1310" fill="none" stroke="#c0d5d2" stroke-width="190"/>
+  <path d="M185-25C205 95 270 205 250 300S330 490 390 590 425 760 500 850 560 1030 695 1130 780 1210 820 1310" fill="none" stroke="#a9ced0" stroke-width="155"/>
+  <path d="M185-25C205 95 270 205 250 300S330 490 390 590 425 760 500 850 560 1030 695 1130 780 1210 820 1310" fill="none" stroke="#dff1ee" stroke-width="3" stroke-dasharray="16 18"/>
+  <g stroke="#7f9c9b" stroke-width="10"><path d="M80 890h670"/><path d="M110 625h650"/><path d="M65 230h600"/></g>
+  <g fill="#395767" font-family="sans-serif" font-size="31" font-weight="600"><text x="32" y="865">朝阳大桥</text><text x="35" y="600">南昌大桥</text><text x="36" y="205">八一大桥</text></g>
+  <text x="610" y="620" fill="#397887" font-family="sans-serif" font-size="48" opacity=".72">赣江</text>
+  <text x="42" y="1230" fill="#617d79" font-family="sans-serif" font-size="24">南昌服务航段 · 离线示意底图</text>
+</svg>

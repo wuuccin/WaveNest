@@ -13,6 +13,7 @@ const props = defineProps({
 })
 const emit = defineEmits(['created', 'choose', 'next', 'previous', 'retry', 'finish'])
 const orders = useOrderStore(), ship = useShipStore(), drone = useDroneStore()
+const selectedShip = computed(() => ship.byId[ship.selectedMmsi] || null)
 const stages = computed(() => props.guide.branch === 'continue' ? CONTINUE_STAGES : GUIDE_STAGES)
 const stage = computed(() => stages.value[props.guide.index])
 const order = computed(() => orders.byId[props.guide.orderId])
@@ -47,7 +48,7 @@ const awaitingChoice = computed(() => props.guide.index === 2 && !props.guide.br
         <div v-if="awaitingChoice" class="guided-controls"><button class="button-quiet" @click="emit('previous')">← 上一步</button></div>
         <details class="guided-observe"><summary>这一步看什么 · 展开讲解要点</summary><ul><li v-for="point in stage.observe" :key="point">{{ point }}</li></ul></details>
       </article>
-      <div class="guided-visuals"><section class="guided-status-card"><div><span>订单状态</span><strong>{{ order?.orderStatus || '等待更新' }}</strong></div><div><span>无人机</span><strong>{{ drone.current?.uavId || '尚未起飞' }}</strong></div><div><span>剩余电量</span><strong>{{ battery }}</strong></div><div><span>船舶</span><strong>{{ ship.current?.shipName || '等待轨迹' }}</strong></div></section><section class="map-panel guided-map-panel"><div class="panel-head"><div><h2>{{ guide.index === 2 ? '变向前后对比 · 请选择下一步' : guide.branch === 'continue' ? '原机继续配送航线' : guide.branch === 'return' ? '带货返航航线' : '这一步的地图变化' }}</h2><p>{{ guide.index >= 2 ? '灰色为变向前预测，绿色为更新后的预测；点击选择后，粗线标出无人机下一段路线' : '看图标和航线标识，跟踪船舶、无人机与会面点' }}</p></div></div><MapView :comparison="guide.index >= 2 ? comparison : null" :branch-route="route" focus-route /></section><details class="guided-history"><summary>查看订单进展与事件流</summary><div class="guided-history-grid"><OrderTimeline :order-id="guide.orderId" /><EventStream /></div></details></div>
+      <div class="guided-visuals"><section class="guided-status-card"><div><span>订单状态</span><strong>{{ order?.orderStatus || '等待更新' }}</strong></div><div><span>无人机</span><strong>{{ drone.current?.uavId || '尚未起飞' }}</strong></div><div><span>剩余电量</span><strong>{{ battery }}</strong></div><div><span>船舶</span><strong>{{ selectedShip?.shipName || selectedShip?.mmsi || '等待轨迹' }}</strong></div></section><section class="map-panel guided-map-panel"><div class="panel-head"><div><h2>{{ guide.index === 2 ? '变向前后对比 · 请选择下一步' : guide.branch === 'continue' ? '原机继续配送航线' : guide.branch === 'return' ? '带货返航航线' : '这一步的地图变化' }}</h2><p>{{ guide.index >= 2 ? '灰色为变向前预测，绿色为更新后的预测；点击选择后，粗线标出无人机下一段路线' : '看图标和航线标识，跟踪船舶、无人机与会面点' }}</p></div></div><MapView :comparison="guide.index >= 2 ? comparison : null" :branch-route="route" focus-route /></section><details class="guided-history"><summary>查看订单进展与事件流</summary><div class="guided-history-grid"><OrderTimeline :order-id="guide.orderId" /><EventStream /></div></details></div>
     </div>
   </section>
 </template>

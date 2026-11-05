@@ -5,6 +5,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.dao.DataAccessException;
 
 /**
  * 调度结果展示的只读 HTTP 入口（M2 · 卢肄文 · 10-22 任务 D3）。
@@ -61,7 +62,11 @@ public final class MonitorController {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "page must be >= 1 and size must be between 1 and 200");
         }
-        return monitorQueryService.tasks(page, size);
+        try {
+            return monitorQueryService.tasks(page, size);
+        } catch (DataAccessException e) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "任务列表暂不可用", e);
+        }
     }
 
     /**
@@ -73,6 +78,10 @@ public final class MonitorController {
      */
     @GetMapping(MONITOR_STATISTICS)
     public MonitorAggregator.StatisticsResponse statistics() {
-        return monitorQueryService.statistics();
+        try {
+            return monitorQueryService.statistics();
+        } catch (DataAccessException e) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "统计暂不可用", e);
+        }
     }
 }

@@ -3,11 +3,12 @@ import { computed } from 'vue'
 import { useAlertStore, useDroneStore, useOrderStore, useShipStore } from '../stores'
 
 const ship = useShipStore()
+const selectedShip = computed(() => ship.byId[ship.selectedMmsi] || null)
 const drone = useDroneStore()
 const orders = useOrderStore()
 const alerts = useAlertStore()
 
-const shipPosition = computed(() => ship.current?.points?.[0] || ship.current)
+const shipPosition = computed(() => selectedShip.value?.points?.[0] || selectedShip.value)
 const latestAlert = computed(() => alerts.items[0])
 const coordinate = point => Number.isFinite(point?.lon) && Number.isFinite(point?.lat)
   ? `${point.lon.toFixed(4)}, ${point.lat.toFixed(4)}` : '等待位置帧'
@@ -29,7 +30,7 @@ const coordinate = point => Number.isFinite(point?.lon) && Number.isFinite(point
         <span class="frame-tag ship">ship_traj</span>
         <strong>船舶预测</strong>
         <p>{{ coordinate(shipPosition) }}</p>
-        <small>版本 {{ ship.current?.version ?? '--' }} · {{ ship.current?.points?.length ?? 0 }} 个预测点</small>
+        <small>船 {{ ship.selectedMmsi || '--' }} · 版本 {{ selectedShip?.version ?? '--' }} · {{ selectedShip?.points?.length ?? 0 }} 个预测点</small>
       </article>
       <article>
         <span class="frame-tag drone">drone_state</span>

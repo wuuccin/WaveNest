@@ -18,8 +18,10 @@ const onePixelPng = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAA
 const frames = () => {
   const timestamp = Date.now()
   return [
-    ['ship_traj', { version: timestamp, t0: timestamp, courseDeg: 31.2, validitySec: 300,
+    ['ship_traj', { mmsi: '123456789', version: timestamp, t0: timestamp, courseDeg: 31.2, validitySec: 300,
       lon: 115.8611, lat: 28.666, points: [{ t: timestamp + 60000, lon: 115.870, lat: 28.678, sigmaAlong: 90, sigmaCross: 40 }] }],
+    ['ship_traj', { mmsi: '987654321', version: timestamp, t0: timestamp, courseDeg: 12.4, validitySec: 300,
+      lon: 115.876, lat: 28.688, points: [{ t: timestamp + 60000, lon: 115.880, lat: 28.694, sigmaAlong: 40, sigmaCross: 20 }] }],
     ['drone_state', { uavId: 'UAV-OUTAGE', lon: 115.860, lat: 28.665, battery: 87, phase: 'OUTBOUND', ts: timestamp }],
     ['rendezvous', { orderId: 'ORD-OUTAGE', meetLon: 115.86944, meetLat: 28.67808, locked: false,
       candidateCount: 2, rejectionReasons: ['UAV-02：电量不足'] }],
@@ -74,6 +76,19 @@ try {
 
   await page.goto(`${baseUrl}/#dashboard`, { waitUntil: 'domcontentloaded' })
   await page.locator('.ship-pin').waitFor({ timeout: 10000 })
+  const shipSelect = page.getByLabel('选择船舶')
+  await shipSelect.waitFor({ timeout: 10000 })
+  assert.equal(await shipSelect.locator('option').count(), 2)
+  await shipSelect.selectOption('987654321')
+  assert.match(await page.locator('.map-summary').innerText(), /987654321/)
+  const secondShipPoint = await page.locator('.ship-pin').evaluate(node => {
+    const pos = node._leaflet_pos; return [pos?.x, pos?.y]
+  })
+  await shipSelect.selectOption('123456789')
+  const firstShipPoint = await page.locator('.ship-pin').evaluate(node => {
+    const pos = node._leaflet_pos; return [pos?.x, pos?.y]
+  })
+  assert.notDeepEqual(firstShipPoint, secondShipPoint, 'map marker must follow selected ship')
   await page.locator('.nest-pin').waitFor({ timeout: 10000 })
   const before = await snapshot()
   assert(before.businessFeatures >= 6, 'before outage, map must have live business features')
@@ -102,12 +117,13 @@ try {
   outsideOnline = false
   await page.reload({ waitUntil: 'domcontentloaded' })
   await page.locator('.ship-pin').waitFor({ timeout: 10000 })
-  await page.locator('.map-tile-notice.error').waitFor({ timeout: 10000 })
+  await page.locator('.map-tile-state').filter({ hasText: '离线航段底图已启用' }).waitFor({ timeout: 10000 })
   const outsideDown = await snapshot()
   assert(outsideDown.bodyVisible, 'external network outage must not blank the page')
   assert(outsideDown.businessFeatures >= 6, 'backend data must remain visible when only map tiles are offline')
   assert(blockedTileRequests > 0, 'external map requests must actually be blocked')
-  assert(outsideDown.notice.some(text => /瓦片加载失败/.test(text)), 'external tile outage must show a readable notice')
+  assert(await page.locator('.leaflet-image-layer[src="/basemap/nanchang-segment.svg"]').count() > 0,
+    'external tile outage must show the local basemap')
 
   if (errors.length) throw new Error(`Browser errors: ${errors.join('; ')}`)
   console.log(JSON.stringify({ before, backendDown, restored, outsideDown, socketCount, blockedTileRequests, browserErrors: errors }, null, 2))

@@ -15,12 +15,14 @@ import { candidateAssessment } from '../realtime/candidateAssessment'
 
 const props = defineProps({ comparison: { type: Object, default: null }, branchRoute: { type: Object, default: null }, focusRoute: { type: Boolean, default: false }, droneId: { type: String, default: '' }, orderId: { type: String, default: '' }, connectionError: { type: String, default: '' } })
 const ship = useShipStore(), drone = useDroneStore(), order = useOrderStore(), alert = useAlertStore(), nest = useNestStore(), fleet = useFleetStore(), airspace = useAirspaceStore(), prediction = usePredictionStore(), planTrack = usePlanTrackStore()
+const selectedShip = computed(() => ship.byId[ship.selectedMmsi] || null)
+const selectedTrack = computed(() => ship.tracks[ship.selectedMmsi] || [])
 let map, staticGroup, comparisonGroup, shipGroup, meetingGroup, droneGroup, branchGroup, alertGroup, nestGroup, fleetGroup, debugReferenceGroup, predictionGroup, planTrackGroup
 let lastOverlaidMmsi = ''
 // 规划航迹（阶段二 2）：独立图层组，清它不碰预测组——共用 group 时 clearLayers() 会误伤别人的线。
 let lastPlanOrderId = ''
-let activeBaseLayer = null, activeBaseType = 'imagery'
-let tileFailure = false
+let activeBaseLayer = null, activeBaseType = 'imagery', fallbackLayer = null
+let tileFailure = false, fallbackTimer = null, baseLayerControl = null
 const valid = point => point && Number.isFinite(point.lat) && Number.isFinite(point.lon)
 const visibleDrone = computed(() => props.droneId ? (drone.byId[props.droneId] || null) : drone.current)
 const displayNests = computed(() => nest.items.filter(item => inServiceArea(item)))
@@ -33,10 +35,10 @@ const assessment = computed(() => candidateAssessment(order.rendezvous, assigned
 const previousMeeting = computed(() => props.comparison?.meeting || order.previousRendezvous)
 const hasComparison = computed(() => Boolean(props.comparison || previousMeeting.value))
 const tileKey = String(import.meta.env.VITE_TIANDITU_KEY || '').trim()
-const tileStatus = ref(tileKey ? 'loading' : 'missing-key')
+const tileStatus = ref(tileKey ? 'loading' : 'fallback')
 const tileCaption = computed(() => tileStatus.value === 'loaded'
   ? (activeBaseType === 'imagery' ? '卫星影像' : '矢量底图')
-  : '主视图')
+  : tileStatus.value === 'fallback' ? '离线航段底图' : '主视图')
 const debugEnabled = import.meta.env.DEV && new URLSearchParams(window.location.search).get('debug') === '1'
 const pickedPoint = ref(null)
 const copyStatus = ref('')
@@ -101,7 +103,7 @@ const mapDataNotice = computed(() => {
   if (nest.loaded && !nest.items.length) return '后端暂未返回有效机巢坐标，因此不显示占位机巢。'
   const outsideNestCount = nest.items.length - displayNests.value.length
   if (outsideNestCount > 0) return `${outsideNestCount} 个机巢坐标超出赣江南昌段视野，未绘制；请核对后端场景坐标。`
-  const outsideLivePoint = [ship.current, visibleDrone.value, order.rendezvous].some(point => valid(point) && !inServiceArea(point))
+  const outsideLivePoint = [selectedShip.value, visibleDrone.value, order.rendezvous].some(point => valid(point) && !inServiceArea(point))
   if (outsideLivePoint) return '有实时位置超出赣江南昌段视野；请核对仿真坐标。视野保持在当前作业区。'
   return ''
 })
@@ -116,8 +118,8 @@ function createBaseLayer(type, name) {
   })
   for (const layer of [first, annotation]) {
     const active = () => activeBaseType === (type === 'img' ? 'imagery' : 'vector')
-    layer.on('tileload', () => { if (active() && !tileFailure) tileStatus.value = 'loaded' })
-    layer.on('tileerror', () => { if (active()) { tileFailure = true; tileStatus.value = 'tile-error' } })
+    layer.on('tileload', () => { if (active()) { tileStatus.value = 'loaded'; clearTimeout(fallbackTimer) } })
+    layer.on('tileerror', () => { if (active()) failBaseLayer() })
   }
   const group = L.layerGroup([first, annotation])
   group.options.attribution = `${escapeHtml(name)} · © 国家地理信息公共服务平台`
@@ -128,13 +130,40 @@ function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character])
 }
 
+function showOfflineBase() {
+  if (!map) return
+  clearTimeout(fallbackTimer)
+  if (activeBaseLayer) map.removeLayer(activeBaseLayer)
+  activeBaseLayer = null
+  if (!fallbackLayer) fallbackLayer = L.imageOverlay('/basemap/nanchang-segment.svg',
+    [[serviceArea.southwest.lat, serviceArea.southwest.lon], [serviceArea.northeast.lat, serviceArea.northeast.lon]],
+    { interactive: false, opacity: 1 })
+  fallbackLayer.addTo(map)
+  tileStatus.value = 'fallback'
+  if (baseLayerControl) baseLayerControl.value = 'offline'
+}
+
+function failBaseLayer() {
+  if (tileFailure) return
+  tileFailure = true
+  clearTimeout(fallbackTimer)
+  if (activeBaseType === 'imagery') {
+    fallbackTimer = setTimeout(() => setBaseLayer('vector'), 300)
+  } else showOfflineBase()
+}
+
 function setBaseLayer(type) {
+  if (type === 'offline') { showOfflineBase(); return }
   if (!map || !tileKey || !baseLayers[type]) return
   if (activeBaseLayer) map.removeLayer(activeBaseLayer)
+  if (fallbackLayer) map.removeLayer(fallbackLayer)
   activeBaseType = type
   tileFailure = false
   activeBaseLayer = baseLayers[type].addTo(map)
   tileStatus.value = 'loading'
+  if (baseLayerControl) baseLayerControl.value = type
+  clearTimeout(fallbackTimer)
+  fallbackTimer = setTimeout(failBaseLayer, 5000)
 }
 
 function installBaseLayerControl() {
@@ -145,11 +174,12 @@ function installBaseLayerControl() {
     label.textContent = '底图 '
     const select = L.DomUtil.create('select', '', label)
     select.setAttribute('aria-label', '地图底图')
-    select.innerHTML = '<option value="imagery">卫星影像</option><option value="vector">矢量底图</option>'
-    select.value = activeBaseType
-    select.disabled = !tileKey
+    select.innerHTML = '<option value="imagery">卫星影像</option><option value="vector">矢量底图</option><option value="offline">离线航段底图</option>'
+    select.value = tileKey ? activeBaseType : 'offline'
+    baseLayerControl = select
+    select.disabled = false
     L.DomEvent.disableClickPropagation(container)
-    L.DomEvent.on(select, 'change', () => setBaseLayer(select.value))
+    L.DomEvent.on(select, 'change', () => select.value === 'offline' ? showOfflineBase() : setBaseLayer(select.value))
     return container
   }
   control.addTo(map)
@@ -245,19 +275,19 @@ function drawPlanTrackOverlay() {
 const update = () => {
   if (!map) return
   drawComparison()
-  drawShip(map, shipGroup, ship.current, ship.actualTrack, debugEnabled)
+  drawShip(map, shipGroup, selectedShip.value, selectedTrack.value, debugEnabled)
   drawMeeting(map, meetingGroup, order.rendezvous)
   drawDrone(map, droneGroup, visibleDrone.value, props.orderId || order.rendezvous?.orderId || '', debugEnabled)
   drawNests(nestGroup, displayNests.value, assessment.value, debugEnabled)
   drawFleet(fleetGroup, fleet.items, displayNests.value)
   drawStaticFeatures(staticGroup, displayAirspace.value)
   drawBranchRoute()
-  drawAlerts(map, alertGroup, alert.items, order.orders, visibleDrone.value, ship.current)
+  drawAlerts(map, alertGroup, alert.items, order.orders, visibleDrone.value, selectedShip.value)
   drawPredictionOverlay()
   drawPlanTrackOverlay()
   const rawPoints = (props.focusRoute
-    ? [ship.current, visibleDrone.value, order.rendezvous, previousMeeting.value, ...(props.branchRoute?.points || [])]
-    : [ship.current, ...(ship.current?.points || []), visibleDrone.value,
+    ? [selectedShip.value, visibleDrone.value, order.rendezvous, previousMeeting.value, ...(props.branchRoute?.points || [])]
+    : [selectedShip.value, ...(selectedShip.value?.points || []), visibleDrone.value,
       ...(visibleDrone.value?.segments || []).flatMap(segment => segment.points || []), order.rendezvous,
       props.comparison?.ship, ...(props.comparison?.ship?.points || []), previousMeeting.value,
       ...(props.branchRoute?.points || [])]).filter(valid)
@@ -282,7 +312,7 @@ onMounted(() => {
     baseLayers.imagery = createBaseLayer('img', '卫星影像')
     baseLayers.vector = createBaseLayer('vec', '矢量底图')
     setBaseLayer('imagery')
-  }
+  } else showOfflineBase()
   L.control.zoom({ position: 'bottomright' }).addTo(map)
   comparisonGroup = L.layerGroup().addTo(map)
   staticGroup = L.layerGroup().addTo(map)
@@ -307,11 +337,11 @@ onMounted(() => {
   // 有规划航迹时就让它说了算（重新触发一次 update，借 invalidateSize 后的正确尺寸重画）。
   setTimeout(() => { if (map) { map.invalidateSize(); if (!planTrack.count) fitServiceArea(); update() } }, 100)
 })
-watch([() => ship.current, () => visibleDrone.value, () => order.rendezvous, () => alert.items.length,
+watch([() => selectedShip.value, () => selectedTrack.value, () => visibleDrone.value, () => order.rendezvous, () => alert.items.length,
   () => order.previousRendezvous, () => order.orders, () => props.comparison, () => props.branchRoute, () => props.droneId, () => props.orderId, () => nest.items,
   () => fleet.items, () => airspace.items, () => prediction.overlay,
   () => planTrack.byOrder, () => planTrack.highlightKind], update, { deep: true })
-onUnmounted(() => { if (map && debugEnabled) map.off('click', pickMapPoint); cancelFit(); map?.remove(); map = null; activeBaseLayer = null; debugReferenceGroup = null; predictionGroup = null; planTrackGroup = null; lastOverlaidMmsi = ''; lastPlanOrderId = '' })
+onUnmounted(() => { clearTimeout(fallbackTimer); if (map && debugEnabled) map.off('click', pickMapPoint); cancelFit(); map?.remove(); map = null; activeBaseLayer = null; fallbackLayer = null; baseLayerControl = null; debugReferenceGroup = null; predictionGroup = null; planTrackGroup = null; lastOverlaidMmsi = ''; lastPlanOrderId = '' })
 </script>
 
 <template>
@@ -359,8 +389,7 @@ onUnmounted(() => { if (map && debugEnabled) map.off('click', pickMapPoint); can
         <button type="button" :disabled="!pickedPoint" @click="copyPickedPoint">复制经纬度</button>
         <small v-if="copyStatus">{{ copyStatus }}</small>
       </section>
-      <div v-if="tileStatus === 'missing-key'" class="map-tile-notice" role="status"><strong>卫星底图待配置</strong><span>在 frontend/.env.local 设置 VITE_TIANDITU_KEY；密钥不会提交到仓库。</span><small>本地开发地址需加入天地图密钥白名单。</small></div>
-      <div v-else-if="tileStatus === 'tile-error'" class="map-tile-notice error" role="status"><strong>天地图瓦片加载失败</strong><span>请检查密钥、域名白名单和网络后刷新页面。</span></div>
+      <div v-if="tileStatus === 'fallback'" class="map-tile-state" role="status">离线航段底图已启用 · 船舶、机巢和航线可继续查看</div>
       <div v-else-if="tileStatus === 'loading'" class="map-tile-state" role="status">正在加载天地图底图…</div>
     </div>
   </div>
