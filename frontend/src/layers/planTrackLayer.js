@@ -117,20 +117,34 @@ export function drawPlanTrack(group, track, options = {}) {
   return { drawn, skipped }
 }
 
+/** 视野校正重试上限——与函数注释「最多三轮」一致，容器尺寸持续为 0 时最多重试 3 次。 */
+const MAX_FIT_RETRIES = 3
+
+/** 挂起的视野校正 timer（模块级：同一函数多次触发时只保留最后一次，组件卸载时由 cancelFit 清掉）。 */
+let fitTimer = null
+
 /** 视野移到整条航迹；退化（单点/无效包围盒）时不动视野，免得把整段航道缩没。 */
-function fitToPoints(group, latLngs) {
+function fitToPoints(group, latLngs, retries = 0) {
   const map = group?._map
   if (!map) return
   // 首帧可能在地图完成布局之前到达（容器尺寸还是 0，fitBounds 算出的是垃圾缩放，
   // 表现就是「线画了但小得看不见」）。布局没好就等一拍再试，最多三轮。
   if (!map.getSize().x || !map.getSize().y) {
-    setTimeout(() => fitToPoints(group, latLngs), 250)
+    if (retries >= MAX_FIT_RETRIES) return
+    clearTimeout(fitTimer)
+    fitTimer = setTimeout(() => fitToPoints(group, latLngs, retries + 1), 250)
     return
   }
   const bounds = L.latLngBounds(latLngs)
   if (!bounds.isValid()) return
   if (bounds.getNorthEast().equals(bounds.getSouthWest())) return
   map.fitBounds(bounds.pad(.25), { padding: [30, 30], maxZoom: 15, animate: true })
+}
+
+/** 取消任何挂起的视野校正——组件卸载时调用，避免卸载后残留回调继续触发。 */
+export function cancelFit() {
+  clearTimeout(fitTimer)
+  fitTimer = null
 }
 
 /** 清空规划航迹（取消订单选中、切换数据源时调用）。 */

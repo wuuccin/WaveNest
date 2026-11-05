@@ -4,7 +4,8 @@ const labels = {
   alarm: '告警事件',
   rendezvous: '会面点更新',
   drone_state: '无人机状态',
-  ship_traj: '船舶轨迹'
+  ship_traj: '船舶轨迹',
+  plan_track: '规划航迹'
 }
 
 /** 监控任务以订单号供用户选择，以无人机号作为回放查询键。 */

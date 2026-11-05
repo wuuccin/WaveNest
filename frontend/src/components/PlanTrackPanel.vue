@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
 import { usePlanTrackStore } from '../stores'
 import { KIND, SEGMENT_ORDER, SEGMENT_STYLE, segmentLabel, offsetText, kindRank } from '../api/planTrack'
 
@@ -12,8 +12,12 @@ import { KIND, SEGMENT_ORDER, SEGMENT_STYLE, segmentLabel, offsetText, kindRank 
  * <p>与预测看台面板的分工：那块管<b>船舶预测</b>（点选船→看它的预测点列），
  * 这块管<b>无人机计划航迹</b>（按订单）。两块数据源不同，互不影响。
  */
-defineProps({ source: { type: String, default: 'live' } })
+const props = defineProps({ source: { type: String, default: 'live' } })
 const store = usePlanTrackStore()
+
+// 换数据源（实时/离线/回放）即全清计划线，与 stores/planTrack.js 不变式 2 对齐。
+// 与 PredictionPanel 同思路：数据源切换是「全清」语义，不在切换点各自漏清。
+watch(() => props.source, () => { store.reset() })
 
 /** 段按契约顺序展示；契约外段排最后并原样回显（契约漂移不洗掉）。 */
 const rows = computed(() => store.tracks.map(track => ({
@@ -60,7 +64,7 @@ function leave() { store.setHighlight('') }
     </p>
 
     <p v-if="!rows.length" class="plan-track-empty">
-      {{ source === 'mock' ? '离线演示不产出规划航迹帧' : '等待后端下发 plan_track 帧' }}<br>
+      {{ props.source === 'mock' ? '离线演示不产出规划航迹帧' : '等待后端下发 plan_track 帧' }}<br>
       <small>航迹随派发产出；收到一帧后这里会按三段列出航点数与历时。</small>
     </p>
 

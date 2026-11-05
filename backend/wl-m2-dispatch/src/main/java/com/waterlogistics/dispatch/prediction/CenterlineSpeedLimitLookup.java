@@ -2,6 +2,7 @@ package com.waterlogistics.dispatch.prediction;
 
 import com.waterlogistics.algo.estimation.MultiStepPredictor.SpeedLimitLookup;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -31,6 +32,10 @@ import java.util.List;
  *
  * <p>配置为空或非法时返回「恒不限速」的实例，预测链路退化为现状（等价 {@code unbounded()}），
  * 不会因一条配置写坏把整条预测链路拦停。
+ *
+ * <p><b>切换点</b>：{@link #switchPointsM()} 把各段端点交给预测器用于切分子步。限速切换点与
+ * 中心线顶点不重合时，若不切分，一个子步会跨过切换点而整步沿用旧限速——解析积分的前提
+ * （子步内限速为常量）不成立，误差可达百米量级。
  */
 public final class CenterlineSpeedLimitLookup implements SpeedLimitLookup {
 
@@ -48,8 +53,12 @@ public final class CenterlineSpeedLimitLookup implements SpeedLimitLookup {
     /** 按 {@code fromS} 升序、不重叠的分段表。 */
     private final List<Segment> segments;
 
+    /** 分段边界的弧长位置（升序去重），供预测器切分子步；构造时一次算好，避免逐子步重建。 */
+    private final double[] switchPointsM;
+
     private CenterlineSpeedLimitLookup(List<Segment> segments) {
         this.segments = segments;
+        this.switchPointsM = buildSwitchPoints(segments);
     }
 
     @Override
@@ -60,6 +69,34 @@ public final class CenterlineSpeedLimitLookup implements SpeedLimitLookup {
             }
         }
         return UNBOUNDED_MS;
+    }
+
+    /**
+     * 各段 {@code fromS}／{@code toS} 的升序去重列表，m。
+     *
+     * <p>{@link #parse} 已保证 {@code fromS} 升序且 {@code fromS >= 上一段 toS}，故按段顺序依次追加
+     * 两个端点天然非降，只需去掉相邻重复（首尾相接的两段只有一个真实切换点）。
+     *
+     * <p>段间留空隙时（如 {@code 0,2000,4.0;3000,5000,3.0}）空隙两端都要保留：{@code 2000} 是
+     * 「退出限速段」（回到不限速）、{@code 3000} 是「进入限速段」，都是限速发生变化的位置。
+     */
+    @Override
+    public double[] switchPointsM() {
+        return switchPointsM.clone();
+    }
+
+    private static double[] buildSwitchPoints(List<Segment> segments) {
+        double[] raw = new double[segments.size() * 2];
+        int n = 0;
+        for (Segment seg : segments) {
+            if (n == 0 || raw[n - 1] != seg.fromS()) {
+                raw[n++] = seg.fromS();
+            }
+            if (raw[n - 1] != seg.toS()) {
+                raw[n++] = seg.toS();
+            }
+        }
+        return Arrays.copyOf(raw, n);
     }
 
     /**

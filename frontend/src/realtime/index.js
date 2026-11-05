@@ -48,7 +48,7 @@ export function createRealtime() {
           const history = await api.replay(droneId)
           const latest = new Map()
           for (const frame of history.frames || []) {
-            if (['ship_traj', 'drone_state', 'rendezvous', 'alarm'].includes(frame.type)) latest.set(frame.type, frame)
+            if (['ship_traj', 'drone_state', 'rendezvous', 'alarm', 'plan_track'].includes(frame.type)) latest.set(frame.type, frame)
           }
           restored = [...latest.values()]
         } catch { /* A live source may not expose historical frames. */ }
@@ -96,7 +96,7 @@ export function createRealtime() {
   }
   function resetMock() {
     close(); status.mode = 'mock'; status.connection = '离线演示'; status.error = ''; mockStep = 0
-    orders.reset(); alert.clear(); events.clear(); ship.apply(null); drone.apply(null)
+    orders.reset(); alert.clear(); events.clear(); ship.apply(null); drone.apply(null); planTrack.reset()
     SCENES[0].frames.forEach(([type, data]) => emit(type, data))
   }
   function nextMock() {
