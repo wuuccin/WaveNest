@@ -8,7 +8,9 @@ import com.waterlogistics.contract.rest.GateSource;
 import com.waterlogistics.contract.rest.GateStatus;
 import com.waterlogistics.dispatch.gate.DispatchGateService;
 import com.waterlogistics.dispatch.record.TaskLogRecorder;
+import com.waterlogistics.storage.repository.GoodsMapper;
 
+import java.lang.reflect.Proxy;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -31,12 +33,21 @@ class OrderControllerTest {
     @BeforeEach
     void setUp() {
         gateService = new DispatchGateService();
-        // 本测试只验 GET 回显，不触发 submit 链路：装配器/唤醒器传 null 即可
-        // （本模块测试无 Mockito，JDK 动态代理又只能代理接口，null 是最省的桩）
+        // 本测试只验 GET 回显，不触发 submit／cargo-ready 链路：装配器/唤醒器传 null 即可
+        // （本模块测试无 Mockito，JDK 动态代理又只能代理接口，null 是最省的桩）；
+        // 货物映射器同理只做占位，不参与本类的任何断言
         controller = new OrderController(
                 new OrderAdmissionService(new TaskLogRecorder(), event -> { },
                         null, null, null),
-                gateService);
+                gateService,
+                new CargoReadyService(stubGoodsMapper()));
+    }
+
+    /** 全返回 null 的货物映射器桩（本类不断言货物路径）。 */
+    private static GoodsMapper stubGoodsMapper() {
+        return (GoodsMapper) Proxy.newProxyInstance(
+                GoodsMapper.class.getClassLoader(), new Class<?>[]{GoodsMapper.class},
+                (proxy, method, args) -> null);
     }
 
     @Test
@@ -87,5 +98,15 @@ class OrderControllerTest {
 
         gateService.clear(GateSource.AUTO);
         assertEquals(GateStatus.NORMAL, controller.listOrders().dispatchGate().gateStatus());
+    }
+
+    @Test
+    @DisplayName("11-05：cargo-ready 端点转发到 CargoReadyService（桩表全空 → 查无货物）")
+    void cargoReady_shouldDelegateToService() {
+        CargoReadyResponse response = controller.cargoReady("ORD-1");
+
+        assertEquals(false, response.accepted());
+        assertEquals(CargoReadyResponse.Reason.GOODS_NOT_FOUND.name(), response.reasonCode());
+        assertEquals("ORD-1", response.orderId(), "订单号要回显，便于前端对号");
     }
 }

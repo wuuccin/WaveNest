@@ -97,6 +97,7 @@ public class OrderAdmissionService {
         }
 
         // HIGH.17：mmsi 只归一一次，校验、判定、事件用同一个值
+        // 11-05 序号 1：归一已下沉到 OrderSubmitRequest 的紧凑构造器，此处 trim 为幂等兜底
         String mmsi = request.shipMmsi().trim();
         // HIGH.18：优先级先过枚举，事件与落库统一写枚举名，不透传原始请求串
         OrderPriority priority = OrderPriority.fromCode(request.priority());
@@ -104,7 +105,7 @@ public class OrderAdmissionService {
         String orderId = nextOrderId(nowMs);
         AdmissionPipeline.OrderRequest pipelineRequest = new AdmissionPipeline.OrderRequest(
                 orderId, mmsi, request.goodsType(), request.goodsWeight(),
-                request.expectedTimeMs(), priority.name(), null);
+                request.expectedTimeMs(), priority.name(), null, request.cargoNestId());
 
         AdmissionPipeline.Input input = inputAssembler.assemble(
                 pipelineRequest, nowMs, snapshotPriorOrders());
@@ -293,6 +294,12 @@ public class OrderAdmissionService {
                 || !Double.isFinite(request.goodsWeight())) {
             return RejectReason.GOODS_WEIGHT_INVALID;
         }
+        // 11-05 序号 1：goods_type 是 VARCHAR(64)，超长在库层要么被静默截断（两种货型被判成同一类），
+        // 要么直接报错（一次下单变成 500）。在这里拦下，代价是前端改一行提示，不是查一次库。
+        if (request.goodsType() != null
+                && request.goodsType().length() > OrderSubmitRequest.GOODS_TYPE_MAX_LENGTH) {
+            return RejectReason.GOODS_TYPE_TOO_LONG;
+        }
         try {
             OrderPriority.fromCode(request.priority());
         } catch (IllegalArgumentException e) {
@@ -328,6 +335,9 @@ public class OrderAdmissionService {
 
         /** 载重不合法 */
         GOODS_WEIGHT_INVALID("物资载重必须为正数（kg）"),
+
+        /** 货型超长（列宽 64） */
+        GOODS_TYPE_TOO_LONG("物资类型过长（上限 " + OrderSubmitRequest.GOODS_TYPE_MAX_LENGTH + " 字符）"),
 
         /** 优先级不合法 */
         PRIORITY_INVALID("优先级取值不合法（NORMAL/URGENT/EMERGENCY）"),

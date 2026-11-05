@@ -187,4 +187,66 @@ class PrecisePredictionEngineTest {
         assertEquals(PredictionMode.CONSTANT, PredictionMode.fromCode("精算"));
         assertEquals(PredictionMode.CONSTANT, PredictionMode.fromCode(null));
     }
+
+    // ───────────── 11-05 序号 1：MED-BUG.43 哨兵值 / MED-BUG.42 自报航向可信度 ─────────────
+
+    @Test
+    @DisplayName("★ MED-BUG.43：SOG 为 AIS 不可用哨兵（1023×0.1kn=102.3kn）必须拒，不得当成真速度")
+    void sogUnavailableSentinel_shouldBeRejected() {
+        AisMessage sentinel = new AisMessage(MMSI, "测船",
+                ORIGIN_LON, ORIGIN_LAT, PrecisePredictionEngine.AIS_SOG_UNAVAILABLE_KN,
+                30.0, T0);
+
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> engine.predict(sentinel));
+        assertTrue(e.getMessage().contains("哨兵"),
+                "报错要能一眼看出是哨兵而不是「速度异常」：" + e.getMessage());
+        assertEquals(0, engine.trackedShipCount(), "哨兵帧不得建出状态");
+    }
+
+    @Test
+    @DisplayName("★ MED-BUG.43：COG 落在 [0,360) 之外一律拒（含 3600×0.1°=360 与航向不可用 511）")
+    void cogOutOfRange_shouldBeRejected() {
+        AisMessage tenthsSentinel = new AisMessage(MMSI, "测船",
+                ORIGIN_LON, ORIGIN_LAT, 8.0, 360.0, T0);
+        assertThrows(IllegalArgumentException.class, () -> engine.predict(tenthsSentinel));
+
+        AisMessage headingSentinel = new AisMessage(MMSI, "测船",
+                ORIGIN_LON, ORIGIN_LAT, 8.0, 511.0, T0);
+        assertThrows(IllegalArgumentException.class, () -> engine.predict(headingSentinel));
+
+        AisMessage negative = new AisMessage(MMSI, "测船",
+                ORIGIN_LON, ORIGIN_LAT, 8.0, -1.0, T0);
+        assertThrows(IllegalArgumentException.class, () -> engine.predict(negative));
+    }
+
+    @Test
+    @DisplayName("★ MED-BUG.42：跨度不足且船速低于 1 kn 时不拿自报航向硬建线（宁可不给预测）")
+    void lowSpeedShortSpan_shouldNotTrustReportedCog() {
+        // 泊船：位置噪声让两点相距 10 m（> MIN_TRACK_GAP_M 的 5 m，能成为两个顶点），
+        // 但 SOG 只有 0.3 kn——此时 COG 是噪声方向，不是航迹方向
+        double east10m = 10.0 / (MPD_LAT * Math.cos(Math.toRadians(ORIGIN_LAT)));
+        AisMessage first = new AisMessage(MMSI, "测船", ORIGIN_LON, ORIGIN_LAT, 0.3, 90.0, T0);
+        AisMessage second = new AisMessage(MMSI, "测船",
+                ORIGIN_LON + east10m, ORIGIN_LAT, 0.3, 90.0, T0 + 10_000L);
+
+        assertTrue(engine.predict(first).isEmpty(), "单点建不出折线");
+        assertTrue(engine.predict(second).isEmpty(),
+                "0.3 kn 的自报航向无信息量，不得据此造一条参考线（造了会让后续残差全建在假方向上）");
+    }
+
+    @Test
+    @DisplayName("对照：同样 10 m 跨度，速度正常时仍按自报航向建线并出预测（门限只拦低速）")
+    void normalSpeedShortSpan_shouldStillPredict() {
+        PrecisePredictionEngine fresh =
+                new PrecisePredictionEngine(settings, PrecisePredictionEngine.Params.defaults());
+        double east10m = 10.0 / (MPD_LAT * Math.cos(Math.toRadians(ORIGIN_LAT)));
+        AisMessage first = new AisMessage(MMSI, "测船", ORIGIN_LON, ORIGIN_LAT, 5.0, 90.0, T0);
+        AisMessage second = new AisMessage(MMSI, "测船",
+                ORIGIN_LON + east10m, ORIGIN_LAT, 5.0, 90.0, T0 + 10_000L);
+
+        assertTrue(fresh.predict(first).isEmpty());
+        assertTrue(fresh.predict(second).isPresent(),
+                "5 kn 时自报航向可信，冷启动时机不该被这道速度门推迟");
+    }
 }

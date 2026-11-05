@@ -115,6 +115,37 @@ public class PrecisePredictionEngine implements ResidualSampleSource {
      */
     static final double ROBUST_BEARING_MIN_SPAN_M = 60.0;
 
+    /**
+     * 信任船舶自报航向所需的最低对地航速，kn（MED-BUG.42）。
+     *
+     * <p><b>为什么需要速度门</b>：COG 是位移矢量的方向。船速降到 1 kn 以下时，
+     * 1 Hz 采样下的真实位移只有 0.5 m，而 AIS 位置量化与噪声是米级——位移被噪声淹没，
+     * COG 退化成随机量。用一条随机方向的参考线去做预测，所有残差与 σ 都建立在这个假方向上，
+     * 属于<b>静默错误</b>（结构断言与地理框都拦不住）。
+     *
+     * <p>取 1.0 kn（≈0.51 m/s）：这是 AIS 里「船在动」的最小可信量级，也是港内缓速的上沿之一；
+     * 低于它时"宁可这一拍不给预测，等速度起来再建线"，与冷启动「点不够就不出预测」同口径。
+     */
+    static final double COG_TRUST_MIN_SOG_KN = 1.0;
+
+    /**
+     * AIS 「不可用」哨兵值：对地航速 1023（0.1 kn 单位）＝ {@value} kn（MED-BUG.43）。
+     *
+     * <p>原始 AIS 报文里 SOG 以 0.1 kn 为单位、1023 表示「不可用」。上游若按十进制直接换算，
+     * 落在这里就是一个看起来正常的 102.3 kn；不拦就会当成真实速度去做预测，
+     * 船在 1 s 内"跑"出 52 m，滤波器的速度状态被这一帧打歪，此后几十拍的 s 都偏。
+     */
+    static final double AIS_SOG_UNAVAILABLE_KN = 102.3;
+
+    /**
+     * AIS 「不可用」哨兵值：对地航向 3600（0.1° 单位）＝ {@value}°（MED-BUG.43）。
+     *
+     * <p>航向「不可用」在 AIS 里还有另一种表达：真航向 511（整度单位）。两种哨兵都落在
+     * {@code [0, 360)} 之外或边界上，故本类统一按「COG 必须落在 {@code [0, 360)}」判——
+     * 360.0 与 511.0 一并被拒，不必为两种编码各写一条分支。
+     */
+    static final double AIS_COG_UNAVAILABLE_DEG = 360.0;
+
     /** 线尾余量，m：投影逼近折线末端时重建参考线。 */
     static final double TAIL_MARGIN_M = 100.0;
 
@@ -669,7 +700,7 @@ public class PrecisePredictionEngine implements ResidualSampleSource {
             if (state.geometry == null) {
                 WaterwayGeometry geometry = centerline != null
                         ? centerline
-                        : buildGeometry(state.window, observation.cog());
+                        : buildGeometry(state.window, observation);
                 if (geometry == null) {
                     log.debug("精算冷启动：mmsi={} 实测点不足以建参考线（{} 条）",
                             observation.mmsi(), state.window.size());
@@ -698,14 +729,24 @@ public class PrecisePredictionEngine implements ResidualSampleSource {
             if (centerline == null && state.along.s() >= state.geometry.totalLengthM() - TAIL_MARGIN_M) {
                 log.warn("参考线将尽，重建并重锚：mmsi={} s={} 总长={}",
                         observation.mmsi(), state.along.s(), state.geometry.totalLengthM());
-                WaterwayGeometry rebuilt = buildGeometry(state.window, observation.cog());
-                if (rebuilt != null) {
-                    state.geometry = rebuilt;
-                    state.initialized = false;
-                    state.lastAppliedTsMs = Long.MIN_VALUE;
-                    for (AisMessage historic : state.window) {
-                        applyObservation(state, historic);
-                    }
+                WaterwayGeometry rebuilt = buildGeometry(state.window, observation);
+                if (rebuilt == null) {
+                    // HIGH.21：重建失败时<b>不能</b>继续用那条已走完的参考线出预测。
+                    // 继续下走的后果不是"精度差一点"，而是 s 被夹在 totalLength 上，
+                    // 于是整段点列冻在同一个坐标、却带着正常的 σ 与前提状态发给下游——
+                    // 下游（会面点求解、ETA）无法把它和"船真的停住了"区分开。
+                    // 本类对"这一拍给不出可信预测"的既有口径就是不产出（见冷启动分支），
+                    // 故这里同样返回空，让快照停在上一个有效版本上，而不是刷一版假的。
+                    log.warn("参考线已尽且无法重建，本拍不出预测：mmsi={} s={} 总长={} 窗口={} 条",
+                            observation.mmsi(), state.along.s(), state.geometry.totalLengthM(),
+                            state.window.size());
+                    return Optional.empty();
+                }
+                state.geometry = rebuilt;
+                state.initialized = false;
+                state.lastAppliedTsMs = Long.MIN_VALUE;
+                for (AisMessage historic : state.window) {
+                    applyObservation(state, historic);
                 }
             }
 
@@ -823,11 +864,21 @@ public class PrecisePredictionEngine implements ResidualSampleSource {
      * <p>走向按窗口跨度二选一：跨度 ≥ {@value #ROBUST_BEARING_MIN_SPAN_M} m 时用<b>首→末</b>实测走向；
      * 不足时改用 {@code reportedCogDeg} 建直线参考线（理由见该常量）。
      *
+     * <p><b>MED-BUG.42：自报航向不是无条件可信的</b>。COG 是「对地航向」，物理上它是
+     * 位移矢量的方向；船近乎静止时位移被位置噪声淹没，船端算出的 COG 就退化成随机量
+     * （AIS 规范在这种情况下甚至会直接把 COG 填成不可用哨兵）。原实现只要有两条点就
+     * 拿 COG 建线，于是<b>一条泊船会被赋予一条随机方向的参考线</b>，此后所有残差都在
+     * 这条假线上算——比"这一拍不给预测"糟得多。
+     *
+     * <p>故加一道速度门：末条观测的 SOG 低于 {@value #COG_TRUST_MIN_SOG_KN} kn 时，
+     * 自报航向无信息量，直接判为「建不出参考线」（返回 {@code null}），由调用方按
+     * 无参考线处置；速度恢复后下一拍自然重建成功。
+     *
      * @param window         实测窗口（按时间升序）
-     * @param reportedCogDeg 窗口末条观测自报的对地航向，度（跨度不足时的走向来源）
-     * @return 参考折线；实测点不足两点时为空
+     * @param latest         窗口末条观测（取自报航向与其 SOG；跨度不足时的走向来源）
+     * @return 参考折线；实测点不足两点、或跨度不足且自报航向不可信时为空
      */
-    private WaterwayGeometry buildGeometry(Deque<AisMessage> window, double reportedCogDeg) {
+    private WaterwayGeometry buildGeometry(Deque<AisMessage> window, AisMessage latest) {
         List<AisMessage> raw = new ArrayList<>(window);
         List<AisMessage> cleaned = cleanForGeometry(raw);
 
@@ -846,7 +897,15 @@ public class PrecisePredictionEngine implements ResidualSampleSource {
         if (spanM < ROBUST_BEARING_MIN_SPAN_M) {
             // 跨度压不住位置噪声（1 Hz、8 节下位移 4.1 m < 噪声 ±5.5 m）：
             // 实测走向无信息量，改用自报航向建一条直线参考线。见 ROBUST_BEARING_MIN_SPAN_M。
-            double bearingDeg = ConstantVelocityPredictor.normalizeDeg(reportedCogDeg);
+            double reportedSogKn = latest == null ? 0.0 : latest.sog();
+            if (!(reportedSogKn >= COG_TRUST_MIN_SOG_KN)) {
+                log.debug("参考线跨度不足（{} m）且船速仅 {} kn < {} kn，自报航向不可信，暂不建线",
+                        String.format(java.util.Locale.ROOT, "%.1f", spanM),
+                        String.format(java.util.Locale.ROOT, "%.2f", reportedSogKn),
+                        COG_TRUST_MIN_SOG_KN);
+                return null;
+            }
+            double bearingDeg = ConstantVelocityPredictor.normalizeDeg(latest.cog());
             log.debug("参考线跨度不足（{} m < {} m），走向改取自报航向 {}°",
                     String.format(java.util.Locale.ROOT, "%.1f", spanM),
                     ROBUST_BEARING_MIN_SPAN_M, String.format(java.util.Locale.ROOT, "%.1f", bearingDeg));
@@ -1025,8 +1084,24 @@ public class PrecisePredictionEngine implements ResidualSampleSource {
         if (!Double.isFinite(observation.sog()) || observation.sog() < 0.0) {
             throw new IllegalArgumentException("对地航速不得为负或非有限值：" + observation.sog());
         }
+        // MED-BUG.43：AIS 的「不可用」是<b>有具体取值</b>的，不是 NaN。上游按十进制换算后，
+        // 1023（0.1 kn）会变成一个看着正常的 102.3 kn、3600（0.1°）会变成 360.0°，
+        // 511（整度航向不可用）也同为哨兵。不拦的后果不是"这一帧略偏"，而是：
+        // 102.3 kn ⇒ 1 s 位移 52 m，速度状态被一帧打歪，此后几十拍 s 都偏；
+        // 360.0°/511° ⇒ 参考线走向被指到错误方位，"船不动了"或"船横着走"两种静默错误。
+        // 判据放在 validate 里而不是 buildGeometry 里：哨兵是<b>观测本身不可用</b>，
+        // 与"这一版建不出线"是两件事，前者该丢帧，后者该等下一拍。
+        if (observation.sog() >= AIS_SOG_UNAVAILABLE_KN) {
+            throw new IllegalArgumentException(
+                    "对地航速为 AIS 不可用哨兵值（≥" + AIS_SOG_UNAVAILABLE_KN + " kn）："
+                            + observation.sog());
+        }
         if (!Double.isFinite(observation.cog())) {
             throw new IllegalArgumentException("对地航向必须为有限值：" + observation.cog());
+        }
+        if (observation.cog() < 0.0 || observation.cog() >= AIS_COG_UNAVAILABLE_DEG) {
+            throw new IllegalArgumentException(
+                    "对地航向超出 [0,360)（含 AIS 不可用哨兵 360.0／511）：" + observation.cog());
         }
     }
 

@@ -12,13 +12,41 @@ package com.waterlogistics.dispatch.order;
 public enum OrderPriority {
 
     /** 常规 */
-    NORMAL,
+    NORMAL(1),
 
     /** 加急 */
-    URGENT,
+    URGENT(2),
 
     /** 应急 */
-    EMERGENCY;
+    EMERGENCY(3);
+
+    private final int rank;
+
+    OrderPriority(int rank) {
+        this.rank = rank;
+    }
+
+    /**
+     * 取值序（{@code NORMAL=1 < URGENT=2 < EMERGENCY=3}），<b>数值越大越优先</b>。
+     *
+     * <p><b>为什么不在枚举里写 {@code compareTo}</b>：{@link Enum#compareTo} 已被
+     * 声明顺序占用（{@code ordinal} 序），覆写不了；而「声明顺序」是个会随重构漂移的
+     * 实现细节——今天恰好把 EMERGENCY 写在最后是顺手，明天有人按字母序重排枚举，
+     * 队列取单顺序就会静默反过来。<b>显式 {@code rank} 是唯一不会被重排影响的契约</b>。
+     *
+     * <p>消费方：
+     * <ul>
+     *   <li>队列取单 {@code ORDER BY FIELD(priority,'EMERGENCY','URGENT','NORMAL')}
+     *       （《11-05 任务清单》序号 2，张睿哲）；</li>
+     *   <li>候选比较器的延误惩罚权重（同序号 2）。两处都要「越紧急越大」的同一口径，
+     *       故取值只在这里定义一次，不在 SQL 与 Java 里各写一套。</li>
+     * </ul>
+     *
+     * @return 取值序，{@code NORMAL=1}／{@code URGENT=2}／{@code EMERGENCY=3}
+     */
+    public int rank() {
+        return rank;
+    }
 
     /**
      * 按落库值解析。

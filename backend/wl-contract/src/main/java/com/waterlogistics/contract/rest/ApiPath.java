@@ -11,6 +11,14 @@ public final class ApiPath {
     /** 船员下单（POST）／调度后台拉订单列表（GET，含 {@code dispatchGate}） */
     public static final String ORDERS = "/api/orders";
 
+    /**
+     * 货物到巢登记（POST，幂等）；需替换 {@code {orderId}}。
+     *
+     * <p>语义：把该订单的货物置为「已就绪」，是《11-05 任务清单》序号 2「货到巢关」的入口。
+     * 幂等口径——重复调用只回 {@code changed=false}，不重复写库、不重复触发后续推进。
+     */
+    public static final String CARGO_READY_TEMPLATE = "/api/orders/{orderId}/cargo-ready";
+
     /** 机队状态（GET） */
     public static final String DRONES = "/api/drones";
 
@@ -40,5 +48,15 @@ public final class ApiPath {
      */
     public static String replay(String taskId) {
         return "/api/replay/" + taskId;
+    }
+
+    /**
+     * 生成指定订单的「货物到巢」登记路径。
+     *
+     * @param orderId 订单标识
+     * @return 具体路径
+     */
+    public static String cargoReady(String orderId) {
+        return "/api/orders/" + orderId + "/cargo-ready";
     }
 }
