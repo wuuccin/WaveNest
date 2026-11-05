@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import MapView from './components/MapView.vue'
 import OrderTimeline from './components/OrderTimeline.vue'
 import EventStream from './components/EventStream.vue'
@@ -16,6 +16,7 @@ import { GUIDE_STAGES, buildLiveGuideSteps, buildOfflineGuideSteps, buildContinu
 import { buildReplaySteps, droneIdForOrder, normalizeReplayTasks } from './replay/model'
 import { api } from './api/client'
 import { useOrderStore, useShipStore, useDroneStore, useAlertStore, useEventStore, useNestStore, useFleetStore, useAirspaceStore, usePlanTrackStore } from './stores'
+import { usePredictionStore } from './stores/prediction'
 
 const route = ref(location.hash.slice(1) || 'dashboard')
 const sceneIndex = ref(0)
@@ -41,7 +42,11 @@ let screenStream
 const realtime = createRealtime()
 const orders = useOrderStore()
 const ship = useShipStore()
+const prediction = usePredictionStore()
 const selectedShip = computed(() => ship.byId[ship.selectedMmsi] || null)
+watch(() => ship.selectedMmsi, mmsi => {
+  if (mmsi && prediction.selectedMmsi !== mmsi) void prediction.select(mmsi, source.value === 'mock' ? 'mock' : 'auto')
+})
 const drone = useDroneStore()
 const alerts = useAlertStore()
 const events = useEventStore()
