@@ -2,16 +2,26 @@ import { defineStore } from 'pinia'
 import { ORDER_STATES, normalizeOrder, displayEnum } from '../api/adapter'
 
 export const useShipStore = defineStore('ship', {
-  state: () => ({ current: null, actualTrack: [] }),
+  state: () => ({ selectedMmsi: '', byId: {}, tracks: {} }),
+  getters: {
+    current: state => state.byId[state.selectedMmsi] || null,
+    actualTrack: state => state.tracks[state.selectedMmsi] || [],
+    ships: state => Object.values(state.byId)
+  },
   actions: {
+    select(mmsi) { if (this.byId[mmsi]) this.selectedMmsi = mmsi },
     apply(data) {
-      if (!data) { this.current = null; this.actualTrack = []; return }
+      if (!data) { this.selectedMmsi = ''; this.byId = {}; this.tracks = {}; return }
       if (!Number.isFinite(data.lon) || !Number.isFinite(data.lat)) return
+      const mmsi = String(data.mmsi || '')
+      if (!mmsi) return
+      const track = this.tracks[mmsi] ??= []
       const point = { lon: data.lon, lat: data.lat, ts: data.t0 ?? data.eventTs ?? Date.now() }
-      const last = this.actualTrack.at(-1)
-      if (!last || point.ts > last.ts || point.lon !== last.lon || point.lat !== last.lat) this.actualTrack.push(point)
-      if (this.actualTrack.length > 900) this.actualTrack.shift()
-      this.current = data
+      const last = track.at(-1)
+      if (!last || point.ts > last.ts || point.lon !== last.lon || point.lat !== last.lat) track.push(point)
+      if (track.length > 900) track.shift()
+      this.byId[mmsi] = data
+      if (!this.selectedMmsi) this.selectedMmsi = mmsi
     }
   }
 })

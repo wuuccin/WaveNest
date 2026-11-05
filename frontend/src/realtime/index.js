@@ -18,7 +18,7 @@ export function createRealtime() {
     if (orders.replaying && !replay) return
     data = normalizeFrame(type, data)
     if (!isRenderableFrame(type, data)) return
-    if (type === 'ship_traj') ship.apply(data)
+    if (type === 'ship_traj') { if (!data.mmsi) return; ship.apply(data) }
     else if (type === 'drone_state') drone.apply(data)
     else if (type === 'rendezvous') orders.applyRendezvous(data)
     else if (type === 'alarm') alert.apply(data)
@@ -48,7 +48,8 @@ export function createRealtime() {
           const history = await api.replay(droneId)
           const latest = new Map()
           for (const frame of history.frames || []) {
-            if (['ship_traj', 'drone_state', 'rendezvous', 'alarm', 'plan_track'].includes(frame.type)) latest.set(frame.type, frame)
+            if (frame.type === 'ship_traj' && frame.data?.mmsi) latest.set(`ship_traj:${frame.data.mmsi}`, frame)
+            else if (['drone_state', 'rendezvous', 'alarm', 'plan_track'].includes(frame.type)) latest.set(frame.type, frame)
           }
           restored = [...latest.values()]
         } catch { /* A live source may not expose historical frames. */ }

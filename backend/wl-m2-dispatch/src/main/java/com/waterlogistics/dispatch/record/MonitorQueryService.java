@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Map;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 调度结果展示的查询服务（M2 · 卢肄文 · 10-22 任务 D3）。
@@ -67,8 +68,9 @@ public class MonitorQueryService {
      *
      * @return 统计响应；空库时各计数为 0
      */
+    @Transactional(readOnly = true)
     public MonitorAggregator.StatisticsResponse statistics() {
-        // 同一事务快照内读取统计，避免订单计数与最近下单时刻跨两次读取漂移。
+        // 订单聚合与任务日志计数共用只读事务，避免跨事务读取。
         Map<String, Long> counts = new java.util.HashMap<>();
         LocalDateTime[] lastOrderAt = {null};
         jdbcTemplate.query("SELECT status, COUNT(*) AS amount, MAX(create_time) AS latest "

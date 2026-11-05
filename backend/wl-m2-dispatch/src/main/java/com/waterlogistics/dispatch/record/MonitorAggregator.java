@@ -189,9 +189,9 @@ public final class MonitorAggregator {
                 continue;
             }
             total++;
-            if (lastOrderAt == null || (order.getCreateTime() != null
-                    && order.getCreateTime().isAfter(lastOrderAt))) {
-                lastOrderAt = order.getCreateTime() != null ? order.getCreateTime() : lastOrderAt;
+            if (order.getCreateTime() != null
+                    && (lastOrderAt == null || order.getCreateTime().isAfter(lastOrderAt))) {
+                lastOrderAt = order.getCreateTime();
             }
             OrderStatus status = parse(order.getStatus());
             if (status == null) {
@@ -265,7 +265,7 @@ public final class MonitorAggregator {
         return new TaskView(
                 order.getOrderId(),
                 status != null ? status.name() : UNKNOWN_CODE,
-                rawStatus != null ? rawStatus : (status != null ? status.getValue() : null),
+                rawStatus,
                 order.getShipMmsi(),
                 order.getGoodsType(),
                 order.getGoodsWeight(),
