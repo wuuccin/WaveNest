@@ -23,7 +23,7 @@ import java.util.Map;
  *
  * <p><b>发布粒度纪律（最要紧的一条，别改）</b>：{@code data.weather} <b>按位置与时刻发多条</b>，
  * 不是每周期一条全局代表值。所以「注入 11 m/s」在本端点里意味着<b>每一个网格点各发一条 11 m/s</b>
- * （默认 2×2 ＝ 4 条），而不是全网发 1 条。原因：下游要按位置取「最不利风况」——
+ * （默认 3×3 ＝ 9 条），而不是全网发 1 条。原因：下游要按位置取「最不利风况」——
  * 只发一条全局值，就不存在"按位置"这件事，M2 的候选判定与 M3 的会面重算都会失去输入口径。
  *
  * <p><b>为什么不直接把风速写进 sys_param</b>：{@code sys_param} 是阈值与标定参数的登记处，
@@ -32,7 +32,7 @@ import java.util.Map;
  *
  * <p>用法：
  * <pre>
- *   POST /sim/weather/inject?wind=11&amp;dir=135            注入 11 m/s、135°（默认四网格点各一条）
+ *   POST /sim/weather/inject?wind=11&amp;dir=135            注入 11 m/s、135°（默认九个网格点各一条）
  *   POST /sim/weather/inject?wind=11&amp;gust=14&amp;persist=false  只发一轮，不改后续自产海况
  *   GET  /sim/weather                                     查看当前海况、偏置、注入计数与网格点
  *   DELETE /sim/weather/bias                              清除偏置，回到基准海况
