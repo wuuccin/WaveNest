@@ -173,6 +173,7 @@ class FlightPhaseAdvancerTest {
                 null,
                 null,
                 Clock.fixed(Instant.ofEpochMilli(NOW), ZONE),
+                null,
                 null);
     }
 

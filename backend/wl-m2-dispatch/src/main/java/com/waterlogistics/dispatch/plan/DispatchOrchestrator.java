@@ -106,6 +106,9 @@ public class DispatchOrchestrator {
         taskQueueService.startDispatch(orderId);
 
         OrderTaskEntity order = orderTaskMapper.selectById(orderId);
+        if (order == null) {
+            throw new IllegalStateException("订单不存在：" + orderId);
+        }
         if (OrderStatus.ACCEPTED_WAIT_WAKE.getValue().equals(order.getStatus())) {
             // 熔断延后：本轮编排到此为止，不选机、不求解、不派发
             log.info("订单 {} 闸门熔断延后（已受理待唤醒），待闸门解除后重入队再编排", orderId);

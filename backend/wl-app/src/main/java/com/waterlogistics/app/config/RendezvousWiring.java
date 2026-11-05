@@ -2,10 +2,13 @@ package com.waterlogistics.app.config;
 
 import com.waterlogistics.dispatch.homecoming.HomecomingTrackPort;
 import com.waterlogistics.dispatch.plan.MissionTrackPort;
+import com.waterlogistics.dispatch.rendezvous.NestLookup;
 import com.waterlogistics.dispatch.rendezvous.RendezvousPort;
 import com.waterlogistics.rendezvous.facade.RendezvousFacade;
 import com.waterlogistics.rendezvous.port.DroneContextPort;
 import com.waterlogistics.rendezvous.port.TrajectorySnapshotPort;
+import com.waterlogistics.storage.entity.NestEntity;
+import com.waterlogistics.storage.repository.NestMapper;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -73,5 +76,28 @@ public class RendezvousWiring {
     @Bean
     public MissionTrackPort missionTrackPort(RendezvousFacade facade) {
         return facade::generateTrack;
+    }
+
+    /**
+     * 机巢坐标查询端口：会面求解按货物所在巢取起点时使用。
+     *
+     * @param nestMapper 机巢表
+     * @return 只读查询实现；查无或坐标缺失返回 {@code null}
+     */
+    @Bean
+    public NestLookup nestLookup(NestMapper nestMapper) {
+        return nestId -> {
+            NestEntity nest = nestMapper.selectById(nestId);
+            if (nest == null || nest.getLon() == null || nest.getLat() == null) {
+                return null;
+            }
+            double lon = nest.getLon().doubleValue();
+            double lat = nest.getLat().doubleValue();
+            if (!Double.isFinite(lon) || lon < -180.0 || lon > 180.0
+                    || !Double.isFinite(lat) || lat < -90.0 || lat > 90.0) {
+                return null;
+            }
+            return new NestLookup.NestPosition(nest.getNestId(), lon, lat);
+        };
     }
 }

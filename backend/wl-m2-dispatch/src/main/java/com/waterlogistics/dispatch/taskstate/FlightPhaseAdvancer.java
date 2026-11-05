@@ -6,6 +6,8 @@ import com.waterlogistics.algo.meeting.GeoApprox;
 import com.waterlogistics.contract.order.OrderView;
 import com.waterlogistics.contract.state.OrderStatus;
 import com.waterlogistics.dispatch.order.OrderStateChangedEvent;
+import com.waterlogistics.dispatch.rendezvous.NestLookup;
+import com.waterlogistics.dispatch.rendezvous.NestLookup.NestPosition;
 import com.waterlogistics.dispatch.resource.OccupancySlotService;
 import com.waterlogistics.rendezvous.port.DroneContext;
 import com.waterlogistics.rendezvous.port.DroneContextPort;
@@ -125,6 +127,7 @@ public class FlightPhaseAdvancer {
     private final TransactionTemplate transactionTemplate;
     private final Clock clock;
     private final OccupancySlotService occupancySlotService;
+    private final NestLookup nestLookup;
 
     /** orderId → 版本兜底计数器（task_log 自增主键不可用时用）。 */
     private final Map<String, AtomicLong> fallbackVersions = new ConcurrentHashMap<>();
@@ -163,9 +166,11 @@ public class FlightPhaseAdvancer {
             ApplicationEventPublisher eventPublisher,
             DroneMapper droneMapper,
             TransactionTemplate transactionTemplate,
-            OccupancySlotService occupancySlotService) {
+            OccupancySlotService occupancySlotService,
+            NestLookup nestLookup) {
         this(orderTaskMapper, taskLogMapper, droneContextPort, dronePositionPort, sysParamLoader,
-                eventPublisher, droneMapper, transactionTemplate, Clock.systemDefaultZone(), occupancySlotService);
+                eventPublisher, droneMapper, transactionTemplate, Clock.systemDefaultZone(),
+                occupancySlotService, nestLookup);
     }
 
     FlightPhaseAdvancer(OrderTaskMapper orderTaskMapper,
@@ -175,7 +180,7 @@ public class FlightPhaseAdvancer {
             ApplicationEventPublisher eventPublisher,
             Clock clock) {
         this(orderTaskMapper, taskLogMapper, droneContextPort, null, sysParamLoader,
-                eventPublisher, null, null, clock, null);
+                eventPublisher, null, null, clock, null, null);
     }
 
     FlightPhaseAdvancer(OrderTaskMapper orderTaskMapper,
@@ -186,7 +191,7 @@ public class FlightPhaseAdvancer {
             DroneMapper droneMapper,
             Clock clock) {
         this(orderTaskMapper, taskLogMapper, droneContextPort, null, sysParamLoader,
-                eventPublisher, droneMapper, null, clock, null);
+                eventPublisher, droneMapper, null, clock, null, null);
     }
 
     FlightPhaseAdvancer(OrderTaskMapper orderTaskMapper,
@@ -198,7 +203,8 @@ public class FlightPhaseAdvancer {
             DroneMapper droneMapper,
             TransactionTemplate transactionTemplate,
             Clock clock,
-            OccupancySlotService occupancySlotService) {
+            OccupancySlotService occupancySlotService,
+            NestLookup nestLookup) {
         this.orderTaskMapper = orderTaskMapper;
         this.taskLogMapper = taskLogMapper;
         this.droneContextPort = droneContextPort;
@@ -209,6 +215,7 @@ public class FlightPhaseAdvancer {
         this.transactionTemplate = transactionTemplate;
         this.clock = clock;
         this.occupancySlotService = occupancySlotService;
+        this.nestLookup = nestLookup;
     }
 
     @PostConstruct
@@ -328,11 +335,15 @@ public class FlightPhaseAdvancer {
         DroneContext drone = state.drone();
         double meetLon = order.getMeetLon().doubleValue();
         double meetLat = order.getMeetLat().doubleValue();
-        double outboundM = GeoApprox.distanceM(
-                drone.nestLon(), drone.nestLat(), meetLon, meetLat);
+        NestPosition start = resolveStartNest(order, drone);
+        double transferM = GeoApprox.distanceM(
+                drone.nestLon(), drone.nestLat(), start.lon(), start.lat());
+        double outboundM = transferM + GeoApprox.distanceM(
+                start.lon(), start.lat(), meetLon, meetLat);
+        double returnM = GeoApprox.distanceM(meetLon, meetLat, drone.nestLon(), drone.nestLat());
         int handoverSec = Math.max(0, sysParamLoader.getInt(HANDOVER_SEC_KEY, DEFAULT_HANDOVER_SEC));
         List<FlightPhaseTimeline.Transition> schedule = FlightPhaseTimeline.schedule(
-                meetMs, outboundM, drone.cruiseSpeedMs(), handoverSec);
+                meetMs, outboundM, returnM, drone.cruiseSpeedMs(), handoverSec);
 
         // 阶段一 17：实时位置进入接近半径则提前切末段；位置不可用/超半径保持时间轴
         if (state.phase() == OrderStatus.OUTBOUND) {
@@ -675,6 +686,25 @@ public class FlightPhaseAdvancer {
     /** task_log 落库时刻；缺失按 0 处理，由调用方与下单时刻取大者兜底。 */
     private static long toEpochMs(TaskLogEntity log) {
         return toEpochMs(log.getTs());
+    }
+
+    /**
+     * 飞行阶段时间轴的起点：有货物所在巢时取货物所在巢，否则取无人机当前所在巢。
+     *
+     * <p>时间轴只用于估算阶段切换，货巢查无坐标时回落当前巢并记警告，不阻断推进。
+     */
+    private NestPosition resolveStartNest(OrderTaskEntity order, DroneContext drone) {
+        String cargoNestId = order.getCargoNestId();
+        if (cargoNestId == null || cargoNestId.isBlank() || nestLookup == null) {
+            return new NestPosition(drone.currentNestId(), drone.nestLon(), drone.nestLat());
+        }
+        NestPosition cargo = nestLookup.find(cargoNestId.trim());
+        if (cargo == null) {
+            log.warn("订单 {} 货物所在巢 {} 台账查无坐标，飞行阶段时间轴回落无人机当前巢",
+                    order.getOrderId(), cargoNestId);
+            return new NestPosition(drone.currentNestId(), drone.nestLon(), drone.nestLat());
+        }
+        return cargo;
     }
 
     /** 一次派发周期在库里的落点：当前阶段＋该阶段审计时刻（MEDIUM.64 的周期边界）。 */

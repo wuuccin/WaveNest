@@ -26,6 +26,7 @@ export const FIELDS = {
 
 /** 分段口径词——与 {@code PlanTrackFrame.SEGMENT_*} 逐字一致（后端按中文落库，不翻译）。 */
 export const KIND = {
+  transfer: '空机转场',
   outbound: '去程',
   terminal: '末段交接',
   return: '返程'
@@ -37,13 +38,18 @@ export const OP_TYPE = '规划航迹'
 /** 三段固定顺序——后端 {@code segments} 声明「顺序固定为去程、末段交接、返程」。 */
 export const SEGMENT_ORDER = [KIND.outbound, KIND.terminal, KIND.return]
 
+/** 绘制顺序——转场只在货巢与机巢不同时出现，属于可选段，不参与「缺段」判定。 */
+export const RENDER_ORDER = [KIND.transfer, ...SEGMENT_ORDER]
+
 /**
  * 三段配色——<b>刻意与 {@code droneTrackLayer} 的实飞配色错开</b>。
  *
  * <p>实飞（{@code drone_state.segments}）用 #3579b5 / #d3962f / #319780 实线；
  * 计划航迹用同色系的<b>深一档</b>并一律点划线，保证「同一条航线、计划与实况」能一眼分开。
+ * 空机转场用独立的灰蓝色，避免与载货去程混为一段。
  */
 export const SEGMENT_STYLE = {
+  [KIND.transfer]: { color: '#5b6b7c', label: '空机转场' },
   [KIND.outbound]: { color: '#1d4f85', label: '计划去程' },
   [KIND.terminal]: { color: '#9a6414', label: '计划末段交接' },
   [KIND.return]: { color: '#12695a', label: '计划返程' }
@@ -62,10 +68,10 @@ const num = value => {
   return Number.isFinite(parsed) ? parsed : null
 }
 
-/** 分段的排序权重：契约顺序优先，契约外的 kind 排最后（原样保留，不丢弃）。 */
+/** 分段的排序权重：绘制顺序优先，契约外的 kind 排最后（原样保留，不丢弃）。 */
 export function kindRank(kind) {
-  const index = SEGMENT_ORDER.indexOf(kind)
-  return index === -1 ? SEGMENT_ORDER.length : index
+  const index = RENDER_ORDER.indexOf(kind)
+  return index === -1 ? RENDER_ORDER.length : index
 }
 
 /**
@@ -118,8 +124,8 @@ export function normalizePlanTrack(raw) {
     const points = (Array.isArray(rawPoints) ? rawPoints : []).map(normalizePoint).filter(Boolean)
     return {
       kind: typeof kind === 'string' && kind.trim() ? kind : '',
-      // 契约外 kind 单列：不并进「未知」，避免把契约漂移洗掉
-      known: SEGMENT_ORDER.includes(kind),
+      // 转场是可选段但仍是已知口径；契约外 kind 单列，避免把漂移洗掉
+      known: Boolean(SEGMENT_STYLE[kind]),
       points,
       empty: points.length === 0
     }
