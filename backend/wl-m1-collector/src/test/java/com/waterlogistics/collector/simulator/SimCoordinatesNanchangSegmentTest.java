@@ -64,17 +64,18 @@ class SimCoordinatesNanchangSegmentTest {
     private static final double SHIP_CORRIDOR_KM = 0.35;
 
     /**
-     * 气象网格四角的最远容差（km）。
+     * 气象网格点到航段折线的最远容差（km）。
      *
-     * <p>原设 3.5，T2-7 定稿后经穷举确认<b>几何上不可能</b>：航段是西南—东北斜向、
-     * 长 6.5 km，2×2 方网格要罩住南巢 (28.642) 与北巢 (28.698)，至少一个角必然退到
-     * 4.7 km 开外。这不影响功能——下游按「离船最近的点」取风，船全程在网格内；
-     * 只有放弃 2×2、改成 3×3 或按航向取矩形才能压下来，属 T1 口径变更，不在今天。
+     * <p><b>11-05 从 5.0 收到 4.8</b>。原注释写着「只有放弃 2×2、改成 3×3 才能压下来」——
+     * 这次正是改 3×3＋步长 0.030°，九点里最远的东北角 (115.900, 28.640) 距航道 4.64 km
+     * （旧 2×2 同口径为 4.7 km，且只有四角有风）。
      *
-     * <p>故容差放到 5.0 km 并<b>额外断言「船全程有点可取」</b>——后者才是真正保护
-     * 抗风判定的那条，比角落距离更接近问题本质。
+     * <p>容差不再往上放宽：3×3 的收益不在"角落更近"（方网格罩斜航段，角落本来就远），
+     * 而在<b>网心 (115.870, 28.670) 距航道只有 0.52 km</b>——船起点最近格点从旧实现的
+     * 2.9 km 降到 0.97 km。「船每一帧都能取到贴近自己的那格风」才是保护抗风判定的那条，
+     * 角落距离只是方网格的几何代价，故容差钉在 4.8 防止日后再放宽掩盖问题。
      */
-    private static final double GRID_CORNER_TOLERANCE_KM = 5.0;
+    private static final double GRID_CORNER_TOLERANCE_KM = 4.8;
 
     /** 赣江航道折线（船的参考线）：朝阳洲 → 南昌站 → 八一大桥（2026-10-29 修复方案定稿）。 */
     private static final double[] CORRIDOR_LON = {115.852, 115.859, 115.879};
@@ -97,6 +98,13 @@ class SimCoordinatesNanchangSegmentTest {
             best = Math.min(best, Math.hypot(px - (ax + t * (bx - ax)), py - (ay + t * (by - ay))));
         }
         return best;
+    }
+
+    /** 两点平面距离，km（与 {@link #distanceToSegmentKm} 同一近似口径）。 */
+    private static double planarKm(double lonA, double latA, double lonB, double latB) {
+        double kmPerDegLat = 111.32;
+        double kmPerDegLon = 111.32 * Math.cos(Math.toRadians(28.67));
+        return Math.hypot((lonA - lonB) * kmPerDegLon, (latA - latB) * kmPerDegLat);
     }
 
     private static void assertInBox(String what, double lon, double lat) {
@@ -180,7 +188,7 @@ class SimCoordinatesNanchangSegmentTest {
     }
 
     @Test
-    @DisplayName("气象：网格四点与航段同区，且覆盖航段南北两端")
+    @DisplayName("气象：网格九点与航段同区，且覆盖航段南北两端")
     void weatherGridCoversSegment() {
         RecordingPublisher publisher = new RecordingPublisher();
         SimWeatherConnector sim = new SimWeatherConnector(publisher);
@@ -189,7 +197,7 @@ class SimCoordinatesNanchangSegmentTest {
         sim.pollOnce(1_000L);
 
         List<WeatherData> sent = publisher.weather();
-        assertEquals(4, sent.size(), "2×2 网格，U-05 甲案：按位置多条");
+        assertEquals(9, sent.size(), "3×3 网格，U-05 甲案：按位置多条");
 
         double minLat = Double.MAX_VALUE;
         double maxLat = -Double.MAX_VALUE;
@@ -230,6 +238,19 @@ class SimCoordinatesNanchangSegmentTest {
                     w.lon() >= gMinLon && w.lon() <= gMaxLon && w.lat() >= gMinLat && w.lat() <= gMaxLat);
             assertTrue(covered, "船位应落在气象网格范围内：" + m.lon() + "," + m.lat());
         }
+
+        // 11-05 新增：不只"在网内"，还要"取到的风贴着船"。
+        // 3×3＋0.030° 后，船全程最近格点最远约 1.7 km（旧 2×2 为 4.7 km），这是本次改密的实际收益。
+        double worstNearestKm = 0.0;
+        for (AisMessage m : shipPub.ais()) {
+            double nearest = Double.MAX_VALUE;
+            for (WeatherData w : sent) {
+                nearest = Math.min(nearest, planarKm(m.lon(), m.lat(), w.lon(), w.lat()));
+            }
+            worstNearestKm = Math.max(worstNearestKm, nearest);
+        }
+        assertTrue(worstNearestKm <= 2.2,
+                "船全程最近格点距离应 ≤2.2 km（本次改密的实测收益），实际 " + worstNearestKm + " km");
     }
 
     @Test
