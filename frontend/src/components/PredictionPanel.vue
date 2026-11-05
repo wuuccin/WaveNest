@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onUnmounted, ref, watch } from 'vue'
 import { usePredictionStore } from '../stores/prediction'
+import { useShipStore } from '../stores'
 import { SOURCE_TEXT } from '../api/predictionSource'
 import { PREMISE_TEXT, remainingText } from '../api/prediction'
 
@@ -29,6 +30,7 @@ const props = defineProps({
 })
 
 const store = usePredictionStore()
+const ship = useShipStore()
 const open = ref(true)
 const mode = computed(() => (props.source === 'mock' ? 'mock' : 'auto'))
 const refreshedAt = ref('')
@@ -77,6 +79,7 @@ async function refresh() {
 
 function pick(row) {
   if (store.selectedMmsi === row.mmsi) { store.clearSelection(); return }
+  ship.select(row.mmsi)
   void store.select(row.mmsi, mode.value)
 }
 
