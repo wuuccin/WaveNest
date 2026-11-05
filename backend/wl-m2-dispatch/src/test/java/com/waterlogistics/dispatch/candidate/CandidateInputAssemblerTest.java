@@ -95,8 +95,8 @@ class CandidateInputAssemblerTest {
      * 如果只断言「生成结果为空」，把机器塞进去也能得到同样结果，测不出差别。
      */
     @Test
-    @DisplayName("缺坐标机巢上的无人机不进 droneViews（否则生成端静默丢机，现场无从解释）")
-    void dronesOnCoordinateLessNestAreDroppedAtAssembly() {
+    @DisplayName("缺坐标机巢上的无人机【保留】在 droneViews，但该巢不进 nests（11-05 巢×机枚举口径）")
+    void dronesOnCoordinateLessNestStayButThatNestIsDropped() {
         List<NestEntity> nests = List.of(
                 nest("NEST-BAD", null, null, "M30T"),
                 nest("NEST-OK", 115.848, 28.642, "M30T"));
@@ -106,16 +106,21 @@ class CandidateInputAssemblerTest {
 
         CandidateInput input = CandidateInputAssembler.assemble(order(), drones, nests);
 
-        assertEquals(1, input.nests().size(), "缺坐标机巢不进 nests");
-        assertEquals(List.of("UAV-OK"),
+        assertEquals(1, input.nests().size(), "缺坐标机巢不进 nests——没有起点就组不出候选");
+        // ★ 11-05 口径变更：原来这条断言的是「UAV-ORPHAN 被剔掉」，
+        // 理由是「生成端会静默 continue」。巢×机双层枚举后，这架机<b>仍可从 NEST-OK 出发</b>
+        // ——机型能力、电量、载荷都是机自身的属性，与从哪个巢起飞无关。
+        // 所以正确做法是保留机器、剔除巢（巢缺坐标＝没有可用起点），而不是把机器也删掉：
+        // 删掉机器等于把「本巢坏了 ⇒ 这架机今天不飞」写进组装层，正是硬判据 #1 要消除的行为。
+        assertEquals(List.of("UAV-ORPHAN", "UAV-OK"),
                 input.drones().stream().map(CandidateInput.DroneView::droneId).toList(),
-                "挂在缺坐标机巢上的机器必须在这里就剔掉，而不是留给生成端静默丢弃");
+                "机器一律保留（它可以从别的巢出发），只剔掉缺坐标的巢");
     }
 
-    /** 归属巢不在本批可用巢列表里（巢不可用／巢号为空）同理剔除。 */
+    /** 归属巢号全空的机器无法做任何机型校验，仍在组装层剔除并留痕。 */
     @Test
-    @DisplayName("归属机巢不在可用列表里的无人机不进 droneViews")
-    void dronesWithUnlistedNestAreDropped() {
+    @DisplayName("巢号全空的无人机不进 droneViews（连机型校验都做不了）；巢不可用但巢号在的保留")
+    void dronesWithoutAnyNestIdAreDropped() {
         List<NestEntity> nests = List.of(nest("NEST-OK", 115.848, 28.642, "M30T"));
         DroneEntity noNest = drone("UAV-NONEST", "NEST-OK", "M30T");
         noNest.setCurrentNestId(null);
@@ -127,9 +132,11 @@ class CandidateInputAssemblerTest {
 
         CandidateInput input = CandidateInputAssembler.assemble(order(), drones, nests);
 
-        assertEquals(List.of("UAV-OK"),
+        // ★ 11-05 口径变更：UAV-OTHER 的归属巢 NEST-DISABLED 不在本轮可用巢里，
+        // 但它<b>可以</b>从 NEST-OK 出发，故保留；只有巢号全空的 UAV-NONEST 剔除。
+        assertEquals(List.of("UAV-OTHER", "UAV-OK"),
                 input.drones().stream().map(CandidateInput.DroneView::droneId).toList(),
-                "归属巢不可查的机器应剔除；巢号全空的也不该进");
+                "巢号全空的剔除；巢不可用但巢号在的保留（可跨巢起飞）");
     }
 
     /**
