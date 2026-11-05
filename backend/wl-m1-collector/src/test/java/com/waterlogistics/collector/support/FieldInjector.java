@@ -48,8 +48,9 @@ public final class FieldInjector {
             case "SimWeatherConnector" -> {
                 set(target, "lon0", 115.840000);       // 网格随定稿航段一起挪
                 set(target, "lat0", 28.640000);
-                set(target, "step", 0.058000);
-                set(target, "grid", 2);
+                set(target, "step", 0.030000);         // 11-05：0.058 → 0.030，3×3 才成网
+                set(target, "grid", 3);                // 11-05：2 → 3（九点，含中心线两端与两巢）
+                set(target, "forecastHorizonMs", 300_000L);  // 11-05：targetTs = obsTs + 300 s
                 set(target, "windBase", 5.0);
                 set(target, "gustAdd", 3.0);
                 set(target, "dirBase", 135.0);
