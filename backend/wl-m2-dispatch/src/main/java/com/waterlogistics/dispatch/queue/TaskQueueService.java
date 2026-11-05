@@ -88,7 +88,7 @@ public class TaskQueueService {
     @Transactional
     public void accept(OrderTaskEntity order) {
         requireStatus(order, OrderStatus.PENDING_ACCEPT);
-        transition(order, OrderStatus.PENDING_ACCEPT, OrderStatus.WAIT_DISPATCH, "受理");
+        transition(order, OrderStatus.PENDING_ACCEPT, OrderStatus.WAIT_DISPATCH, "受理", null);
     }
 
     /**
@@ -106,11 +106,11 @@ public class TaskQueueService {
         if (!dispatchGateService.isOpen()) {
             // 熔断：延后到「已受理待唤醒」，不拒单
             transition(order, OrderStatus.WAIT_DISPATCH, OrderStatus.ACCEPTED_WAIT_WAKE,
-                    "闸门熔断-延后");
+                    "闸门熔断-延后", WaitReason.GATE_OR_DATA);
             return;
         }
 
-        transition(order, OrderStatus.WAIT_DISPATCH, OrderStatus.DISPATCHING, "组批调度");
+        transition(order, OrderStatus.WAIT_DISPATCH, OrderStatus.DISPATCHING, "组批调度", null);
     }
 
     /**
@@ -147,7 +147,7 @@ public class TaskQueueService {
         order.setDroneId(droneId);
         order.setMeetTime(meetTime);
         markDronePreoccupied(droneId);
-        transition(order, OrderStatus.DISPATCHING, OrderStatus.DISPATCHED, "派发");
+        transition(order, OrderStatus.DISPATCHING, OrderStatus.DISPATCHED, "派发", null);
     }
 
     /**
@@ -192,7 +192,7 @@ public class TaskQueueService {
         order.setMeetTime(null);
         order.setMeetLon(null);
         order.setMeetLat(null);
-        transition(order, current, OrderStatus.WAIT_DISPATCH, "重入队");
+        transition(order, current, OrderStatus.WAIT_DISPATCH, "重入队", null);
     }
 
     /**
@@ -229,24 +229,38 @@ public class TaskQueueService {
             throw new IllegalStateException("订单 " + orderId + " 当前状态 " + current.getValue()
                     + " 不允许标记交接完成");
         }
-        transition(order, OrderStatus.HANDOVER, OrderStatus.RETURNING, "投放回执-交接完成");
+        transition(order, OrderStatus.HANDOVER, OrderStatus.RETURNING, "投放回执-交接完成", null);
     }
 
-    /** 状态流转：更新订单状态 + 写 task_log（同事务）；落库用中文状态词 */
-    private void transition(OrderTaskEntity order, OrderStatus from, OrderStatus to, String opType) {
+    /**
+     * 状态流转：更新订单状态 + 写 task_log（同事务）；落库用中文状态词。
+     *
+     * <p><b>11-05 序号 1（等待原因落库）</b>：{@code waitReason} 只有流入
+     * 「已受理待唤醒」时才有意义，写入 {@code order_task.wait_reason} 并随
+     * {@link OrderView#waitReason()} 一起对外发布；其余流转一律把它清成 NULL，
+     * 避免订单离开等待态后仍回显过期原因（等船／等货／锁超时各有不同来源）。
+     *
+     * @param waitReason 等待原因；非「已受理待唤醒」或调用方未指定时传 null
+     */
+    private void transition(OrderTaskEntity order, OrderStatus from, OrderStatus to, String opType,
+            WaitReason waitReason) {
         long eventTs = System.currentTimeMillis();
+        WaitReason effectiveWaitReason = to == OrderStatus.ACCEPTED_WAIT_WAKE ? waitReason : null;
+        String waitReasonCode = effectiveWaitReason == null ? null : effectiveWaitReason.getCode();
         // HIGH.29：状态流转走条件更新（UPDATE ... WHERE status=from），行数不为 1
         // 说明被并发推进，直接抛状态冲突，不用陈旧实体整行 updateById 覆盖
         int updated = orderTaskMapper.update(null,
                 Wrappers.<OrderTaskEntity>lambdaUpdate()
                         .eq(OrderTaskEntity::getOrderId, order.getOrderId())
                         .eq(OrderTaskEntity::getStatus, from.getValue())
-                        .set(OrderTaskEntity::getStatus, to.getValue()));
+                        .set(OrderTaskEntity::getStatus, to.getValue())
+                        .set(OrderTaskEntity::getWaitReason, waitReasonCode));
         if (updated != 1) {
             throw new IllegalStateException("订单 " + order.getOrderId()
                     + " 状态冲突：从 " + from.getValue() + " 流转到 " + to.getValue() + " 失败");
         }
         order.setStatus(to.getValue());
+        order.setWaitReason(waitReasonCode);
 
         TaskLogEntity log = new TaskLogEntity();
         log.setOrderId(order.getOrderId());
@@ -257,10 +271,8 @@ public class TaskQueueService {
         taskLogMapper.insert(log);
 
         long version = stateVersion(order.getOrderId(), log.getLogId());
-        WaitReason waitReason = to == OrderStatus.ACCEPTED_WAIT_WAKE
-                ? WaitReason.GATE_OR_DATA : null;
         OrderView view = new OrderView(order.getOrderId(), to, eventTs, version,
-                waitReason, null, null, null);
+                effectiveWaitReason, null, null, null);
         eventPublisher.publishEvent(new OrderStateChangedEvent(view));
 
         // MEDIUM.54：订单进入终态/已完成后移除 fallback 键，防 map 无限增长

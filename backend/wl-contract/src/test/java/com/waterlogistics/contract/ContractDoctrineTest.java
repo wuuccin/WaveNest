@@ -80,10 +80,13 @@ class ContractDoctrineTest {
         assertTrue(DroneStatus.IDLE.isCandidate());
     }
 
-    /** 《22》§3.1 等待原因三值（由算法层四类合并而来） */
+    /**
+     * 《22》§3.1 等待原因四值（原三值由算法层四类合并而来；11-05 序号 1 增
+     * {@code WAIT_RESOURCE}——货物所在巢时隙锁超时／无可用占位的资源等待）
+     */
     @Test
-    void waitReason_shouldBeThreeValues() {
-        assertEquals(List.of("WAIT_SHIP", "WAIT_CARGO", "GATE_OR_DATA"),
+    void waitReason_shouldHaveFourValues() {
+        assertEquals(List.of("WAIT_SHIP", "WAIT_CARGO", "GATE_OR_DATA", "WAIT_RESOURCE"),
                 codes(WaitReason.values()));
     }
 
