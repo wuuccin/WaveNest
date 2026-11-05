@@ -42,6 +42,12 @@ public class DispatchTrigger {
     private static final Logger log = LoggerFactory.getLogger(DispatchTrigger.class);
     private static final ZoneId DB_ZONE = ZoneId.of("Asia/Shanghai");
 
+    /**
+     * 单次触发最多扫描的待调度订单数（11-05 序号 2 批量取单上限）。
+     * 不是阈值/闸门参数，只是防长队列阻塞下单事件的保险丝，故不进 sys_param。
+     */
+    private static final int BATCH_SIZE = 20;
+
     private final OrderTaskMapper orderTaskMapper;
     private final TaskQueueService taskQueueService;
     private final DispatchOrchestrator dispatchOrchestrator;
@@ -129,14 +135,25 @@ public class DispatchTrigger {
                 taskQueueService.accept(entity);
             });
 
-            // 3. 派发编排（C0）：组批 → 选机 → 会面 → 派发 → 回填会面点
-            //    闸门熔断时编排器转「已受理待唤醒」并返回 null，非失败
-            String droneId = dispatchOrchestrator.orchestrate(orderId);
-
-            if (droneId != null) {
-                log.info("主链触发完成：orderId={} 已派发至 droneId={}", orderId, droneId);
-            } else {
-                log.info("主链触发完成：orderId={} 闸门熔断延后（已受理待唤醒）", orderId);
+            // 3. 派发编排（C0 + 11-05 序号 2 批量取单）：不再直接编排本单，
+            //    而是按 selectNext 的优先级序取队首——同批等待单中应急先于常规被取单。
+            //    闸门熔断/货到巢关延后时编排器返回 null（订单留在「已受理待唤醒」），
+            //    继续尝试队列中的下一笔；首次成功派发后停止本轮（一次事件至多派一单）。
+            for (OrderTaskEntity next : taskQueueService.selectNext(BATCH_SIZE)) {
+                String droneId;
+                try {
+                    droneId = dispatchOrchestrator.orchestrate(next.getOrderId());
+                } catch (Exception ex) {
+                    // 编排失败已回滚（订单留在「待调度」），跳过本笔记日志，不阻断队列其余订单
+                    log.warn("批量取单编排失败，试下一笔：orderId={} err={}", next.getOrderId(), ex.getMessage());
+                    continue;
+                }
+                if (droneId != null) {
+                    log.info("主链触发完成：触发单 orderId={}，实际派发 orderId={} 至 droneId={}",
+                            orderId, next.getOrderId(), droneId);
+                    break;
+                }
+                log.info("批量取单队首延后：orderId={} 转已受理待唤醒，试下一笔", next.getOrderId());
             }
         } catch (Exception e) {
             log.error("主链触发失败：orderId={} err={}", orderId, e.getMessage(), e);

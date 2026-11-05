@@ -9,6 +9,8 @@ import com.waterlogistics.storage.entity.OrderTaskEntity;
 import com.waterlogistics.storage.repository.DroneMapper;
 import com.waterlogistics.storage.repository.NestMapper;
 import com.waterlogistics.storage.param.SysParamLoader;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -28,6 +30,8 @@ import java.util.List;
  */
 @Service
 public class CandidateSelector {
+
+    private static final Logger log = LoggerFactory.getLogger(CandidateSelector.class);
 
     private final DroneMapper droneMapper;
     private final NestMapper nestMapper;
@@ -49,12 +53,24 @@ public class CandidateSelector {
      * @throws IllegalArgumentException {@code order} 为 {@code null}（调用方缺陷）
      * @throws IllegalStateException    订单缺 {@code ship_lon}/{@code ship_lat}/{@code goods_weight}
      *                                  （MEDIUM.13：不填 0 兜底，避免造出 (0,0) 取货点）
+     * @deprecated 生产主链已不走本类——{@code DispatchOrchestrator} 经
+     *             {@code CandidateFeasibilityPlanner} 选机（含风况/电量闸与延误惩罚），
+     *             本类无任何生产调用方（MED-MAINT.5，11-05），仅存量测试引用，待下批删除。
      */
+    @Deprecated(since = "11-05", forRemoval = true)
     public CandidateGenerator.CandidateCombo selectBest(OrderTaskEntity order) {
         List<DroneEntity> drones = droneMapper.selectList(CandidateQueries.idleAndHealthyDrones());
         List<NestEntity> nests = nestMapper.selectList(CandidateQueries.availableNests());
 
-        if (drones.isEmpty() || nests.isEmpty()) {
+        // LOW-MAINT.2：空返回必须留痕，否则现场分不清「没机」「没巢」「没候选」
+        if (drones.isEmpty()) {
+            log.info("候选为空：无空闲健康无人机（orderId={}）",
+                    order == null ? null : order.getOrderId());
+            return null;
+        }
+        if (nests.isEmpty()) {
+            log.info("候选为空：无可用机巢（orderId={}）",
+                    order == null ? null : order.getOrderId());
             return null;
         }
 
@@ -65,13 +81,14 @@ public class CandidateSelector {
 
         List<CandidateGenerator.CandidateCombo> combos = candidateGenerator.generate(input, params);
         if (combos.isEmpty()) {
+            log.info("候选为空：生成端门槛滤后无候选（orderId={}）", order.getOrderId());
             return null;
         }
-        // CandidateGenerator 已按距离升序，取第一个即为最优（简化）。
-        // 注意（Open CodeReview）：该排序契约未在本类与生成器之间显式声明，
-        // 生成器排序键变更（如接入 rank_key）时这里须同步——生产主链已不走本类
-        // （DispatchOrchestrator 走 CandidateFeasibilityPlanner），本类保留待组长裁定去留。
-        return combos.get(0);
+        // LOW-MAINT.3：显式按 distKm 取最近，不再依赖生成端「已按距离升序」的隐式契约——
+        // 生成器排序键变更时本类语义不变。
+        return combos.stream()
+                .min(java.util.Comparator.comparingDouble(CandidateGenerator.CandidateCombo::distKm))
+                .orElse(null);
     }
 
     /**

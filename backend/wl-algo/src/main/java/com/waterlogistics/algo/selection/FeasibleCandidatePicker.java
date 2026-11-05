@@ -107,6 +107,41 @@ public final class FeasibleCandidatePicker {
      */
     public static Selection pick(List<CandidateGenerator.CandidateCombo> combos,
             double worstWindMs, double payloadKg, FeasibilityJudge.Params params) {
+        // 无延误惩罚口径：deadline=null → 行为与历史版本逐位一致（生成端距离序取首个可行者）
+        return pick(combos, worstWindMs, payloadKg, params, null, 0.0, 0L);
+    }
+
+    /**
+     * 带<b>延误惩罚</b>的择优（11-05 序号 2 · 张睿哲）：可行性过滤不变，
+     * 在「可行」子集内的择优键由「distKm 单键」改为「加权延误 → distKm」两级。
+     *
+     * <p>延误口径：{@code etaMs(combo) = nowMs + distKm / cruiseSpeedMs × 1000}，
+     * {@code latenessMs = max(0, etaMs − deadlineMs)}（只会提前送达的组合惩罚为 0）。
+     * 比较器先比 {@code delayPenaltyWeight × latenessMs}（升序），再比 distKm（升序）——
+     * 即「deadline − eta 越紧，延误项权重越高」：交期紧张时，「远一点但更快（巡航高）」
+     * 的组合可以赢过「近而慢」；所有组合都能准时时退回最近者。</p>
+     *
+     * <p>两个保守方向约定：
+     * <ul>
+     *   <li>组合的 {@code cruiseSpeedMs} 为 NaN/≤0（机型未登记巡航速度）时 eta 视为 +∞——
+     *       延误维度恒排最后，宁缺毋滥；</li>
+     *   <li>{@code deadlineMs == null}（订单无期望/死线）或 {@code delayPenaltyWeight == 0}
+     *       时退回旧口径：生成端距离序取首个可行者。</li>
+     * </ul>
+     *
+     * @param deadlineMs         送达死线（epoch 毫秒）；{@code null} 表示无死线
+     * @param delayPenaltyWeight 延误惩罚权重（{@code sys_param.delayPenaltyWeight}）；负值拒绝
+     * @param nowMs              当前时刻（epoch 毫秒），由调用方显式传入保持纯函数性
+     */
+    public static Selection pick(List<CandidateGenerator.CandidateCombo> combos,
+            double worstWindMs, double payloadKg, FeasibilityJudge.Params params,
+            Long deadlineMs, double delayPenaltyWeight, long nowMs) {
+        if (delayPenaltyWeight < 0.0 || !Double.isFinite(delayPenaltyWeight)) {
+            throw new IllegalArgumentException(
+                    "delayPenaltyWeight 必须为非负有限值：" + delayPenaltyWeight);
+        }
+        boolean delayPenaltyOn = deadlineMs != null && delayPenaltyWeight > 0.0;
+
         if (params == null) {
             throw new IllegalArgumentException("判定参数不得为 null");
         }
@@ -123,16 +158,42 @@ public final class FeasibleCandidatePicker {
 
         List<FeasibilityJudge.FeasibilityResult> evaluated = new ArrayList<>(combos.size());
         CandidateGenerator.CandidateCombo chosen = null;
+        double chosenPenalty = Double.MAX_VALUE;
         for (CandidateGenerator.CandidateCombo combo : combos) {
             FeasibilityJudge.FeasibilityResult result =
                     JUDGE.judge(combo, combo.distKm(), worstWindMs, payloadKg, params);
             evaluated.add(result);
-            // 生成端按距离升序 ⇒ 第一个可行者即最近的可飞候选
-            if (chosen == null && result.feasible()) {
+            if (!result.feasible()) {
+                continue;
+            }
+            if (!delayPenaltyOn) {
+                // 旧口径：生成端按距离升序 ⇒ 第一个可行者即最近的可飞候选
+                if (chosen == null) {
+                    chosen = combo;
+                }
+                continue;
+            }
+            // 延误惩罚口径：先比加权延误，再比 distKm（严格优于才替换，同分保留先到先得）
+            double penalty = delayPenaltyWeight * lateness(combo, deadlineMs, nowMs);
+            if (chosen == null
+                    || penalty < chosenPenalty
+                    || (penalty == chosenPenalty && combo.distKm() < chosen.distKm())) {
                 chosen = combo;
+                chosenPenalty = penalty;
             }
         }
         return new Selection(chosen, evaluated);
+    }
+
+    /** 预计送达晚于死线的毫秒数（≥0）；巡航速度未登记时视为 +∞（延误维度恒输）。 */
+    private static double lateness(CandidateGenerator.CandidateCombo combo, long deadlineMs, long nowMs) {
+        double cruise = combo.cruiseSpeedMs();
+        if (!Double.isFinite(cruise) || cruise <= 0.0) {
+            return Double.POSITIVE_INFINITY;
+        }
+        // 单位换算：distKm 是 km、cruiseSpeedMs 是 m/s → 飞行毫秒 = km×1000(m/km)÷(m/s)×1000(ms/s)
+        double etaMs = nowMs + combo.distKm() * 1_000_000.0 / cruise;
+        return Math.max(0.0, etaMs - deadlineMs);
     }
 
     /** 非有限值（{@code NaN}／±Infinity）与负值一律拒绝——与判定层同一口径。 */
