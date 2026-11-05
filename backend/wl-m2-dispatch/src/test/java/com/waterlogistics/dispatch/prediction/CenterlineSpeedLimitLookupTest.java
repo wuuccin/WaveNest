@@ -1,5 +1,6 @@
 package com.waterlogistics.dispatch.prediction;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -68,6 +69,30 @@ class CenterlineSpeedLimitLookupTest {
         assertEquals(2.5, lookup.speedLimitMs(0.0), 1e-9);
         assertEquals(2.5, lookup.speedLimitMs(5779.9), 1e-9);
         assertEquals(UNBOUNDED, lookup.speedLimitMs(5780.0), 0.0);
+    }
+
+    @Test
+    @DisplayName("切换点：各段 fromS／toS 升序去重，空配置为空数组")
+    void switchPoints_shouldListSegmentEdges() {
+        // 段间留空隙：2000 是「退出限速段」、3000 是「进入限速段」，两个端点都是限速变化处。
+        assertArrayEquals(new double[] {0.0, 2000.0, 3000.0, 5000.0},
+                CenterlineSpeedLimitLookup.parse("0,2000,4.0;3000,5000,3.0").switchPointsM(),
+                1e-9, "段间留空隙时空隙两端的端点都要保留");
+
+        // 首尾相接：前段 toS 与后段 fromS 重合，只有一个真实切换点。
+        assertArrayEquals(new double[] {0.0, 2000.0, 5000.0},
+                CenterlineSpeedLimitLookup.parse("0,2000,4.0;2000,5000,3.0").switchPointsM(),
+                1e-9, "首尾相接的两段只留一个切换点");
+
+        // 汇合复跑用的配置：两段同值，切换点仍在 3000，预测器照样据此切子步。
+        assertArrayEquals(new double[] {0.0, 3000.0, 5780.0},
+                CenterlineSpeedLimitLookup.parse("0,3000,2.5;3000,5780,2.5").switchPointsM(),
+                1e-9);
+
+        assertEquals(0, CenterlineSpeedLimitLookup.parse("").switchPointsM().length,
+                "空配置没有切换点");
+        assertEquals(0, CenterlineSpeedLimitLookup.parse(null).switchPointsM().length,
+                "null 配置没有切换点");
     }
 
     private static boolean isUnbounded(String spec) {

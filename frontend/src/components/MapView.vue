@@ -7,7 +7,7 @@ import { drawMeeting } from '../layers/meetingLayer'
 import { drawDrone } from '../layers/droneTrackLayer'
 import { drawAlerts } from '../layers/alertLayer'
 import { drawPredictionTrack, clearPredictionTrack } from '../layers/predictionLayer.js'
-import { drawPlanTrack, clearPlanTrack, markMissingSegments } from '../layers/planTrackLayer'
+import { drawPlanTrack, clearPlanTrack, markMissingSegments, cancelFit } from '../layers/planTrackLayer'
 import { drawNests } from '../layers/nestLayer'
 import { drawFleet, drawStaticFeatures } from '../layers/staticFeatureLayer'
 import { systemMapPoint, toMapLatLng } from '../map/coordinates'
@@ -311,7 +311,7 @@ watch([() => ship.current, () => visibleDrone.value, () => order.rendezvous, () 
   () => order.previousRendezvous, () => order.orders, () => props.comparison, () => props.branchRoute, () => props.droneId, () => props.orderId, () => nest.items,
   () => fleet.items, () => airspace.items, () => prediction.overlay,
   () => planTrack.byOrder, () => planTrack.highlightKind], update, { deep: true })
-onUnmounted(() => { if (map && debugEnabled) map.off('click', pickMapPoint); map?.remove(); map = null; activeBaseLayer = null; debugReferenceGroup = null; predictionGroup = null; planTrackGroup = null; lastOverlaidMmsi = ''; lastPlanOrderId = '' })
+onUnmounted(() => { if (map && debugEnabled) map.off('click', pickMapPoint); cancelFit(); map?.remove(); map = null; activeBaseLayer = null; debugReferenceGroup = null; predictionGroup = null; planTrackGroup = null; lastOverlaidMmsi = ''; lastPlanOrderId = '' })
 </script>
 
 <template>

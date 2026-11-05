@@ -33,6 +33,7 @@ class DynamicMeetingComparisonTest {
     @Test
     void compareTwelvePerturbations() {
         int rows = 0;
+        int dynamicWins = 0;
         System.out.println("type,level,mode,meetingErrorM,shipWaitS,droneEnergyPct,hasSolution");
         for (int type = 0; type < TYPES.length; type++) {
             for (int level = 0; level < LEVELS.length; level++) {
@@ -47,9 +48,11 @@ class DynamicMeetingComparisonTest {
                         : Metrics.failed();
                 print(type, level, "dynamic", active, dynamic.hasSolution());
                 print(type, level, "static", baseline, true);
+                double deltaError = active.errorM() - baseline.errorM();
+                double deltaWait = active.waitS() - baseline.waitS();
+                double deltaEnergy = active.energyPct() - baseline.energyPct();
                 System.out.printf(Locale.ROOT, "%s,%s,delta,%.2f,%.2f,%.2f,%s%n",
-                        TYPES[type], LEVELS[level], active.errorM() - baseline.errorM(),
-                        active.waitS() - baseline.waitS(), active.energyPct() - baseline.energyPct(),
+                        TYPES[type], LEVELS[level], deltaError, deltaWait, deltaEnergy,
                         dynamic.hasSolution());
                 String caseName = TYPES[type] + "/" + LEVELS[level];
                 assertTrue(dynamic.hasSolution(), caseName + " has no dynamic solution");
@@ -57,10 +60,17 @@ class DynamicMeetingComparisonTest {
                         && Double.isFinite(baseline.energyPct()), caseName + " has invalid static metrics");
                 assertTrue(Double.isFinite(active.errorM()) && Double.isFinite(active.waitS())
                         && Double.isFinite(active.energyPct()), caseName + " has invalid dynamic metrics");
+                // 三项差值必须有限（可复算）——杜绝 NaN 只进打印、无人发现的现状。
+                assertTrue(Double.isFinite(deltaError) && Double.isFinite(deltaWait)
+                        && Double.isFinite(deltaEnergy), caseName + " has non-finite delta");
+                // 会面误差更小视为「动态占优」；误差是三项指标中最直接衡量方案优劣的口径。
+                if (deltaError < 0) dynamicWins++;
                 rows++;
             }
         }
         assertEquals(12, rows);
+        // 至少一个档位动态方案误差优于静态基线，证明「动态会面」能力在可判定档位上生效。
+        assertTrue(dynamicWins > 0, "no perturbation level where dynamic beats static baseline");
     }
 
     @Test

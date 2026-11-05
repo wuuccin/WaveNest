@@ -15,7 +15,7 @@ import { candidateAssessment } from './realtime/candidateAssessment'
 import { GUIDE_STAGES, buildLiveGuideSteps, buildOfflineGuideSteps, buildContinueGuideSteps } from './realtime/guided'
 import { buildReplaySteps, droneIdForOrder, normalizeReplayTasks } from './replay/model'
 import { api } from './api/client'
-import { useOrderStore, useShipStore, useDroneStore, useAlertStore, useEventStore, useNestStore, useFleetStore, useAirspaceStore } from './stores'
+import { useOrderStore, useShipStore, useDroneStore, useAlertStore, useEventStore, useNestStore, useFleetStore, useAirspaceStore, usePlanTrackStore } from './stores'
 
 const route = ref(location.hash.slice(1) || 'dashboard')
 const sceneIndex = ref(0)
@@ -47,6 +47,7 @@ const events = useEventStore()
 const nests = useNestStore()
 const fleet = useFleetStore()
 const airspace = useAirspaceStore()
+const planTrack = usePlanTrackStore()
 const connection = realtime.status
 
 const view = computed(() => ['dashboard', 'console', 'crew', 'replay', 'guide'].includes(route.value) ? route.value : 'dashboard')
@@ -386,12 +387,14 @@ function showReplay(index) {
   events.clear()
   ship.apply(null)
   drone.apply(null)
+  planTrack.reset()
   for (const [type, data] of replayFrames.value) realtime.emit(type, data, true)
   orders.replaying = true
 }
 
 function exitReplay() {
   orders.replaying = false
+  planTrack.reset()
   if (source.value === 'live') realtime.connect()
   else {
     const count = sceneIndex.value
@@ -458,7 +461,7 @@ async function importRecording(event) {
   try {
     const content = JSON.parse(await event.target.files[0].text())
     if (!Array.isArray(content.frames) || !content.frames.length) throw new Error('文件中没有历史帧')
-    const allowed = ['order_state', 'rendezvous', 'drone_state', 'ship_traj', 'alarm']
+    const allowed = ['order_state', 'rendezvous', 'drone_state', 'ship_traj', 'alarm', 'plan_track']
     const rawSteps = Array.isArray(content.steps) && content.steps.length ? content.steps : content.frames.map(frame => ({ title: frame.type, frames: [frame] }))
     const steps = rawSteps.map(step => ({
       title: typeof step.title === 'string' ? step.title : '历史片段',

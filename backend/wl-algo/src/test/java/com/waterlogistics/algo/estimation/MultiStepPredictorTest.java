@@ -352,6 +352,106 @@ class MultiStepPredictorTest {
     }
 
     @Test
+    @DisplayName("限速切换点不与顶点重合：子步在切换点处切断，跨点后按新限速重新起算")
+    void limitSwitchPointOffVertex_shouldSplitSubStep() {
+        // 几何只有两端点——一条航段、零内部顶点；限速切换点设在 s = 1000 m，必不与任何顶点重合。
+        // 旧实现只按几何顶点切分，子步跨过切换点后整步沿用「切换前不限速」，正是本条要修的缺陷。
+        WaterwayGeometry twoVertices = new WaterwayGeometry(List.of(
+                new WaterwayGeometry.Vertex(LON, BASE_LAT),
+                new WaterwayGeometry.Vertex(LON, BASE_LAT + 0.06)));
+        double switchPoint = 1000.0;
+        MultiStepPredictor.SpeedLimitLookup limit = new MultiStepPredictor.SpeedLimitLookup() {
+            @Override
+            public double speedLimitMs(double s) {
+                return s < switchPoint ? Double.MAX_VALUE : 2.0;
+            }
+
+            @Override
+            public double[] switchPointsM() {
+                return new double[] {switchPoint};
+            }
+        };
+        MultiStepPredictor.Params params = new MultiStepPredictor.Params(
+                MultiStepPredictor.DEFAULT_PROCESS_NOISE_Q, 60.0, 0.0, 0.0, 50.0, 180.0, 40.0, 60L, 60L);
+        // 船以 4.0 m/s 从切换点前 120 m 出发：前 30 s 走满 120 m 到切换点，后 30 s 按 2.0 衰减。
+        MultiStepPredictor.Input input = new MultiStepPredictor.Input(T0_MS, switchPoint - 120.0, 4.0,
+                400.0, 0.0, 0.0, stillLateral(), twoVertices, limit);
+
+        List<MultiStepPredictor.Sample> samples = MultiStepPredictor.predict(input, params);
+
+        // 切分后：2·30 + 2·60·(1−e^{−0.5}) = 107.216 m。
+        // 若未切分（整步按跨越前的 4.0 匀速），这里是 120 m——差 12.8 m，远超 0.2 容差。
+        double advanced = samples.get(1).s() - switchPoint;
+        assertEquals(107.21, advanced, 0.2,
+                "子步未在限速切换点断开、跨点后仍沿用旧限速：推进 " + advanced + " m");
+        // 切分只改子步划分，不得改变预测时间点。
+        assertEquals(60.0, samples.get(1).tauSec(), 1e-9);
+    }
+
+    // ───────────── 非空限速段的速度稳态（11-05 判据 3 口径裁定） ─────────────
+
+    /** 判据 3 的稳态门槛：{@code 3·tauV}，s（{@code 80} 附录 B 的 {@code tauV = 60 s}）。 */
+    private static final long STEADY_START_TAU_SEC = 3L * (long) MultiStepPredictor.DEFAULT_TAU_V_SEC;
+
+    /** 稳态段允许的限速容差，m/s：0.1 约等于两个 AIS {@code sog} 量化步长（0.1 kn ≈ 0.051 m/s）。 */
+    private static final double STEADY_SPEED_TOLERANCE_MS = 0.1;
+
+    @Test
+    @DisplayName("非空限速段：一阶衰减在 τ≥3·tauV 后收敛进限速容差带（判据 3 口径）")
+    void speedLimitFirstOrderDecay_shouldConvergeInSteadyState() {
+        // 现场参数（11-05 彭紫情汇合复跑）：船 s0 = 2690 m；AIS sog 4.12 m/s，cog 与中心线走向
+        // 相差约 4°，故纵向初速 v0 = 4.12·cos 4° ≈ 4.11 m/s（AlongTrackKalmanFilter 的初始化口径）。
+        // 限速配置全程 2.5 m/s（`0,3000,2.5;3000,5780,2.5` 两段同值，等价于常数限速）。
+        // 步长 60 s、时域 720 s：最长行程约 1.9 km，不触及中心线端点，避免夹紧干扰速度核算。
+        double v0 = 4.11;
+        double limitMs = 2.5;
+        MultiStepPredictor.Params params = new MultiStepPredictor.Params(
+                MultiStepPredictor.DEFAULT_PROCESS_NOISE_Q, MultiStepPredictor.DEFAULT_TAU_V_SEC,
+                0.0, 0.0, 50.0, 180.0, 40.0, 60L, 720L);
+        MultiStepPredictor.Input input = new MultiStepPredictor.Input(T0_MS, 2690.0, v0,
+                400.0, 0.0, 0.0, stillLateral(), GANJIANG,
+                MultiStepPredictor.SpeedLimitLookup.constant(limitMs));
+
+        List<MultiStepPredictor.Sample> samples = MultiStepPredictor.predict(input, params);
+
+        // 相邻点弧长差 ÷ 步长 = 该段平均速度。用弧长而非经纬度地面距离：弧长无投影误差，
+        // 转弯段也不会因弦长小于弧长而低估速度。
+        double[] segmentSpeed = new double[samples.size() - 1];
+        for (int i = 1; i < samples.size(); i++) {
+            segmentSpeed[i - 1] = (samples.get(i).s() - samples.get(i - 1).s()) / params.stepSec();
+        }
+
+        // 判据 1：稳态段（起点 τ ≥ 3·tauV = 180 s）每段速度不超过限速 + 容差。
+        // 2.5 档理论值：180–240 s 段 2.551、240–300 s 段 2.519、300–360 s 段 2.507。
+        boolean sawSteady = false;
+        for (int i = 1; i < samples.size(); i++) {
+            if (samples.get(i - 1).tauSec() < STEADY_START_TAU_SEC) {
+                continue;
+            }
+            sawSteady = true;
+            assertTrue(segmentSpeed[i - 1] <= limitMs + STEADY_SPEED_TOLERANCE_MS,
+                    "τ=" + samples.get(i - 1).tauSec() + "–" + samples.get(i).tauSec()
+                            + " s 段速度 " + segmentSpeed[i - 1] + " m/s 超出限速 + "
+                            + STEADY_SPEED_TOLERANCE_MS);
+        }
+        assertTrue(sawSteady, "时域太短，没有落到稳态段，判据未被执行");
+
+        // 判据 2：过渡段速度单调不增（一阶衰减没有回弹）。
+        for (int i = 1; i < segmentSpeed.length; i++) {
+            assertTrue(segmentSpeed[i] <= segmentSpeed[i - 1] + 1e-9,
+                    "第 " + (i + 1) + " 段速度 " + segmentSpeed[i] + " 高于前一段 "
+                            + segmentSpeed[i - 1] + "，衰减不是单调的");
+        }
+
+        // 判据 3：首段速度必须显著高于限速——证明限速确实接进了预测链路，
+        // 而不是像配置缺失那样退化成 unbounded。
+        // 理论值 2.5 + 1.61·(1−e⁻¹) = 3.518 m/s，与现场实测「最高约 3.50 m/s」同为过渡段口径。
+        assertEquals(limitMs + (v0 - limitMs) * (1.0 - Math.exp(-1.0)), segmentSpeed[0], 0.01,
+                "首段速度与一阶衰减解析积分不符：限速可能未接入预测链路");
+        assertTrue(segmentSpeed[0] > limitMs + 0.5, "首段速度未显著高于限速，衰减可能未生效");
+    }
+
+    @Test
     @DisplayName("与步骤 C/D 串联：滤波器状态可直接喂进预测，输出可投影成 EstimatedPoint")
     void withFilters_shouldProduceEstimatedPoints() {
         AlongTrackKalmanFilter alongFilter = new AlongTrackKalmanFilter(1e-6, 20.0, 75.0, 6.0, 0.5);
