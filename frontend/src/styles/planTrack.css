@@ -1,0 +1,83 @@
+/* 规划航迹（阶段二 2 · 杨添爻 11-04）
+ *
+ * 只新增类名，不改既有规则——与 /styles/prediction.css 同一策略，便于回滚与 review。
+ * 配色见 api/planTrack.js 的 SEGMENT_STYLE；线型由 planTrackLayer.js 的 DASH 控制。
+ */
+
+/* ── 图例线型：点划线用 border 的复合写法做不到，用背景渐变画 ── */
+.map-line-plan-outbound,
+.map-line-plan-terminal,
+.map-line-plan-return {
+  height: 5px;
+  border-top: 0;
+  background-repeat: repeat-x;
+}
+.map-line-plan-outbound { background-image: repeating-linear-gradient(90deg, #1d4f85 0 9px, transparent 9px 15px, #1d4f85 15px 17px, transparent 17px 23px); }
+.map-line-plan-terminal { background-image: repeating-linear-gradient(90deg, #9a6414 0 9px, transparent 9px 15px, #9a6414 15px 17px, transparent 17px 23px); }
+.map-line-plan-return   { background-image: repeating-linear-gradient(90deg, #12695a 0 9px, transparent 9px 15px, #12695a 15px 17px, transparent 17px 23px); }
+
+/* ── 段中点标签：颜色接近时只靠颜色分辨不成立，文字必须带 ── */
+.plan-track-tag {
+  display: grid;
+  place-items: center;
+  height: 22px;
+  padding: 0 7px;
+  border: 1.5px solid #fff;
+  border-radius: 5px;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .02em;
+  white-space: nowrap;
+  box-shadow: 0 2px 6px #0f2a3355;
+  pointer-events: none;
+}
+.plan-track-tag-去程 { background: #1d4f85; }
+.plan-track-tag-末段交接 { background: #9a6414; }
+.plan-track-tag-返程 { background: #12695a; }
+.plan-track-tag-unknown { background: #7c2d3a; }
+
+/* ── 缺段提示 ── */
+.plan-track-missing {
+  display: grid;
+  place-items: center;
+  height: 24px;
+  padding: 0 8px;
+  border: 1.5px dashed #9a6414;
+  border-radius: 5px;
+  color: #6d4409;
+  background: #fffaf0;
+  font-size: 11px;
+  font-weight: 750;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* ── 面板 ── */
+.plan-track-panel { display: grid; gap: 10px; }
+.plan-track-panel .panel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.plan-track-panel .panel-head h2 { margin: 0 0 3px; font-size: 15px; }
+.plan-track-panel .panel-head p { margin: 0; color: var(--muted, #657286); font-size: 12px; line-height: 1.5; }
+.plan-track-panel .count-badge { flex: none; padding: 2px 8px; border-radius: 999px; background: #eef4fa; color: #1d4f85; font-size: 12px; font-weight: 750; white-space: nowrap; }
+
+.plan-track-warn { padding: 7px 10px; border-left: 3px solid #c98736; border-radius: 4px; background: #fff8ec; color: #6d4409; font-size: 12px; line-height: 1.5; }
+.plan-track-warn.severe { border-left-color: #7c2d3a; background: #fdf2f3; color: #7c2d3a; }
+
+.plan-track-empty { padding: 14px 10px; border: 1px dashed #cfd8e0; border-radius: 6px; color: #657286; font-size: 12px; text-align: center; line-height: 1.6; }
+
+.plan-track-card { border: 1px solid #e2e8ee; border-radius: 7px; overflow: hidden; }
+.plan-track-card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 7px 10px; background: #f7fafc; border-bottom: 1px solid #e2e8ee; }
+.plan-track-card-head strong { font-size: 13px; }
+.plan-track-card-head small { color: #657286; font-size: 11px; }
+
+.plan-track-segments { display: grid; gap: 0; }
+.plan-track-segment { display: grid; grid-template-columns: 14px 1fr auto; align-items: center; gap: 8px; padding: 6px 10px; border-top: 1px solid #f0f4f7; cursor: default; }
+.plan-track-segment:first-child { border-top: 0; }
+.plan-track-segment:hover { background: #f7fafc; }
+.plan-track-segment .swatch { width: 14px; height: 5px; border-radius: 2px; }
+.plan-track-segment .name { font-size: 12.5px; font-weight: 650; }
+.plan-track-segment .meta { color: #657286; font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.plan-track-segment.empty .name { color: #8b95a3; }
+.plan-track-segment.empty .meta { color: #a5adb8; font-style: italic; }
+.plan-track-segment.unexpected .name { color: #7c2d3a; }
+.plan-track-segment.unexpected .meta { color: #7c2d3a; }

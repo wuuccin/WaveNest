@@ -267,6 +267,90 @@ class MultiStepPredictorTest {
         assertEquals(60.0, params.laneHalfWidthM(), 1e-12);
     }
 
+    // ───────────── 11-04 内部顶点边界冻结（吴可欣 M4 现场验证发现） ─────────────
+
+    /** 赣江 13 顶点中心线，与 {@code application.yml} 的 {@code centerline} 同值（M4 现场验证那条）。 */
+    private static final WaterwayGeometry GANJIANG = new WaterwayGeometry(List.of(
+            new WaterwayGeometry.Vertex(115.852, 28.646),
+            new WaterwayGeometry.Vertex(115.853739, 28.650224),
+            new WaterwayGeometry.Vertex(115.855479, 28.654448),
+            new WaterwayGeometry.Vertex(115.857218, 28.658673),
+            new WaterwayGeometry.Vertex(115.859, 28.663),
+            new WaterwayGeometry.Vertex(115.861586, 28.666749),
+            new WaterwayGeometry.Vertex(115.864236, 28.670593),
+            new WaterwayGeometry.Vertex(115.866887, 28.674436),
+            new WaterwayGeometry.Vertex(115.869537, 28.678279),
+            new WaterwayGeometry.Vertex(115.872188, 28.682123),
+            new WaterwayGeometry.Vertex(115.874838, 28.685966),
+            new WaterwayGeometry.Vertex(115.877489, 28.689809),
+            new WaterwayGeometry.Vertex(115.879, 28.692)));
+
+    /** M4 现场验证的分段限速：{@code s ∈ [2000, 4000)} 限 3.0 m/s，其余不限速。 */
+    private static final MultiStepPredictor.SpeedLimitLookup M4_LIMIT =
+            s -> (s >= 2000.0 && s < 4000.0) ? 3.0 : Double.MAX_VALUE;
+
+    @Test
+    @DisplayName("内部顶点边界：解析积分差几纳米时不得丢弃剩余时间（11-04 冻结缺陷）")
+    void internalVertexBoundary_shouldNotFreezeAlongTrack() {
+        // 复现参数与《多步预测边界冻结缺陷说明》§一 一致：s0=2969.9、v0=4.116、
+        // 限速段 [2000,4000) 取 3.0、tauV=60 s、步长 60 s、时域 1800 s。
+        MultiStepPredictor.Params params = new MultiStepPredictor.Params(
+                MultiStepPredictor.DEFAULT_PROCESS_NOISE_Q, MultiStepPredictor.DEFAULT_TAU_V_SEC,
+                0.10, 0.03, 50.0, 180.0, 40.0, 60L, 1800L);
+        MultiStepPredictor.Input input = new MultiStepPredictor.Input(T0_MS, 2969.9, 4.116,
+                400.0, 0.0, 0.0, stillLateral(), GANJIANG, M4_LIMIT);
+
+        List<MultiStepPredictor.Sample> samples = MultiStepPredictor.predict(input, params);
+        double total = GANJIANG.totalLengthM();
+        double last = samples.get(samples.size() - 1).s();
+
+        // 判据 1：不再冻结。旧实现停在顶点边界前 2.4 nm（s≈3995.685），此后 24 点不动；
+        // 修好后 3.0 m/s 跑满 1800 s 足以走完全线，末点应夹在端点。
+        assertTrue(last > 3996.0, "末点 s=" + last + "，仍冻结在顶点边界 3995.685 附近");
+        assertEquals(total, last, 1e-9, "走完全线后应夹在端点");
+
+        // 判据 2：s 单调不减，且未到端点前每个点都要真的走一步（原地踏步就是冻结）。
+        // 一次 60 s 的理论推进量在 180 m（限速 3.0 稳态）到 222 m（首步 4.116 衰减中）之间，
+        // 取下界 179 m 判「有没有走」；临近端点那一步取剩余距离。
+        for (int i = 1; i < samples.size(); i++) {
+            double prev = samples.get(i - 1).s();
+            double cur = samples.get(i).s();
+            assertTrue(cur >= prev - 1e-9, "τ=" + samples.get(i).tauSec() + " 的 s 回退");
+            if (prev < total - 1e-6) {
+                double expected = Math.min(179.0, total - prev);
+                assertTrue(cur - prev >= expected - 1e-6,
+                        "τ=" + samples.get(i).tauSec() + " 只推进 " + (cur - prev)
+                                + " m（应为 " + expected + " m 量级，原地踏步＝冻结）");
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("跨内部顶点后：按新航段限速重新起算（80 §3.2.7 步骤 3）")
+    void crossingInternalVertex_shouldRestartWithNewSegmentLimit() {
+        WaterwayGeometry three = new WaterwayGeometry(List.of(
+                new WaterwayGeometry.Vertex(LON, BASE_LAT),
+                new WaterwayGeometry.Vertex(LON, BASE_LAT + 0.02),
+                new WaterwayGeometry.Vertex(LON, BASE_LAT + 0.06)));
+        double boundary = three.segmentBoundariesM()[1];
+
+        // 第一段不限速、第二段限 2.0 m/s；船以 4.0 m/s 从边界前 120 m 出发，30 s 后跨过边界。
+        MultiStepPredictor.SpeedLimitLookup limit =
+                s -> s >= boundary ? 2.0 : Double.MAX_VALUE;
+        MultiStepPredictor.Params params = new MultiStepPredictor.Params(
+                MultiStepPredictor.DEFAULT_PROCESS_NOISE_Q, 60.0, 0.0, 0.0, 50.0, 180.0, 40.0, 60L, 60L);
+        MultiStepPredictor.Input input = new MultiStepPredictor.Input(T0_MS, boundary - 120.0, 4.0,
+                400.0, 0.0, 0.0, stillLateral(), three, limit);
+
+        List<MultiStepPredictor.Sample> samples = MultiStepPredictor.predict(input, params);
+
+        // 跨过边界后的 30 s 就必须按 2.0 m/s 起算：2·30 + 2·60·(1−e^{−0.5}) = 107.21 m。
+        // 若晚一个子步才换限速（整步按旧段 4.0），这里会是 120 m。
+        double advanced = samples.get(1).s() - boundary;
+        assertEquals(107.21, advanced, 0.2,
+                "跨段后未按新航段限速重新起算：推进 " + advanced + " m");
+    }
+
     @Test
     @DisplayName("与步骤 C/D 串联：滤波器状态可直接喂进预测，输出可投影成 EstimatedPoint")
     void withFilters_shouldProduceEstimatedPoints() {

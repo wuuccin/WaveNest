@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.DoubleSupplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -75,9 +76,13 @@ import org.slf4j.LoggerFactory;
  *   <li><b>前提监测</b>：{@link PremiseMonitor} 与 {@link NavPhaseTracker} 已按船接入，
  *       每帧观测推进一次，P 判据的参数取算法层缺省值；结论经 {@code Outcome.premise}
  *       透出到 {@code ship_traj.premise}。</li>
- *   <li><b>航段限速</b>：中心线已接入，但配置里未带分段限速数据，故仍用
- *       {@link MultiStepPredictor.SpeedLimitLookup#unbounded()}；车速受滤波器自己的
- *       {@code vMaxCraftMs} 限幅。</li>
+ *   <li><b>航段限速</b>：中心线已接入，分段限速由 {@code wavenest.m2.prediction.segment-speed-limits}
+ *       解析成 {@link SpeedLimitLookup} 后注入（11-03 M4）；未配置时恒不限速，
+ *       车速另受滤波器自己的 {@code vMaxCraftMs} 限幅。</li>
+ *   <li><b>速度偏置的读取点（77 §8 G1）</b>：{@code predAlongSpeedBiasMs} 由校准器写回
+ *       {@code sys_param}，本类通过 {@link #alongSpeedForPrediction} 在<b>每次预测时</b>取值并
+ *       加到参与推进的纵向速度上。此前该键「有定义、有种子、无消费点」，写回链路通而校准闭环断在
+ *       预测侧；接入后偏置缺省为 0，行为与接入前完全一致。</li>
  * </ul>
  *
  * <p><b>本类不感知 Spring、不写库</b>：装配见 {@link PredictionConfig}，调用见 {@link PredictionService}。
@@ -152,6 +157,14 @@ public class PrecisePredictionEngine implements ResidualSampleSource {
 
     /** 参考线延伸长度在时域覆盖之外的额外余量，m。 */
     private static final double EXTENSION_MARGIN_M = 500.0;
+
+    /**
+     * 偏置生效的船速下限，m/s（≈0.2 kn）。
+     *
+     * <p>低于此速度视为静止：偏置是「预测里程系统性偏差」的修正量，对停泊／锚泊船没有意义，
+     * 照加会把静止的船预测成漂移。取 0.1 与 AIS 的 {@code sog} 分辨率（0.1 kn）同量级。
+     */
+    static final double ALONG_BIAS_MIN_SPEED_MS = 0.1;
 
     /**
      * 引擎参数（{@code 80} 附录 B 的建议初值；{@code sys_param} 未登记这些键，按纪律不臆造键名）。
@@ -324,6 +337,22 @@ public class PrecisePredictionEngine implements ResidualSampleSource {
     /** 航段分段限速查询；缺省恒不限速（等价 {@code unbounded()}）。 */
     private final SpeedLimitLookup speedLimit;
 
+    /**
+     * 沿航道速度偏置的取值口（{@code sys_param: predAlongSpeedBiasMs}，m/s，77 §8 G1）。
+     *
+     * <p><b>为什么是 {@link DoubleSupplier} 而不是一个 {@code double}</b>：校准器会在运行期
+     * 回写这个键（{@link PredictionCalibrationService} 写库并同步 {@code SysParamLoader} 缓存），
+     * 而引擎是常驻单例。构造时读一次等于把偏置冻结在启动那一刻——校准写进去的值永远不生效，
+     * 「闭环」又断在同一个地方，只是这次断得看不出来（数值不动，日志也不报错）。
+     * 每次预测时取值，才能让回写即时生效。
+     *
+     * <p><b>为什么由模块层注入而不是引擎自己读表</b>：算法层「不读配置、不认键名」是分层纪律
+     * （{@code PredictionParams} 类注释），引擎是模块层适配器，但它不该认识
+     * {@code SysParamLoader}——注入取值口后，引擎只要求「给我一个数」，认键名的事留在
+     * {@link PredictionConfig} 一处。
+     */
+    private final DoubleSupplier alongSpeedBiasMs;
+
     private final Map<String, ShipState> states = new ConcurrentHashMap<>();
 
     public PrecisePredictionEngine(PredictionSettings settings, Params params) {
@@ -343,6 +372,20 @@ public class PrecisePredictionEngine implements ResidualSampleSource {
      */
     public PrecisePredictionEngine(PredictionSettings settings, Params params,
             WaterwayGeometry centerline, SpeedLimitLookup speedLimit) {
+        this(settings, params, centerline, speedLimit, null);
+    }
+
+    /**
+     * @param settings           预测参数
+     * @param params             引擎参数
+     * @param centerline         航道中心线；为 {@code null} 时沿用实测窗口建参考线
+     * @param speedLimit         航段分段限速查询；为 {@code null} 时恒不限速
+     * @param alongSpeedBiasMs   沿航道速度偏置取值口（{@code predAlongSpeedBiasMs}）；
+     *                           为 {@code null} 或返回 0 时行为与接入前完全一致
+     */
+    public PrecisePredictionEngine(PredictionSettings settings, Params params,
+            WaterwayGeometry centerline, SpeedLimitLookup speedLimit,
+            DoubleSupplier alongSpeedBiasMs) {
         if (settings == null || params == null) {
             throw new IllegalArgumentException("settings / params 不得为 null");
         }
@@ -350,6 +393,7 @@ public class PrecisePredictionEngine implements ResidualSampleSource {
         this.params = params;
         this.centerline = centerline;
         this.speedLimit = speedLimit == null ? SpeedLimitLookup.unbounded() : speedLimit;
+        this.alongSpeedBiasMs = alongSpeedBiasMs == null ? () -> 0.0 : alongSpeedBiasMs;
     }
 
     /** 已在跟踪的船数。 */
@@ -864,6 +908,48 @@ public class PrecisePredictionEngine implements ResidualSampleSource {
                 settings.toParams(), params.laneHalfWidthM(), params.lTolM(), params.wTolM());
     }
 
+    /**
+     * 把沿航道速度偏置加进参与沿程推进的速度（77 §8 G1，{@code predAlongSpeedBiasMs}）。
+     *
+     * <h3>为什么必须单独一个方法</h3>
+     * <p>偏置的符号、生效条件、反向护栏三条都容易写错，而它们写错时<b>系统不会报错</b>——
+     * 只是预测越校越偏，且表现为「数值慢慢漂」而非崩溃。集中在一处并配单测，
+     * 是让这类错误有地方被抓到。
+     *
+     * <h3>符号（按 80 §3.2.10 推一遍，不要凭直觉）</h3>
+     * <p>校准器给 {@code bias = μ_along / τ̄}，{@code μ_along = s_est − s_pred}：
+     * {@code μ_along > 0} 表示<b>实际比预测更靠 s 增大的一侧</b>。{@code s} 是沿参考线的
+     * <b>绝对弧长</b>（上行为负速度、下行为正速度，同一个坐标系），因此偏置直接<b>代数相加</b>：
+     * 上行船「实际更靠前」意味着 {@code s} 更小、{@code μ_along < 0}、偏置为负，加到负速度上
+     * 使速度更负、推进量更大。<b>不能</b>乘 {@code sign(v_s)}——那恰好把上行船的偏置推反。
+     *
+     * <h3>两条护栏</h3>
+     * <ul>
+     *   <li><b>静止船不加</b>（{@code |v| ≤ }{@value #ALONG_BIAS_MIN_SPEED_MS} m/s）：
+     *       偏置修正的是里程系统性偏差，对停泊船无意义。</li>
+     *   <li><b>不得反向</b>：{@code |bias|} 上限 0.5 m/s，若船本身只有 0.2 m/s 且偏置为
+     *       −0.5，直加会把 {@code s} 拽回去，破坏下游「上行船 s 单调」的判据。撞到反向就停在
+     *       0。这条不只是保守：船速与里程偏差同量级时，偏置本身已不可辨识。</li>
+     * </ul>
+     *
+     * <p>偏置只改<b>位置</b>推进量，不改协方差：它是确定性的系统偏差修正，
+     * 不确定度仍由 {@code P_ss} 与 {@code α·τ} 承担。
+     *
+     * @param vAlongMs 滤波器估计的带号纵向速度，m/s
+     * @return 参与推进的速度，m/s
+     */
+    double alongSpeedForPrediction(double vAlongMs) {
+        double bias = alongSpeedBiasMs.getAsDouble();
+        if (!Double.isFinite(bias) || bias == 0.0) {
+            return vAlongMs;
+        }
+        if (!(Math.abs(vAlongMs) > ALONG_BIAS_MIN_SPEED_MS)) {
+            return vAlongMs;
+        }
+        double biased = vAlongMs + bias;
+        return vAlongMs * biased <= 0.0 ? 0.0 : biased;
+    }
+
     private LateralOuFilter.Params lateralParams() {
         LateralOuFilter.Params base = LateralOuFilter.Params.defaults();
         return new LateralOuFilter.Params(
@@ -895,7 +981,7 @@ public class PrecisePredictionEngine implements ResidualSampleSource {
         MultiStepPredictor.Input input = new MultiStepPredictor.Input(
                 t0Ms,
                 state.along.s(),
-                state.along.vAlongMs(),
+                alongSpeedForPrediction(state.along.vAlongMs()),
                 state.along.varianceS(),
                 state.along.covarianceSV(),
                 state.along.varianceV(),

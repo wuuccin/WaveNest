@@ -12,6 +12,7 @@ import com.waterlogistics.storage.repository.PredErrorSampleMapper;
 import java.lang.reflect.Proxy;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -349,6 +350,105 @@ class PredictionCalibrationServiceTest {
         assertEquals(12.0, row.getErrAlongM(), 1e-9);
         assertEquals(-3.0, row.getErrCrossM(), 1e-9);
         assertEquals(1.5, row.getErrCourseDeg(), 1e-9);
+    }
+
+    @Test
+    @DisplayName("★ 判据 4 复验：连续第 3 次失败记 ERROR，且只在第 3 次记（4、5 次回落 warn）")
+    void persistFailureThreshold_shouldLogErrorExactlyAtThirdTime() {
+        ch.qos.logback.classic.Logger logger = (ch.qos.logback.classic.Logger)
+                org.slf4j.LoggerFactory.getLogger(PredictionCalibrationService.class);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+                new ch.qos.logback.core.read.ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            // 五条样本全失败：日志级别应依次是 warn、warn、error、warn、warn
+            List<ResidualSample> five = new ArrayList<>();
+            for (int i = 0; i < 5; i++) {
+                five.add(sample(T0 + i * 1000L, 60, 1.0, 1.0));
+            }
+            PredictionCalibrationService service = PredictionCalibrationService.forTesting(
+                    mmsi -> five, throwingMapper(new IllegalStateException("表不存在")), null);
+
+            service.calibrate(MMSI);
+
+            List<ch.qos.logback.classic.spi.ILoggingEvent> failures = appender.list.stream()
+                    .filter(event -> event.getLevel() == ch.qos.logback.classic.Level.ERROR
+                            || event.getLevel() == ch.qos.logback.classic.Level.WARN)
+                    .filter(event -> event.getFormattedMessage().contains("落库"))
+                    .toList();
+            long errors = failures.stream()
+                    .filter(event -> event.getLevel() == ch.qos.logback.classic.Level.ERROR)
+                    .count();
+
+            assertEquals(5, failures.size(), "每条失败都应有日志，实际：" + failures);
+            assertEquals(1, errors,
+                    "阈值 3 只应告警一次；每次失败都记 error 会让告警被自己的噪声淹掉");
+            assertTrue(failures.get(2).getFormattedMessage().contains("连续 3 次"),
+                    "第 3 次应为 error 且带「连续 3 次」字样，实际：" + failures.get(2).getFormattedMessage());
+            assertEquals(ch.qos.logback.classic.Level.ERROR, failures.get(2).getLevel());
+            assertEquals(ch.qos.logback.classic.Level.WARN, failures.get(3).getLevel());
+        } finally {
+            logger.detachAppender(appender);
+        }
+    }
+
+    @Test
+    @DisplayName("★ 判据 4 复验：跨重启重放同一批样本 —— 一行都不新增，全部记「跳过」")
+    void restartReplay_shouldHitUniqueKeyAndNotInsertAgain() {
+        // 内存版「带 uk_pes_pair 唯一键的表」：同一个四元组第二次 insert 抛 MySQL 1062 等价的异常。
+        // 不依赖 MySQL 也能验「重启后不重复落库」这条判据，CI 上同样跑得动。
+        Map<String, Integer> table = new java.util.LinkedHashMap<>();
+        PredErrorSampleMapper uniqueKeyMapper = (PredErrorSampleMapper) Proxy.newProxyInstance(
+                PredErrorSampleMapper.class.getClassLoader(),
+                new Class<?>[] {PredErrorSampleMapper.class},
+                (proxy, method, args) -> {
+                    if ("insert".equals(method.getName())) {
+                        PredErrorSampleEntity row = (PredErrorSampleEntity) args[0];
+                        String key = row.getShipMmsi() + "|" + row.getPredVersion() + "|"
+                                + row.getTauSec() + "|" + row.getSampleTs();
+                        if (table.put(key, 1) != null) {
+                            // 真实链路里 MyBatis 会把 SQLIntegrityConstraintViolationException 包三层
+                            throw new IllegalStateException("落库失败",
+                                    new java.sql.SQLIntegrityConstraintViolationException(
+                                            "Duplicate entry '" + key + "' for key 'uk_pes_pair'",
+                                            "23000", 1062));
+                        }
+                        return 1;
+                    }
+                    if ("hashCode".equals(method.getName())) {
+                        return System.identityHashCode(proxy);
+                    }
+                    if ("equals".equals(method.getName())) {
+                        return proxy == args[0];
+                    }
+                    if ("toString".equals(method.getName())) {
+                        return "uniqueKeyMapper";
+                    }
+                    return null;
+                });
+
+        List<ResidualSample> batch = List.of(
+                sample(T0, 60, 1.0, 1.0),
+                sample(T0 + 1000L, 120, 2.0, 1.0));
+
+        PredictionCalibrationService before = PredictionCalibrationService.forTesting(
+                mmsi -> batch, uniqueKeyMapper, null);
+        before.calibrate(MMSI);
+        assertEquals(2L, before.persistedSampleCount(), "首次应两条都进表");
+        assertEquals(2, table.size());
+        assertEquals(0L, before.duplicateSkippedCount());
+
+        // 「重启」：新实例、内存态全空，样本源把同一批样本又吐一遍（水位是内存态，重启即丢）
+        PredictionCalibrationService afterRestart = PredictionCalibrationService.forTesting(
+                mmsi -> batch, uniqueKeyMapper, null);
+        afterRestart.calibrate(MMSI);
+
+        assertEquals(0L, afterRestart.persistedSampleCount(), "重启后不应再写进任何一行");
+        assertEquals(2L, afterRestart.duplicateSkippedCount(), "两条都应记成「跳过」");
+        assertEquals(0, afterRestart.consecutivePersistFailures(),
+                "唯一键冲突不是故障，不能累进失败计数（否则重启后必报假告警）");
+        assertEquals(2, table.size(), "表里仍是两行");
     }
 
     // ───────────── 库桩 ─────────────

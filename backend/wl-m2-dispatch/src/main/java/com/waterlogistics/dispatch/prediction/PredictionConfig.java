@@ -5,6 +5,7 @@ import com.waterlogistics.algo.estimation.WaterwayGeometry;
 import com.waterlogistics.storage.param.SysParamLoader;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.DoubleSupplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -132,6 +133,7 @@ public class PredictionConfig {
      *
      * @param settings 预测参数（σ 初值／α／时域／步长，已读 {@code sys_param}）
      * @param assurance 断言网
+     * @param sysParamLoader 参数加载器（读 {@code predAlongSpeedBiasMs}，77 §8 G1）
      * @param modeCode 实现开关取值
      * @param laneHalfWidthM 航道半宽，m
      * @param lTolM 纵向容忍上限，m
@@ -147,6 +149,7 @@ public class PredictionConfig {
     @Bean
     public PredictionProfile predictionProfile(PredictionSettings settings,
             PredictionAssurance assurance,
+            SysParamLoader sysParamLoader,
             @Value("${wavenest.m2.prediction.mode:precise}") String modeCode,
             @Value("${wavenest.m2.prediction.lane-half-width-m:50}") double laneHalfWidthM,
             @Value("${wavenest.m2.prediction.l-tol-m:180}") double lTolM,
@@ -177,7 +180,27 @@ public class PredictionConfig {
         log.info("预测层运行在精算版：观测滤波 ＋ 曲线坐标 ＋ 协方差传播 ＋ 横向 OU（{} = {}）",
                 KEY_MODE, mode.code());
         return PredictionProfile.precise(settings, assurance, params,
-                parseCenterline(centerlineSpec), speedLimit);
+                parseCenterline(centerlineSpec), speedLimit, alongSpeedBiasSupplier(sysParamLoader));
+    }
+
+    /**
+     * 沿航道速度偏置的取值口（77 §8 G1）。
+     *
+     * <p><b>为什么返回 {@code DoubleSupplier} 而不是当场读出的 {@code double}</b>：这个键由
+     * {@link PredictionCalibrationService} 回写（库 ＋ 缓存双写），而引擎是常驻单例。启动时读一次
+     * 会把偏置冻结在那一刻，后续回写永不生效——「有定义、有种子、无消费点」的断链会以另一种形式
+     * 复现，且这次连日志都不会报。每次预测取值才能让回写即时生效。
+     *
+     * <p><b>为什么读失败就返回 0 而不是抛</b>：{@code SysParamLoader.getDouble} 在键缺失或解析
+     * 失败时返回入参默认值。偏置是修正量，缺失等价于「不修正」，预测退化为现状；
+     * 让它抛异常会把整条预测链路拦停，代价远大于收益。
+     *
+     * @param sysParamLoader 参数加载器
+     * @return 取值口，恒不返回 {@code null}
+     */
+    private static DoubleSupplier alongSpeedBiasSupplier(SysParamLoader sysParamLoader) {
+        return () -> sysParamLoader.getDouble(
+                PredictionCalibrationService.KEY_ALONG_SPEED_BIAS, 0.0);
     }
 
     /**
