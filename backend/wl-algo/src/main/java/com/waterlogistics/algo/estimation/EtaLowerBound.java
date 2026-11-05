@@ -45,8 +45,23 @@ public final class EtaLowerBound {
      * @param etaLowerBoundSec 最短任务时长下界，秒
      * @param nearestDistanceM 预测时域内"船—最近机巢"的最小直线距离，m
      * @param nearestNestId    取到该最小距离的机巢标识；无可用机巢时为 {@code null}
+     * @param etaTsMs          送达时刻下界，Unix 毫秒；未算出时为 {@code null}。
+     *                        本方法只给时长下界、不读时钟，绝对时刻由调用方按
+     *                        {@link #etaTsMs(long, double)} 与「当前时刻」换算
      */
-    public record Result(double etaLowerBoundSec, double nearestDistanceM, String nearestNestId) {
+    public record Result(double etaLowerBoundSec, double nearestDistanceM, String nearestNestId,
+            Long etaTsMs) {
+
+        /**
+         * 兼容旧构造点：送达时刻未算出时传 {@code null}。
+         *
+         * @param etaLowerBoundSec 最短任务时长下界，秒
+         * @param nearestDistanceM 预测时域内"船—最近机巢"的最小直线距离，m
+         * @param nearestNestId    取到该最小距离的机巢标识；无可用机巢时为 {@code null}
+         */
+        public Result(double etaLowerBoundSec, double nearestDistanceM, String nearestNestId) {
+            this(etaLowerBoundSec, nearestDistanceM, nearestNestId, null);
+        }
     }
 
     /**
@@ -103,6 +118,24 @@ public final class EtaLowerBound {
     public static boolean isTimeInfeasible(long deadlineTsMs, long nowTsMs, double etaLowerBoundSec) {
         double availableSec = (deadlineTsMs - nowTsMs) / 1000.0;
         return availableSec < etaLowerBoundSec;
+    }
+
+    /**
+     * 由时长下界与当前时刻换算送达时刻下界。
+     *
+     * <p><b>为什么单独提供而不塞进 {@link #compute}</b>：{@code compute} 是纯函数、不读时钟，
+     * 单测才能给确定断言；「现在是几点」属于调用方的上下文，由调用方传进来。
+     *
+     * @param nowTsMs          当前时刻，Unix 毫秒
+     * @param etaLowerBoundSec 时长下界，秒
+     * @return 送达时刻下界，Unix 毫秒
+     * @throws IllegalArgumentException 下界为负或非有限数时抛出
+     */
+    public static long etaTsMs(long nowTsMs, double etaLowerBoundSec) {
+        if (!Double.isFinite(etaLowerBoundSec) || etaLowerBoundSec < 0.0) {
+            throw new IllegalArgumentException("时长下界须为非负有限数：" + etaLowerBoundSec);
+        }
+        return nowTsMs + Math.round(etaLowerBoundSec * 1000.0);
     }
 
     /** 两点平面近似距离，m（x=东、y=北，经度按平均纬度余弦缩放）。 */

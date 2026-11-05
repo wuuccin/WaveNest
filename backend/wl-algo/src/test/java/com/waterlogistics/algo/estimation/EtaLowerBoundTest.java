@@ -2,6 +2,7 @@ package com.waterlogistics.algo.estimation;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -21,6 +22,34 @@ class EtaLowerBoundTest {
             new EtaLowerBound.NestPosition("NEST-A", 115.852, 28.646);
     private static final EtaLowerBound.NestPosition NEST_B =
             new EtaLowerBound.NestPosition("NEST-B", 115.879, 28.692);
+
+    @Test
+    @DisplayName("ETA 时刻换算：当前时刻 + 时长下界 = 送达时刻下界（毫秒）")
+    void etaTsMs_shouldAddLowerBoundToNow() {
+        long nowMs = 1_700_000_000_000L;
+
+        long etaTs = EtaLowerBound.etaTsMs(nowMs, 120.5);
+
+        assertEquals(nowMs + 120_500L, etaTs, "送达时刻 = 当前时刻 + 时长下界");
+    }
+
+    @Test
+    @DisplayName("时长下界非法（负数／NaN）时不得换算时刻")
+    void etaTsMs_shouldRejectIllegalLowerBound() {
+        assertThrows(IllegalArgumentException.class, () -> EtaLowerBound.etaTsMs(1000L, -1.0));
+        assertThrows(IllegalArgumentException.class, () -> EtaLowerBound.etaTsMs(1000L, Double.NaN));
+    }
+
+    @Test
+    @DisplayName("compute 只给时长下界：etaTsMs 留空，由调用方按当前时刻换算")
+    void compute_shouldLeaveEtaTsUnfilled() {
+        List<EstimatedPoint> points = List.of(point(1000L, NEST_A.lon(), NEST_A.lat()));
+
+        EtaLowerBound.Result result =
+                EtaLowerBound.compute(points, List.of(NEST_A), 12.0, 60.0);
+
+        assertNull(result.etaTsMs(), "compute 不读时钟，送达时刻由调用方换算");
+    }
 
     /** 造一个位于指定经纬度的预测点。 */
     private static EstimatedPoint point(long tMs, double lon, double lat) {

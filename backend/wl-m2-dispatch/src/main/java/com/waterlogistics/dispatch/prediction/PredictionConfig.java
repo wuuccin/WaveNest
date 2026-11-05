@@ -80,13 +80,47 @@ public class PredictionConfig {
     @Bean
     public PredictionSettings predictionSettings(SysParamLoader sysParamLoader) {
         return new PredictionSettings(
-                sysParamLoader.getDouble(KEY_SIGMA_POS_M, 20.0),
-                sysParamLoader.getDouble(KEY_ALPHA_ALONG_MS, 0.10),
-                sysParamLoader.getDouble(KEY_SIGMA_E_M, 15.0),
-                sysParamLoader.getDouble(KEY_ALPHA_CROSS_MS, 0.03),
-                sysParamLoader.getInt(KEY_HORIZON_SEC, 1800),
+                positive(sysParamLoader, KEY_SIGMA_POS_M, 20.0, "沿航道 σ 初值"),
+                positive(sysParamLoader, KEY_ALPHA_ALONG_MS, 0.10, "纵向模型误差率"),
+                positive(sysParamLoader, KEY_SIGMA_E_M, 15.0, "横向稳态标准差"),
+                positive(sysParamLoader, KEY_ALPHA_CROSS_MS, 0.03, "横向模型误差率"),
+                positiveInt(sysParamLoader, KEY_HORIZON_SEC, 1800, "精算时域"),
                 DEFAULT_STEP_SEC,
                 DEFAULT_VALIDITY_SEC);
+    }
+
+    /**
+     * 读参数并校验：取值非有限数或不为正时回落缺省值并记 warn。
+     *
+     * <p><b>为什么必须校验</b>：{@code sys_param.param_value} 存的是字符串，
+     * {@code Double.parseDouble("NaN")} 会正常返回 NaN（不抛异常），坏值会一路进滤波与断言，
+     * 表现为「预测结果静默失真」而不是启动失败——这类故障比直接报错更难查。
+     *
+     * @param loader       参数读取器
+     * @param key          参数键
+     * @param defaultValue 缺省值（键缺失或解析失败时由读取器返回）
+     * @param label        参数中文名，仅用于日志
+     * @return 通过校验的取值；不通过时返回缺省值
+     */
+    private static double positive(SysParamLoader loader, String key, double defaultValue, String label) {
+        double value = loader.getDouble(key, defaultValue);
+        if (!Double.isFinite(value) || value <= 0.0) {
+            log.warn("预测参数取值非法，已回落缺省：{}（key={}）实际={} 缺省={}",
+                    label, key, value, defaultValue);
+            return defaultValue;
+        }
+        return value;
+    }
+
+    /** 同 {@link #positive}，用于整数参数（预测时域秒数须为正整数）。 */
+    private static int positiveInt(SysParamLoader loader, String key, int defaultValue, String label) {
+        int value = loader.getInt(key, defaultValue);
+        if (value <= 0) {
+            log.warn("预测参数取值非法，已回落缺省：{}（key={}）实际={} 缺省={}",
+                    label, key, value, defaultValue);
+            return defaultValue;
+        }
+        return value;
     }
 
     /**
@@ -168,14 +202,16 @@ public class PredictionConfig {
             log.warn("预测实现开关取值无法识别（{}），已回落匀速版；合法取值：precise／constant", modeCode);
         }
 
+        // 匀速版先返回：精算版的参数在 CONSTANT 模式下用不到，
+        // 坏配置（如 q=0、theta-max=90）不该把回退模式一起拦停。
+        if (mode == PredictionMode.CONSTANT) {
+            log.info("预测层运行在匀速版（回退姿态）：{} = constant", KEY_MODE);
+            return new PredictionProfile(PredictionMode.CONSTANT, assurance, null);
+        }
+
         PrecisePredictionEngine.Params params = new PrecisePredictionEngine.Params(
                 laneHalfWidthM, lTolM, wTolM, refColdStartSec, q, thetaMaxDeg,
                 vMaxCraftMs, initialVelocityStdMs, tauESec);
-
-        if (mode == PredictionMode.CONSTANT) {
-            log.warn("预测层运行在匀速版（回退姿态）：{} = constant", KEY_MODE);
-            return new PredictionProfile(PredictionMode.CONSTANT, assurance, null);
-        }
 
         log.info("预测层运行在精算版：观测滤波 ＋ 曲线坐标 ＋ 协方差传播 ＋ 横向 OU（{} = {}）",
                 KEY_MODE, mode.code());
