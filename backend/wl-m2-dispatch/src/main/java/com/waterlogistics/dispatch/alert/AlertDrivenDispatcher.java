@@ -160,6 +160,9 @@ public class AlertDrivenDispatcher {
             case WEATHER_EXCEED, LINK_ERROR -> log.info(
                     "告警 {} 无调度侧动作：eventId={} orderId={}（气象由闸门链路管，链路异常无订单动作）",
                     type.getValue(), message.eventId(), message.orderId());
+            case WAIT_CARGO_TIMEOUT, WAIT_RESOURCE, CARGO_NEST_TIMEOUT -> log.info(
+                    "等待原因告警 {} 无调度侧动作：eventId={} orderId={}（透出与展示由 M2 WaitReasonAlertEmitter 负责）",
+                    type.getValue(), message.eventId(), message.orderId());
         }
     }
 

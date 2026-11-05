@@ -4,8 +4,12 @@ package com.waterlogistics.contract.state;
  * 告警类型——依据《22-接口契约》v1.2 §2「偏差与告警」行，
  * 枚举以《37-M6-数据库》§5.12 {@code alert} 表为准。
  *
- * <p>四类告警统一由 M4 检测产出：M4 消费 {@code data.weather} 并在模块层执行检测与判级，
+ * <p>前五类由 M4 检测产出：M4 消费 {@code data.weather} 并在模块层执行检测与判级，
  * M2 只做决策、不检测、不产告警（U-02 裁定）。
+ *
+ * <p>后三类为 M2 等待原因透出告警（11-05 序号 2 宋冰鑫）：订单进入等待态时由
+ * M2 直接写 alert 表并发 alert.event，不走 M4 检测链路。alert_type 列沿用现有
+ * VARCHAR(32)，不新增表、不新增列。
  */
 public enum AlertType {
 
@@ -22,7 +26,16 @@ public enum AlertType {
     WEATHER_EXCEED("气象超限"),
 
     /** 链路异常 */
-    LINK_ERROR("链路异常");
+    LINK_ERROR("链路异常"),
+
+    /** 等待装货超时（订单进入 WAIT_CARGO 等待，货物所在巢时隙锁超时未释放） */
+    WAIT_CARGO_TIMEOUT("装货超时"),
+
+    /** 等待资源（订单因资源不足转入 WAIT_RESOURCE 等待队列） */
+    WAIT_RESOURCE("等待资源"),
+
+    /** 货到巢超时（货物已到巢但超时未被无人机取走） */
+    CARGO_NEST_TIMEOUT("货到巢超时");
 
     private final String value;
 
