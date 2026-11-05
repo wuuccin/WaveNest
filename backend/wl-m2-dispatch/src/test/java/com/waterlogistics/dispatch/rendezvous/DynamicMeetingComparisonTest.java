@@ -51,12 +51,30 @@ class DynamicMeetingComparisonTest {
                         TYPES[type], LEVELS[level], active.errorM() - baseline.errorM(),
                         active.waitS() - baseline.waitS(), active.energyPct() - baseline.energyPct(),
                         dynamic.hasSolution());
-                assertTrue(Double.isFinite(baseline.errorM()));
-                assertTrue(Double.isFinite(active.errorM()) || !dynamic.hasSolution());
+                String caseName = TYPES[type] + "/" + LEVELS[level];
+                assertTrue(dynamic.hasSolution(), caseName + " has no dynamic solution");
+                assertTrue(Double.isFinite(baseline.errorM()) && Double.isFinite(baseline.waitS())
+                        && Double.isFinite(baseline.energyPct()), caseName + " has invalid static metrics");
+                assertTrue(Double.isFinite(active.errorM()) && Double.isFinite(active.waitS())
+                        && Double.isFinite(active.energyPct()), caseName + " has invalid dynamic metrics");
                 rows++;
             }
         }
         assertEquals(12, rows);
+    }
+
+    @Test
+    void aisGapForecastFreezesAtLastKnownPoint() {
+        for (int level = 0; level < LEVELS.length; level++) {
+            Scenario gap = scenario(2, level);
+            double lastKnownLon = gap.forecast().points().get(5).lon();
+            int gapEnd = 6 + 6 * (level + 1);
+            for (int i = 6; i <= gapEnd; i++) {
+                assertEquals(lastKnownLon, gap.forecast().points().get(i).lon(), 1e-12);
+                assertTrue(gap.truth().get(i).lon() > lastKnownLon);
+            }
+            assertTrue(gap.forecast().points().get(gapEnd + 1).lon() > lastKnownLon);
+        }
     }
 
     private static Scenario scenario(int type, int level) {
@@ -80,8 +98,8 @@ class DynamicMeetingComparisonTest {
                 if (type == 2) actualEast += 0.35 * severity * affectedSec;
             }
             if (type == 2 && i >= 6 && i <= 6 + 6 * severity) {
-                // Missing AIS frames: forecast stays on the last known velocity while truth drifts.
-                predictedEast = 3.0 * sec;
+                // No new AIS observation: freeze at the last known position while truth keeps moving.
+                predictedEast = 3.0 * (6 - 1) * STEP_SEC;
             }
             forecast.add(new ShipPoint(NOW + i * STEP_SEC * 1_000L,
                     SHIP_LON + predictedEast / METERS_PER_LON, LAT, 90.0, 10, 10));
