@@ -19,7 +19,10 @@ class RecordFixTest {
     @Test
     void recorderRejectsMissingFieldsAndBoundsOrders() {
         TaskLogRecorder recorder = new TaskLogRecorder();
-        assertThrows(IllegalArgumentException.class, () -> recorder.record(null, "op", null, "state", 1));
+        // 空订单号：留痕不阻断调度主流程——记 warn 后丢弃，既不抛也不留痕
+        recorder.record(null, "op", null, "state", 1);
+        recorder.record("  ", "op", null, "state", 1);
+        assertEquals(0, recorder.trackedOrderCount(), "空订单号的事件流不得留痕");
         assertThrows(IllegalArgumentException.class, () -> recorder.record("id", " ", null, "state", 1));
         assertThrows(IllegalArgumentException.class, () -> recorder.record("id", "op", null, null, 1));
         assertThrows(IllegalArgumentException.class, () -> recorder.entriesOf(null));

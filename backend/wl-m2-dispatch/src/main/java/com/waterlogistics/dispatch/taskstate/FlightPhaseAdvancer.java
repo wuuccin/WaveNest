@@ -102,6 +102,9 @@ public class FlightPhaseAdvancer {
     /** 缺上下文告警去重键容量上限，超限清空（仅用于告警去重，无业务影响）。 */
     private static final int WARN_KEY_CAPACITY = 10_000;
 
+    /** 周期缓存容量上限：超出后淘汰审计时刻最旧的一条（HIGH-PERF.3）。 */
+    private static final int CYCLE_STATE_CAPACITY = 5_000;
+
     private static final List<OrderStatus> IN_FLIGHT_STATUSES = List.of(
             OrderStatus.DISPATCHED, OrderStatus.OUTBOUND, OrderStatus.HANDOVER,
             OrderStatus.RETURNING);
@@ -306,9 +309,15 @@ public class FlightPhaseAdvancer {
             }
             contextRetryAfterMs.remove(orderId);
             warnedMissingContext.remove(warnKey(orderId, meetMs));
-            state = CycleState.fresh(meetMs, order.getDroneId(), phase, drone,
+            CycleState rebuilt = CycleState.fresh(meetMs, order.getDroneId(), phase, drone,
                     auditFloorMs(order, cycle));
-            cycleStates.put(orderId, state);
+            // 用 compute 原子替换：并发线程若已写入更新的周期状态（未标脏、同一会面时刻），
+            // 保留它，不拿重建结果覆盖——覆盖会把并发的阶段推进抹掉。
+            state = cycleStates.compute(orderId, (key, current) ->
+                    (current == null || current.stale() || current.meetMs() != meetMs)
+                            ? rebuilt
+                            : current);
+            evictOldestCycleStateIfOverCapacity();
         }
         if (state.phase() == OrderStatus.FINISHED) {
             // HIGH.3：已完成订单不再保留周期缓存，避免三张 Map 无限增长
@@ -518,10 +527,14 @@ public class FlightPhaseAdvancer {
                 .eq(DroneEntity::getDroneId, droneId);
         switch (to) {
             case OUTBOUND -> update
+                    // 只接「本单该接的」机：已被别的单占住或在飞的，不覆盖
+                    // （条件更新 + 影响行数；本批禁改表结构，drone 表无订单列）。
+                    .in(DroneEntity::getStatus, "空闲", "已预占")
                     .set(DroneEntity::getStatus, "执行任务中")
                     .set(DroneEntity::getPositionType, "空中")
                     .set(DroneEntity::getCurrentNestId, null);
             case RETURNING -> update
+                    .eq(DroneEntity::getStatus, "执行任务中")
                     .set(DroneEntity::getStatus, "返航中")
                     .set(DroneEntity::getPositionType, "空中");
             case FINISHED -> {
@@ -529,7 +542,8 @@ public class FlightPhaseAdvancer {
                 if (drone == null) {
                     return;
                 }
-                update.set(DroneEntity::getStatus, "空闲")
+                update.in(DroneEntity::getStatus, "执行任务中", "返航中")
+                        .set(DroneEntity::getStatus, "空闲")
                         .set(DroneEntity::getPositionType, "原巢")
                         .set(DroneEntity::getCurrentNestId, drone.getHomeNestId());
             }
@@ -537,7 +551,11 @@ public class FlightPhaseAdvancer {
                 return; // 末段交接中（HANDOVER）等不回写
             }
         }
-        droneMapper.update(null, update);
+        int affected = droneMapper.update(null, update);
+        if (affected == 0) {
+            log.warn("无人机状态未更新（当前状态不在本单可接范围）：droneId={} 目标状态={}",
+                    droneId, to.getValue());
+        }
     }
 
     /**
@@ -579,12 +597,11 @@ public class FlightPhaseAdvancer {
         }
         TaskLogEntity last = logs.get(0);
         String value = last.getToStatus();
-        for (OrderStatus status : FLIGHT_PHASES) {
-            if (status.getValue().equals(value)) {
-                return new CyclePhase(status, toEpochMs(last.getTs()));
-            }
-        }
-        return new CyclePhase(OrderStatus.DISPATCHED, dispatchMs);
+        return FLIGHT_PHASES.stream()
+                .filter(status -> status.getValue().equals(value))
+                .findFirst()
+                .map(status -> new CyclePhase(status, toEpochMs(last.getTs())))
+                .orElse(new CyclePhase(OrderStatus.DISPATCHED, dispatchMs));
     }
 
     /** 审计时刻下界：下单时刻与本周期已有审计取大者，保证任务日志不早于下单时刻。 */
@@ -599,6 +616,32 @@ public class FlightPhaseAdvancer {
         fallbackVersions.remove(orderId);
         contextRetryAfterMs.remove(orderId);
         warnedMissingContext.removeIf(key -> key.startsWith(orderId + "@"));
+    }
+
+    /**
+     * 周期缓存超容量时淘汰审计时刻最旧的一条（HIGH-PERF.3）。
+     *
+     * <p><b>为什么原来只按「已完成」淘汰不够</b>：长期停在中间态的订单（如告警挂起、
+     * 迫停待回收）不会走到 {@code FINISHED}，周期缓存就只增不减。
+     *
+     * <p><b>为什么按 {@code floorMs} 最小者淘汰</b>：{@code floorMs} 是本周期最后一条审计的时刻，
+     * 它最小的就是最久没有推进的那个；淘汰它对正在推进的订单影响最小。
+     */
+    private void evictOldestCycleStateIfOverCapacity() {
+        if (cycleStates.size() <= CYCLE_STATE_CAPACITY) {
+            return;
+        }
+        String oldestKey = null;
+        long oldestFloorMs = Long.MAX_VALUE;
+        for (Map.Entry<String, CycleState> entry : cycleStates.entrySet()) {
+            if (entry.getValue().floorMs() < oldestFloorMs) {
+                oldestFloorMs = entry.getValue().floorMs();
+                oldestKey = entry.getKey();
+            }
+        }
+        if (oldestKey != null) {
+            evictOrder(oldestKey);
+        }
     }
 
     private void warnMissingContext(String orderId, long meetMs, String droneId) {

@@ -7,7 +7,7 @@ import java.util.List;
  * 飞行阶段时间表——纯算术，不读库、不写日志，便于单测与复用。
  *
  * <p>起飞与会面之间按「机巢到会面点距离 ÷ 巡航速度」估去程时长；
- * 交接持续 {@code tHandoverMinSec}；返程沿用去程时长。
+ * 交接持续 {@code handoverSec} 秒；返程沿用去程时长。
  */
 final class FlightPhaseTimeline {
 
@@ -22,7 +22,7 @@ final class FlightPhaseTimeline {
      * @param cruiseSpeedMs 巡航速度，米每秒
      * @param handoverSec  交接持续时长，秒
      * @return 按时间升序的四段迁移
-     * @throws IllegalArgumentException 距离、速度或会面时刻非法
+     * @throws IllegalArgumentException 距离、速度或会面时刻非法，或去程时长溢出
      */
     static List<Transition> schedule(long meetMs, double outboundM, double cruiseSpeedMs,
             int handoverSec) {
@@ -38,12 +38,20 @@ final class FlightPhaseTimeline {
         if (handoverSec < 0) {
             throw new IllegalArgumentException("交接时长不得为负，实际 " + handoverSec);
         }
-        long outboundMs = Math.round(outboundM / cruiseSpeedMs * 1000.0);
+        double outboundMsExact = outboundM / cruiseSpeedMs * 1000.0;
+        if (!Double.isFinite(outboundMsExact)) {
+            throw new IllegalArgumentException("去程时长溢出：去程距离=" + outboundM
+                    + " 米，巡航速度=" + cruiseSpeedMs + " 米每秒");
+        }
+        long outboundMs = Math.round(outboundMsExact);
         long handoverMs = handoverSec * 1000L;
         long returningStartMs = meetMs + handoverMs;
+        // 倒推的起飞时刻可能早于下单时刻（「下单即临期」）；这里只保证它是正的 Unix 毫秒值，
+        // 真正落库时刻由 auditTs 按「已发生的下界」再钳一次。
+        long takeoffMs = Math.max(1L, meetMs - outboundMs);
         return List.of(
                 new Transition(OrderStatus.DISPATCHED, OrderStatus.OUTBOUND,
-                        "起飞确认", meetMs - outboundMs),
+                        "起飞确认", takeoffMs),
                 new Transition(OrderStatus.OUTBOUND, OrderStatus.HANDOVER,
                         "进入末段交接", meetMs),
                 new Transition(OrderStatus.HANDOVER, OrderStatus.RETURNING,
