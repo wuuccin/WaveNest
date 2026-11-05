@@ -1,6 +1,10 @@
 package com.waterlogistics.rendezvous.solver;
 
+import com.waterlogistics.algo.meeting.model.EpochMillis;
+import com.waterlogistics.algo.meeting.model.RendezvousSolveRequest;
+import com.waterlogistics.algo.meeting.model.ShipState;
 import com.waterlogistics.algo.meeting.model.Wind;
+import com.waterlogistics.rendezvous.support.WireText;
 
 import java.util.Objects;
 
@@ -28,6 +32,7 @@ import java.util.Objects;
  * @param convergeEpsilonSec  不动点迭代收敛阈值 ε_t，秒
  * @param maxIterations       不动点迭代最大次数
  */
+@SuppressWarnings("MissingJavadoc")
 public record RendezvousCommand(
 
         String comboId,
@@ -54,36 +59,54 @@ public record RendezvousCommand(
 
         int maxIterations) {
 
+    private static final int MAX_ID_LENGTH = 64;
+
+
+
+
+
+
     public RendezvousCommand {
-        Objects.requireNonNull(comboId, "comboId 不能为空");
-        Objects.requireNonNull(shipMmsi, "shipMmsi 不能为空");
-        Objects.requireNonNull(snapshotVersion, "snapshotVersion 不能为空");
         Objects.requireNonNull(representativeWind, "representativeWind 不能为空");
-        if (comboId.isBlank() || shipMmsi.isBlank() || snapshotVersion.isBlank()) {
-            throw new IllegalArgumentException("comboId/shipMmsi/snapshotVersion 不能为空白字符串");
-        }
-        if (!Double.isFinite(nestLon) || !Double.isFinite(nestLat)
-                || nestLon < -180.0 || nestLon > 180.0 || nestLat < -90.0 || nestLat > 90.0) {
+        comboId = WireText.requireIdentifier(comboId, "comboId", RendezvousCommand.MAX_ID_LENGTH);
+        shipMmsi = WireText.requireIdentifier(shipMmsi, "shipMmsi", RendezvousCommand.MAX_ID_LENGTH);
+        snapshotVersion = WireText.requireIdentifier(snapshotVersion, "snapshotVersion",
+                                                     RendezvousCommand.MAX_ID_LENGTH);
+        if (!Double.isFinite(nestLon) ||
+                !Double.isFinite(nestLat) ||
+                nestLon < -180.0 ||
+                nestLon > 180.0 ||
+                nestLat < -90.0 ||
+                nestLat > 90.0) {
             throw new IllegalArgumentException("机巢坐标必须为有限数且经纬度在合法范围内");
         }
-        if (!Double.isFinite(cruiseSpeedMs) || !(cruiseSpeedMs > 0)) {
-            throw new IllegalArgumentException("巡航速度必须为正的有限数，实际 " + cruiseSpeedMs);
+        if (!Double.isFinite(cruiseSpeedMs) || cruiseSpeedMs <= 0.0 || cruiseSpeedMs > ShipState.MAX_SOG_MS) {
+            throw new IllegalArgumentException("巡航速度须在 (0, " + ShipState.MAX_SOG_MS
+                                                       + "] m/s 内，实际 " + cruiseSpeedMs);
         }
-        if (meetWindowMarginSec < 0) {
-            throw new IllegalArgumentException("会面时间窗余量不能为负，实际 " + meetWindowMarginSec);
+        if (meetWindowMarginSec < 0
+                || meetWindowMarginSec > RendezvousSolveRequest.MAX_WINDOW_MARGIN_SEC) {
+            throw new IllegalArgumentException("会面时间窗余量须在 [0, "
+                                                       + RendezvousSolveRequest.MAX_WINDOW_MARGIN_SEC + "] 秒内，实际 " + meetWindowMarginSec);
         }
-        if (!Double.isFinite(convergeEpsilonSec) || !(convergeEpsilonSec > 0)) {
+        if (!EpochMillis.isValid(nowMs)) {
+            throw new IllegalArgumentException("求解起点须为合法的 Unix 毫秒值，实际 " + nowMs);
+        }
+        if (!EpochMillis.isValid(deadlineMs) || deadlineMs <= nowMs) {
+            throw new IllegalArgumentException("最晚会面时刻须为合法的 Unix 毫秒值且晚于求解起点，实际 nowMs="
+                                                       + nowMs + ", deadlineMs=" + deadlineMs);
+        }
+        if (!Double.isFinite(convergeEpsilonSec) || !(convergeEpsilonSec > (double) 0)) {
             throw new IllegalArgumentException("收敛阈值必须为正的有限数，实际 " + convergeEpsilonSec);
         }
-        if (maxIterations <= 0) {
-            throw new IllegalArgumentException("最大迭代次数必须为正，实际 " + maxIterations);
+        if (convergeEpsilonSec > RendezvousSolveRequest.MAX_CONVERGE_EPSILON_SEC) {
+            throw new IllegalArgumentException("收敛阈值须在 (0, "
+                                                       + RendezvousSolveRequest.MAX_CONVERGE_EPSILON_SEC + "] 秒内，实际 "
+                                                       + convergeEpsilonSec);
         }
-        if (nowMs <= 0) {
-            throw new IllegalArgumentException("求解起点必须为合法的 Unix 毫秒时刻，实际 " + nowMs);
-        }
-        if (deadlineMs < nowMs) {
+        if (maxIterations <= 0 || maxIterations > RendezvousSolveRequest.MAX_ITERATIONS) {
             throw new IllegalArgumentException(
-                    "最晚会面时刻不得早于求解起点，实际 nowMs=" + nowMs + ", deadlineMs=" + deadlineMs);
+                    "最大迭代次数须在 [1, " + RendezvousSolveRequest.MAX_ITERATIONS + "] 内，实际 " + maxIterations);
         }
     }
 }

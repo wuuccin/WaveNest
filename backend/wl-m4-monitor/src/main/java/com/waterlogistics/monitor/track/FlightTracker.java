@@ -2,7 +2,9 @@ package com.waterlogistics.monitor.track;
 
 import com.waterlogistics.algo.measurement.RouteMeasurement;
 import com.waterlogistics.algo.measurement.TelemetryState;
+import org.springframework.stereotype.Component;
 
+@Component
 public final class FlightTracker {
     public record Measurement(RouteMeasurement.Projection projection, RouteMeasurement.Progress progress,
                               RouteMeasurement.Remaining remaining) {}

@@ -7,7 +7,16 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 5173",
     "build": "vite build",
-    "preview": "vite preview --host 127.0.0.1 --port 4173"
+    "preview": "vite preview --host 127.0.0.1 --port 4173",
+    "test:replay": "node tests/replay-model.mjs && node tests/replay-browser.mjs",
+    "test:map": "node tests/map-coordinates.mjs && node tests/map-debug-tool.mjs && node tests/map-display.mjs",
+    "test:t3": "node tests/t3-visualization.mjs",
+    "test:t3:browser": "node tests/t3-browser.mjs",
+    "test:t4:outage": "node tests/t4-outage-browser.mjs",
+    "test:prediction": "node tests/prediction-circuit.mjs",
+    "test:prediction:browser": "node tests/prediction-browser.mjs",
+    "test:plantrack": "node tests/plan-track-circuit.mjs",
+    "test:plantrack:browser": "node tests/plan-track-browser.mjs"
   },
   "dependencies": {
     "echarts": "6.1.0",

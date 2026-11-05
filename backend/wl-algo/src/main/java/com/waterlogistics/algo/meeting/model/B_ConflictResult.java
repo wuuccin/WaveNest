@@ -15,7 +15,7 @@ import java.util.List;
  *
  * @param conflictFlag      是否冲突
  * @param conflictSpaceTime 冲突时空区间（conflictFlag=true 时给出）
- * @param cpaPoint          最近接近点（包围盒粗筛或时间窗短路时为 null）
+ * @param cpaPoint          最近接近点（仅 conflictFlag=false 的包围盒粗筛或时间窗短路时为 null；冲突成立时必填）
  * @param cpaT              最近接近点时刻，Unix 毫秒（同上）
  * @param cpaDistanceM      最近接近距离（三维），米（同上）
  * @param detourRoute       绕行航迹（时空参数化，结构同 waypoints[i]；首版留桩为 null）
@@ -36,4 +36,56 @@ public record B_ConflictResult(
         List<Waypoint> detourRoute,
 
         String checksumVersion) {
+
+    public B_ConflictResult {
+        if (checksumVersion == null || checksumVersion.isBlank()) {
+            throw new IllegalArgumentException("checksumVersion 不能为空");
+        }
+        if (conflictFlag != (conflictSpaceTime != null)) {
+            throw new IllegalArgumentException("冲突标志与冲突区间必须一致");
+        }
+        boolean cpaAllNull = cpaPoint == null && cpaT == null && cpaDistanceM == null;
+        boolean cpaAllSet = cpaPoint != null && cpaT != null && cpaDistanceM != null;
+        if (!cpaAllNull && !cpaAllSet) {
+            throw new IllegalArgumentException("CPA 三字段须同时存在或同时为空");
+        }
+        if (conflictFlag && cpaAllNull) {
+            throw new IllegalArgumentException("冲突结论须给出 CPA 三字段");
+        }
+        if (cpaT != null && !EpochMillis.isValid(cpaT.longValue())) {
+            throw new IllegalArgumentException("CPA 时刻须为 Unix 毫秒值（范围 ["
+                    + EpochMillis.MIN_VALID_MS + ", " + EpochMillis.MAX_VALID_MS
+                    + "]），实际 " + cpaT);
+        }
+        if (cpaT != null && conflictSpaceTime != null
+                && (cpaT < conflictSpaceTime.tBegin() || cpaT > conflictSpaceTime.tEnd())) {
+            throw new IllegalArgumentException("CPA 时刻须落在冲突区间内，实际 cpaT=" + cpaT
+                    + ", tBegin=" + conflictSpaceTime.tBegin()
+                    + ", tEnd=" + conflictSpaceTime.tEnd());
+        }
+        if (cpaDistanceM != null && (!Double.isFinite(cpaDistanceM) || cpaDistanceM < 0.0)) {
+            throw new IllegalArgumentException("CPA 距离须为非负有限数，实际 " + cpaDistanceM);
+        }
+        if (detourRoute != null) {
+            if (!conflictFlag) {
+                throw new IllegalArgumentException("无冲突时不应给出绕行航迹");
+            }
+            if (detourRoute.size() < 2) {
+                throw new IllegalArgumentException("绕行航迹至少需要 2 个航点，实际 " + detourRoute.size());
+            }
+            Waypoint previous = null;
+            int index = 0;
+            for (Waypoint waypoint : detourRoute) {
+                if (waypoint == null) {
+                    throw new IllegalArgumentException("绕行航迹第 " + index + " 个航点为空");
+                }
+                if (previous != null && waypoint.t() <= previous.t()) {
+                    throw new IllegalArgumentException("绕行航迹须按时刻严格升序，下标 " + index + " 处不满足");
+                }
+                previous = waypoint;
+                index++;
+            }
+            detourRoute = List.copyOf(detourRoute);
+        }
+    }
 }

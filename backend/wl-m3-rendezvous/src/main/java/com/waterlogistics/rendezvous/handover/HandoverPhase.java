@@ -1,5 +1,10 @@
 package com.waterlogistics.rendezvous.handover;
 
+import com.waterlogistics.rendezvous.support.WireText;
+import lombok.Getter;
+
+
+
 /**
  * 末段四子阶段——接近 → 匹配 → 交接 → 脱离（《81-B组算法方案》§3.6、《32-M3-动态会面》
  * §3.4）。四子阶段为 {@code 末段交接中} 的<b>内部过程</b>，不建独立任务状态
@@ -10,39 +15,42 @@ package com.waterlogistics.rendezvous.handover;
  */
 public enum HandoverPhase {
 
-    /** 从邻域外缘收敛到目标相对位置附近 */
+    /**
+     * 从邻域外缘收敛到目标相对位置附近
+     */
     APPROACH("接近"),
 
-    /** 相对速度趋近于零、航向与船对齐 */
+    /**
+     * 相对速度趋近于零、航向与船对齐
+     */
     MATCH("匹配"),
 
-    /** 稳定悬停于甲板上方，执行投放 */
+    /**
+     * 稳定悬停于甲板上方，执行投放
+     */
     TRANSFER("交接"),
 
-    /** 拉升离开、恢复巡航 */
+    /**
+     * 拉升离开、恢复巡航
+     */
     DEPART("脱离");
 
+    /**
+     * 对外口径的阶段词（中文）；落库与传输一律用它
+     */
+    @Getter
     private final String value;
 
 
 
 
 
-    HandoverPhase(String value) {
-        this.value = value;
-    }
-
-
-
-
-
-    /**
-     * 返回对外口径的阶段词。
-     *
-     * @return 对外口径的阶段词（中文）
-     */
-    public String getValue() {
-        return this.value;
+    HandoverPhase(CharSequence value) {
+        String normalized = WireText.normalizeToken(value);
+        if (normalized == null || normalized.isEmpty()) {
+            throw new IllegalArgumentException("末段子阶段口径词不能为空：" + this.name());
+        }
+        this.value = normalized;
     }
 
 
@@ -56,15 +64,19 @@ public enum HandoverPhase {
      * @return 对应的末段子阶段
      * @throws IllegalArgumentException 入参为空/空白或无匹配口径词
      */
-    public static HandoverPhase fromValue(String value) {
-        if (value == null || value.isBlank()) {
+    public static HandoverPhase fromValue(CharSequence value) {
+        if (value == null) {
+            throw new IllegalArgumentException("末段子阶段不能为空");
+        }
+        String normalized = WireText.normalizeToken(value);
+        if (normalized.isEmpty()) {
             throw new IllegalArgumentException("末段子阶段不能为空");
         }
         for (HandoverPhase phase : HandoverPhase.values()) {
-            if (phase.value.equals(value)) {
+            if (phase.value.equals(normalized)) {
                 return phase;
             }
         }
-        throw new IllegalArgumentException("未知末段子阶段：" + value);
+        throw new IllegalArgumentException("未知末段子阶段：" + WireText.escapeForLog(normalized));
     }
 }

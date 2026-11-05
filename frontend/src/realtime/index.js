@@ -1,24 +1,33 @@
 import { api } from '../api/client'
 import { reactive } from 'vue'
-import { normalizeOrders, normalizeFrame } from '../api/adapter'
+import { normalizeOrders, normalizeFrame, isRenderableFrame } from '../api/adapter'
+import { droneIdForOrder, normalizeReplayTasks } from '../replay/model'
 import { SCENES } from './mock'
-import { useShipStore, useDroneStore, useAlertStore, useEventStore, useOrderStore } from '../stores'
+import { useShipStore, useDroneStore, useAlertStore, useEventStore, useOrderStore, usePlanTrackStore } from '../stores'
 
 export function createRealtime() {
   const ship = useShipStore(), drone = useDroneStore(), alert = useAlertStore(), events = useEventStore(), orders = useOrderStore()
+  const planTrack = usePlanTrackStore()
   let ws, sse, poll, retry, scriptTimer, generation = 0, buffered = [], priming = false, mockStep = 0
   const status = reactive({ mode: 'live', connection: '未连接', error: '' })
   const listeners = new Set(), recording = []
+  const clearLiveMap = () => { ship.apply(null); drone.apply(null); orders.applyRendezvous(null); planTrack.reset(); alert.clear() }
   const subscribe = fn => { listeners.add(fn); return () => listeners.delete(fn) }
   const emit = (type, data, replay = false) => {
     if (priming && !replay) { buffered.push({ type, data }); return }
     if (orders.replaying && !replay) return
     data = normalizeFrame(type, data)
-    if (type === 'ship_traj') ship.apply(data)
+    if (!isRenderableFrame(type, data)) return
+    if (type === 'ship_traj') { if (!data.mmsi) return; ship.apply(data) }
     else if (type === 'drone_state') drone.apply(data)
-    else if (type === 'rendezvous') orders.rendezvous = data
+    else if (type === 'rendezvous') orders.applyRendezvous(data)
     else if (type === 'alarm') alert.apply(data)
     else if (type === 'order_state') { if (!orders.apply(data)) return }
+    else if (type === 'plan_track') {
+      // 规划航迹按订单分槽：同一订单重派会产新 routeId，后到覆盖先到。
+      // 归一失败（缺 orderId / segments 非数组）计入 rejected，不静默吞掉契约漂移。
+      if (!planTrack.accept(data)) { status.error = '规划航迹帧不符合契约，已丢弃'; return }
+    }
     else return
     if (!replay && status.mode === 'live') { const frame = { type, data, receivedAt: Date.now() }; recording.push(frame); for (const fn of listeners) fn(frame) }
     if (type === 'alarm' || type === 'order_state' || type === 'rendezvous') events.add(type, data)
@@ -32,14 +41,15 @@ export function createRealtime() {
     try {
       const data = await snapshot()
       const orderId = data.orders?.at(-1)?.orderId
-      const tasks = orderId ? await api.tasks().catch(() => ({ tasks: [] })) : { tasks: [] }
-      const taskId = tasks.tasks?.find(task => task.orderId === orderId)?.taskId
-      if (taskId) {
+      const taskResult = orderId ? await api.tasks().catch(() => ({ tasks: [] })) : { tasks: [] }
+      const droneId = droneIdForOrder(normalizeReplayTasks(taskResult), orderId)
+      if (droneId) {
         try {
-          const history = await api.replay(taskId)
+          const history = await api.replay(droneId)
           const latest = new Map()
           for (const frame of history.frames || []) {
-            if (['ship_traj', 'drone_state', 'rendezvous', 'alarm'].includes(frame.type)) latest.set(frame.type, frame)
+            if (frame.type === 'ship_traj' && frame.data?.mmsi) latest.set(`ship_traj:${frame.data.mmsi}`, frame)
+            else if (['drone_state', 'rendezvous', 'alarm', 'plan_track'].includes(frame.type)) latest.set(frame.type, frame)
           }
           restored = [...latest.values()]
         } catch { /* A live source may not expose historical frames. */ }
@@ -69,7 +79,7 @@ export function createRealtime() {
     if (g !== generation) return
     status.connection = 'REST 轮询中'
     clearInterval(poll)
-    const tick = () => snapshot().catch(e => status.error = e.message)
+    const tick = () => snapshot().catch(e => { status.error = e.message; clearLiveMap() })
     tick(); poll = setInterval(tick, 5000)
     retry = setTimeout(() => { if (g === generation) connect() }, 15000)
   }
@@ -87,7 +97,7 @@ export function createRealtime() {
   }
   function resetMock() {
     close(); status.mode = 'mock'; status.connection = '离线演示'; status.error = ''; mockStep = 0
-    orders.reset(); alert.clear(); events.clear(); ship.apply(null); drone.apply(null)
+    orders.reset(); alert.clear(); events.clear(); ship.apply(null); drone.apply(null); planTrack.reset()
     SCENES[0].frames.forEach(([type, data]) => emit(type, data))
   }
   function nextMock() {

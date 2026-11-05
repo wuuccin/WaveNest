@@ -1,5 +1,8 @@
 package com.waterlogistics.rendezvous.trajectory;
 
+import com.waterlogistics.algo.meeting.GeoApprox;
+import com.waterlogistics.rendezvous.support.WireText;
+
 import java.util.List;
 import java.util.Objects;
 
@@ -12,21 +15,22 @@ import java.util.Objects;
  * <p>阈值与参数一律由调用方注入（来源 {@code sys_param}／机型档案），本层不硬编码
  * （《81-B组算法方案》§2.4 硬约束 2）。
  *
- * @param comboId          候选组合标识
- * @param routeId          航迹对象标识（不随重算变化，由调用方设计）
- * @param startLon         起点经度
- * @param startLat         起点纬度
- * @param endLon           终点经度
- * @param endLat           终点纬度
- * @param cruiseAltM       巡航高度，米
- * @param speedMs          巡航速度（沿航迹地速），m/s；用于精算时长与航点内插
- * @param startMs          起点时刻（去程＝起飞时刻、返程＝返航起点时刻；须为正），Unix 毫秒
- * @param waypointCount    航点数（含首末端点，2–512；直线简化版按此均匀铺点）
- * @param landingPointsAlong 沿途可用迫降点标注（首版由调用方按台账预筛；检索半径过滤属精算版留桩）
- * @param avoidZones       实际避让的禁飞区／桥梁净空标识（首版由调用方给，直线简化不实测避让）
+ * @param comboId             候选组合标识
+ * @param routeId             航迹对象标识（不随重算变化，由调用方设计）
+ * @param startLon            起点经度
+ * @param startLat            起点纬度
+ * @param endLon              终点经度
+ * @param endLat              终点纬度
+ * @param cruiseAltM          巡航高度，米
+ * @param speedMs             巡航速度（沿航迹地速），m/s；用于精算时长与航点内插
+ * @param startMs             起点时刻（去程＝起飞时刻、返程＝返航起点时刻；须为正），Unix 毫秒
+ * @param waypointCount       航点数（含首末端点，2–512；直线简化版按此均匀铺点）
+ * @param landingPointsAlong  沿途可用迫降点标注（首版由调用方按台账预筛；检索半径过滤属精算版留桩）
+ * @param avoidZones          实际避让的禁飞区／桥梁净空标识（首版由调用方给，直线简化不实测避让）
  * @param energyRatePerSecPct 能耗率（%／s），供首版线性能耗模型 energy＝τ×率
- * @param pathRisk         路径风险 [0,1]（首版由调用方给）
+ * @param pathRisk            路径风险 [0,1]（首版由调用方给）
  */
+@SuppressWarnings("MissingJavadoc")
 public record GenerateRouteCommand(
 
         String comboId,
@@ -57,53 +61,91 @@ public record GenerateRouteCommand(
 
         double pathRisk) {
 
-    private static final int MAX_WAYPOINT_COUNT = 512;
+    static final int MAX_WAYPOINT_COUNT = 512;
+
+    /**
+     * 航迹速度下限（m/s）——单段与三段命令共用，防极低速导致航段时长不可控
+     */
+    static final double MIN_SPEED_MS = 0.1;
+
+    static final double MAX_SPEED_MS = 100.0;
+
+    private static final int MAX_ANNOTATION_IDS = 512;
+
+    private static final int MAX_ID_LENGTH = 64;
+
+    /** 巡航高度上界，米（工程护栏，防量纲误传） */
+    private static final double MAX_CRUISE_ALT_M = 10_000.0;
+
+    /** 起点时刻上界：2100-01-01T00:00:00Z，为防止后续时刻加法溢出 */
+    private static final long MAX_START_MS = 4_102_444_800_000L;
 
 
 
 
 
     public GenerateRouteCommand {
-        Objects.requireNonNull(comboId, "comboId 不能为空");
-        Objects.requireNonNull(routeId, "routeId 不能为空");
-        if (comboId.isBlank() || routeId.isBlank()) {
-            throw new IllegalArgumentException("comboId/routeId 不能为空白字符串");
-        }
+        comboId = WireText.requireIdentifier(comboId, "comboId", GenerateRouteCommand.MAX_ID_LENGTH);
+        routeId = WireText.requireIdentifier(routeId, "routeId", GenerateRouteCommand.MAX_ID_LENGTH);
         Objects.requireNonNull(landingPointsAlong, "landingPointsAlong 不能为空");
         Objects.requireNonNull(avoidZones, "avoidZones 不能为空");
-        if (landingPointsAlong.stream().anyMatch(Objects::isNull) || avoidZones.stream().anyMatch(Objects::isNull)) {
-            throw new IllegalArgumentException("landingPointsAlong/avoidZones 不能包含 null");
+        for (String annotationId : landingPointsAlong) {
+            if (annotationId == null) {
+                throw new IllegalArgumentException("landingPointsAlong/avoidZones 不能包含 null");
+            }
+        }
+        for (String annotationId : avoidZones) {
+            if (annotationId == null) {
+                throw new IllegalArgumentException("landingPointsAlong/avoidZones 不能包含 null");
+            }
+        }
+        if (landingPointsAlong.size() > GenerateRouteCommand.MAX_ANNOTATION_IDS
+                || avoidZones.size() > GenerateRouteCommand.MAX_ANNOTATION_IDS) {
+            throw new IllegalArgumentException("landingPointsAlong/avoidZones 不得超过 " + GenerateRouteCommand.MAX_ANNOTATION_IDS + " 项");
         }
         landingPointsAlong = List.copyOf(landingPointsAlong);
         avoidZones = List.copyOf(avoidZones);
-        if (!Double.isFinite(startLon) || !Double.isFinite(startLat)
-                || !Double.isFinite(endLon) || !Double.isFinite(endLat)) {
+        if (landingPointsAlong.stream().anyMatch(String::isBlank)
+                || avoidZones.stream().anyMatch(String::isBlank)) {
+            throw new IllegalArgumentException("landingPointsAlong/avoidZones 不能包含空白标识");
+        }
+        if (landingPointsAlong.stream().distinct().count() != (long) landingPointsAlong.size()
+                || avoidZones.stream().distinct().count() != (long) avoidZones.size()) {
+            throw new IllegalArgumentException("landingPointsAlong/avoidZones 不得包含重复标识");
+        }
+        if (!Double.isFinite(startLon) || !Double.isFinite(startLat) || !Double.isFinite(endLon) || !Double.isFinite(endLat)) {
             throw new IllegalArgumentException("起终点坐标必须为有限数");
         }
         if (startLon < -180.0 || startLon > 180.0 || startLat < -90.0 || startLat > 90.0
                 || endLon < -180.0 || endLon > 180.0 || endLat < -90.0 || endLat > 90.0) {
             throw new IllegalArgumentException("起终点经纬度超出地理范围");
         }
-        if (startLon == endLon && startLat == endLat) {
+        // 毫米级容差是几何退化的数值保护，不是可配置业务阈值
+        if (GeoApprox.distanceM(startLon, startLat, endLon, endLat) < 1e-3) {
             throw new IllegalArgumentException("起终点不能重合（零长度航迹）");
         }
         if (waypointCount < 2 || waypointCount > GenerateRouteCommand.MAX_WAYPOINT_COUNT) {
             throw new IllegalArgumentException(
                     "航点数须在 [2, " + GenerateRouteCommand.MAX_WAYPOINT_COUNT + "]，实际 " + waypointCount);
         }
-        if (startMs <= 0) {
-            throw new IllegalArgumentException("起点时刻必须为正，实际 " + startMs);
+        if (startMs <= 0L || startMs > GenerateRouteCommand.MAX_START_MS) {
+            throw new IllegalArgumentException("起点时刻须为正且不晚于 2100-01-01T00:00:00Z，实际 " + startMs);
         }
-        if (!Double.isFinite(speedMs) || !(speedMs > 0)) {
-            throw new IllegalArgumentException("速度必须为正的有限数，实际 " + speedMs);
+        if (!Double.isFinite(speedMs) || speedMs < GenerateRouteCommand.MIN_SPEED_MS
+                || speedMs > GenerateRouteCommand.MAX_SPEED_MS) {
+            throw new IllegalArgumentException("速度须在 [" + GenerateRouteCommand.MIN_SPEED_MS + ", "
+                                                       + GenerateRouteCommand.MAX_SPEED_MS + "] m/s 内，实际 " + speedMs);
         }
-        if (!Double.isFinite(cruiseAltM) || !(cruiseAltM >= 0)) {
-            throw new IllegalArgumentException("巡航高度不能为负且须为有限数，实际 " + cruiseAltM);
+        if (!Double.isFinite(cruiseAltM) || cruiseAltM <= 0.0
+                || cruiseAltM > GenerateRouteCommand.MAX_CRUISE_ALT_M) {
+            throw new IllegalArgumentException("巡航高度须在 (0, "
+                                                       + GenerateRouteCommand.MAX_CRUISE_ALT_M + "] 米内，实际 " + cruiseAltM);
         }
-        if (!Double.isFinite(energyRatePerSecPct) || !(energyRatePerSecPct >= 0)) {
-            throw new IllegalArgumentException("能耗率不能为负且须为有限数，实际 " + energyRatePerSecPct);
+        if (!Double.isFinite(energyRatePerSecPct) || energyRatePerSecPct < 0.0
+                || energyRatePerSecPct > 10.0) {
+            throw new IllegalArgumentException("能耗率须在 [0, 10] %/s 内，实际 " + energyRatePerSecPct);
         }
-        if (!(pathRisk >= 0 && pathRisk <= 1)) {
+        if (!(pathRisk >= (double) 0 && pathRisk <= 1.0)) {
             throw new IllegalArgumentException("路径风险须在 [0,1]，实际 " + pathRisk);
         }
     }

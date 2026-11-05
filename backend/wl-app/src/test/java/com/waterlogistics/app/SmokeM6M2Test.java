@@ -1,11 +1,20 @@
 package com.waterlogistics.app;
 
+import com.waterlogistics.contract.mq.AisMessage;
+import com.waterlogistics.contract.order.OrderView;
 import com.waterlogistics.contract.rest.DispatchGate;
 import com.waterlogistics.contract.rest.GateSource;
 import com.waterlogistics.contract.rest.GateStatus;
 import com.waterlogistics.contract.state.OrderStatus;
 import com.waterlogistics.dispatch.gate.DispatchGateService;
+import com.waterlogistics.dispatch.order.OrderAdmissionService;
+import com.waterlogistics.dispatch.order.OrderSubmitRequest;
+import com.waterlogistics.dispatch.order.OrderSubmitResponse;
+import com.waterlogistics.dispatch.prediction.PredictionService;
+import com.waterlogistics.dispatch.order.OrderStateChangedEvent;
 import com.waterlogistics.dispatch.queue.TaskQueueService;
+import com.waterlogistics.dispatch.taskstate.FlightPhaseAdvancer;
+import com.waterlogistics.dispatch.taskstate.FlightPhaseChangedEvent;
 import com.waterlogistics.storage.entity.OrderTaskEntity;
 import com.waterlogistics.storage.entity.TaskLogEntity;
 import com.waterlogistics.storage.param.SysParamLoader;
@@ -14,9 +23,15 @@ import com.waterlogistics.storage.repository.TaskLogMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.event.ApplicationEvents;
+import org.springframework.test.context.event.RecordApplicationEvents;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -27,7 +42,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * ① SysParamLoader 能读到阈值（宋冰鑫 detect/ 依赖）；② 实体能跑通一次读写；
  * ③ 订单走通「待受理 → 待调度 → 调度中 → 已派发」。测试事务回滚，不污染演示库。
  */
-@SpringBootTest
+@SpringBootTest(properties = {"wavenest.m2.flight-advance-enabled=false",
+        // T1-5 起机巢在南昌航段、仿真器仍在旧域（杨添爻 T1-4 切换前），
+        // 仿真 AIS 流会覆盖本测试手喂的船位快照导致候选全灭——关掉仿真流，测试独占喂数
+        "wavenest.sim.enabled=false"})
+@RecordApplicationEvents
 @Transactional
 class SmokeM6M2Test {
 
@@ -41,6 +60,14 @@ class SmokeM6M2Test {
     private TaskQueueService taskQueueService;
     @Autowired
     private DispatchGateService dispatchGateService;
+    @Autowired
+    private OrderAdmissionService admissionService;
+    @Autowired
+    private PredictionService predictionService;
+    @Autowired
+    private FlightPhaseAdvancer flightPhaseAdvancer;
+    @Autowired
+    private ApplicationEvents applicationEvents;
 
     /** 判据：sys_param 有行、关键键可读（含 M6 新增两键）；2026-10-18 改按键断言，不锁总数 */
     @Test
@@ -64,38 +91,126 @@ class SmokeM6M2Test {
         assertThat(sysParamLoader.getInt("nestCapacity", 0)).isEqualTo(4);
     }
 
-    /** 判据：实体读写 + 状态机主链三步流转 + task_log 同步留痕 */
+    /**
+     * 判据（C0）：主链自然触发 —— 下单后由 DispatchTrigger 落库、受理，
+     * 再由 DispatchOrchestrator 自动完成「组批 → 选机 → 会面 → 派发」，
+     * 订单自然走到「已派发」，drone_id／meet_time／meet_lon／meet_lat 均有值，
+     * 且 task_log 无「重入队」记录（首次派发不走 requeue）。
+     */
     @Test
     void orderStateMachineWalk() {
-        OrderTaskEntity order = new OrderTaskEntity();
-        order.setOrderId("SMOKE-001");
-        order.setShipMmsi("123456789");
-        order.setCreateTime(LocalDateTime.now());
-        order.setStatus(OrderStatus.PENDING_ACCEPT.getValue());
-        orderTaskMapper.insert(order);
+        // 前置：喂一条 AIS 让该船有预测快照——候选距离过滤（机巢 5km 内）
+        // 与会面求解（船轨迹快照）都以真实船位为前提；船位取南昌赣江演示航段
+        // 南昌大桥旁（T1-5 起机巢在航段两端，距 NEST-01 约 2.4km、NEST-02 约 4.0km）
+        predictionService.refresh(new AisMessage(
+                "123456789", "冒烟测试船", 115.8590, 28.6630, 5.0, 90.0,
+                System.currentTimeMillis()));
 
-        taskQueueService.accept(order);
-        assertThat(orderTaskMapper.selectById("SMOKE-001").getStatus())
-            .isEqualTo(OrderStatus.WAIT_DISPATCH.getValue());
+        // 下单（C0 自然触发：submit 发事件 → DispatchTrigger 落库＋受理
+        //   → DispatchOrchestrator 组批 → 选机 → 会面 → 派发）
+        OrderSubmitResponse resp = admissionService.submit(new OrderSubmitRequest(
+                "123456789", 5.5, "医疗物资",
+                System.currentTimeMillis() + 3_600_000L, "URGENT"));
+        assertThat(resp.accepted()).isTrue();
+        String orderId = resp.orderId();
 
-        taskQueueService.startDispatch("SMOKE-001");
-        assertThat(orderTaskMapper.selectById("SMOKE-001").getStatus())
-            .isEqualTo(OrderStatus.DISPATCHING.getValue());
-
-        taskQueueService.dispatch("SMOKE-001", "DRONE-SMOKE", LocalDateTime.now().plusMinutes(30));
-        OrderTaskEntity after = orderTaskMapper.selectById("SMOKE-001");
+        // 自然触发后订单应已到「已派发」，四字段均有值（C0 完成判据）
+        OrderTaskEntity after = orderTaskMapper.selectById(orderId);
         assertThat(after.getStatus()).isEqualTo(OrderStatus.DISPATCHED.getValue());
-        assertThat(after.getDroneId()).isEqualTo("DRONE-SMOKE");
+        assertThat(after.getDroneId()).isNotBlank();
+        assertThat(after.getMeetTime()).isNotNull();
+        assertThat(after.getMeetLon()).isNotNull();
+        assertThat(after.getMeetLat()).isNotNull();
 
         // 状态机违规流转防护：已派发后不允许再受理
         assertThatThrownBy(() -> taskQueueService.accept(after))
             .isInstanceOf(IllegalStateException.class);
 
-        // task_log 与流转同步留痕（受理/组批调度/派发 = 3 条，中文状态词）
-        Long logs = taskLogMapper.selectCount(
+        // 首次派发留下四条状态日志和一条规划航迹摘要（M1）；不走重入队。
+        List<TaskLogEntity> logs = taskLogMapper.selectList(
             new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<TaskLogEntity>()
-                .eq(TaskLogEntity::getOrderId, "SMOKE-001"));
-        assertThat(logs).isEqualTo(3L);
+                .eq(TaskLogEntity::getOrderId, orderId));
+        assertThat(logs).extracting(TaskLogEntity::getOpType)
+                .containsExactly("订单接入", "受理", "组批调度", "派发", "规划航迹");
+        assertThat(logs).noneMatch(entry -> "重入队".equals(entry.getOpType()));
+
+        // F2 飞行阶段推进：把会面时刻回拨到已过时刻，模拟一次完整飞行；
+        // 飞行态只追加 task_log，订单态仍停在「已派发」。
+        after.setMeetTime(LocalDateTime.ofInstant(
+                Instant.ofEpochMilli(System.currentTimeMillis() - 3_600_000L),
+                ZoneId.of("Asia/Shanghai")));
+        orderTaskMapper.updateById(after);
+        flightPhaseAdvancer.tick();
+
+        List<TaskLogEntity> flightLogs = taskLogMapper.selectList(
+            new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<TaskLogEntity>()
+                .eq(TaskLogEntity::getOrderId, orderId)
+                .in(TaskLogEntity::getToStatus, "去程中", "末段交接中", "返航中", "已完成")
+                .orderByAsc(TaskLogEntity::getLogId));
+        assertThat(flightLogs).hasSize(4);
+        assertThat(flightLogs).extracting(TaskLogEntity::getToStatus)
+                .containsExactly("去程中", "末段交接中", "返航中", "已完成");
+        assertThat(flightLogs).extracting(TaskLogEntity::getOpType)
+                .containsExactly("起飞确认", "进入末段交接", "交接完成", "落巢完成");
+        assertThat(logs).hasSize(5);
+        // a41d6fb（-23）起 emit 同事务写 order_task.status：飞行阶段推进即主状态流转，
+        // 一次完整飞行后主状态为「已完成」（旧行为「仍停在已派发」已废弃）
+        assertThat(orderTaskMapper.selectById(orderId).getStatus())
+                .isEqualTo(OrderStatus.FINISHED.getValue());
+        assertThat(applicationEvents.stream(OrderStateChangedEvent.class)
+                .filter(event -> event.view().orderId().equals(orderId))
+                .map(event -> event.view().orderStatus()))
+                .containsExactly(OrderStatus.PENDING_ACCEPT, OrderStatus.WAIT_DISPATCH,
+                        OrderStatus.DISPATCHING, OrderStatus.DISPATCHED);
+        assertThat(applicationEvents.stream(FlightPhaseChangedEvent.class)
+                .filter(event -> event.view().orderId().equals(orderId))
+                .map(event -> event.view().orderStatus()))
+                .containsExactly(OrderStatus.OUTBOUND, OrderStatus.HANDOVER,
+                        OrderStatus.RETURNING, OrderStatus.FINISHED);
+        OrderView snapshot = admissionService.listOrders().stream()
+                .filter(view -> view.orderId().equals(orderId))
+                .findFirst().orElseThrow();
+        assertThat(snapshot.orderStatus()).isEqualTo(OrderStatus.FINISHED);
+        assertThat(snapshot.stateVersion()).isEqualTo(flightLogs.get(3).getLogId() + 1L);
+
+        // 重派复用同一 orderId：上一周期的飞行日志不得让新周期直接判完成。
+        // a41d6fb（-23）起主状态随飞行阶段走到「已完成」，requeue 白名单不含已完成
+        // （物理约束：完成单不可直接重入队）——先模拟落巢回收把主状态置回「已派发」，
+        // 再走 requeue → startDispatch → dispatch 的重派序列
+        OrderTaskEntity forRedispatch = orderTaskMapper.selectById(orderId);
+        forRedispatch.setStatus(OrderStatus.DISPATCHED.getValue());
+        orderTaskMapper.updateById(forRedispatch);
+        String droneId = after.getDroneId();
+        BigDecimal meetLon = after.getMeetLon();
+        BigDecimal meetLat = after.getMeetLat();
+        taskQueueService.requeue(orderId);
+        taskQueueService.startDispatch(orderId);
+        taskQueueService.dispatch(orderId, droneId,
+                LocalDateTime.ofInstant(Instant.ofEpochMilli(System.currentTimeMillis() - 7_200_000L),
+                        ZoneId.of("Asia/Shanghai")));
+        // T1-6：队列侧不再回填会面点坐标（会面帧与坐标回填归编排器统一发布）；
+        // 本冒烟绕开编排器直驱队列，此处模拟编排器把会面点写回，供飞行推进读取。
+        OrderTaskEntity redispatchedOrder = orderTaskMapper.selectById(orderId);
+        redispatchedOrder.setMeetLon(meetLon);
+        redispatchedOrder.setMeetLat(meetLat);
+        orderTaskMapper.updateById(redispatchedOrder);
+        flightPhaseAdvancer.tick();
+
+        List<TaskLogEntity> secondFlightLogs = taskLogMapper.selectList(
+            new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<TaskLogEntity>()
+                .eq(TaskLogEntity::getOrderId, orderId)
+                .in(TaskLogEntity::getToStatus, "去程中", "末段交接中", "返航中", "已完成")
+                .orderByAsc(TaskLogEntity::getLogId));
+        assertThat(secondFlightLogs).hasSize(8);
+        assertThat(secondFlightLogs.subList(4, 8)).extracting(TaskLogEntity::getToStatus)
+                .containsExactly("去程中", "末段交接中", "返航中", "已完成");
+        OrderView redispatched = admissionService.listOrders().stream()
+                .filter(view -> view.orderId().equals(orderId))
+                .findFirst().orElseThrow();
+        assertThat(redispatched.orderStatus()).isEqualTo(OrderStatus.FINISHED);
+        // 重派第二周期同样以 emit 写主状态：二次飞行完成后仍为「已完成」
+        assertThat(orderTaskMapper.selectById(orderId).getStatus())
+                .isEqualTo(OrderStatus.FINISHED.getValue());
     }
 
     /** 判据：闸门口径（22 §3.2）——正常放行 / 熔断回显契约 record */
@@ -114,5 +229,40 @@ class SmokeM6M2Test {
 
         dispatchGateService.clear(GateSource.MANUAL);
         assertThat(dispatchGateService.summary().gateStatus()).isEqualTo(GateStatus.NORMAL);
+    }
+
+    /**
+     * B3 判据：组批入口查闸门。熔断时新单转「已受理待唤醒」而非拒单；
+     * 闸门解除后可重入队调度。
+     */
+    @Test
+    void gateCutoff_deferredNotRejected() {
+        try {
+            // 熔断
+            dispatchGateService.trip(GateSource.AUTO);
+
+            // 下单：自然触发到 startDispatch 时闸门熔断 → 已受理待唤醒（不拒单）
+            OrderSubmitResponse resp = admissionService.submit(new OrderSubmitRequest(
+                    "223456789", 3.0, "食品",
+                    System.currentTimeMillis() + 3_600_000L, "NORMAL"));
+        assertThat(resp.accepted()).isTrue();
+            String orderId = resp.orderId();
+
+            OrderTaskEntity deferred = orderTaskMapper.selectById(orderId);
+            assertThat(deferred.getStatus())
+                .isEqualTo(OrderStatus.ACCEPTED_WAIT_WAKE.getValue());
+
+            // 解除熔断后重入队 → 待调度 → 调度中
+            dispatchGateService.clear(GateSource.AUTO);
+            taskQueueService.requeue(orderId);
+            assertThat(orderTaskMapper.selectById(orderId).getStatus())
+                .isEqualTo(OrderStatus.WAIT_DISPATCH.getValue());
+
+            taskQueueService.startDispatch(orderId);
+            assertThat(orderTaskMapper.selectById(orderId).getStatus())
+                .isEqualTo(OrderStatus.DISPATCHING.getValue());
+        } finally {
+            dispatchGateService.reset();
+        }
     }
 }

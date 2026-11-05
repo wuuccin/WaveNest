@@ -22,14 +22,26 @@ public class SimAisConnector implements DataSourceConnector {
 
     private final MqDataPublisher publisher;
 
-    /** 起始经度（十进制度） */
-    @Value("${wavenest.sim.ais.start-lon:114.300000}")
+    /**
+     * 起始经度（十进制度）——演示基准定稿的船舶起点（2026-10-29）。
+     *
+     * <p>定稿来源：彭紫情图上放样，沿程 2.40 km（115.8611, 28.6660），落在赣江航道
+     * （朝阳→南昌→八一折线）上；最终以放样结果为准，此值随放样微调。
+     * <p>作废：115.863/28.668（T2-7 旧值，不在航道中心线附近）、115.861000（T1-4 估算值）。
+     */
+    @Value("${wavenest.sim.ais.start-lon:115.861100}")
     private double startLon;
-    /** 起始纬度（十进制度） */
-    @Value("${wavenest.sim.ais.start-lat:30.600000}")
+    /** 起始纬度（十进制度）——定稿船舶起点（沿程 2.40 km） */
+    @Value("${wavenest.sim.ais.start-lat:28.666000}")
     private double startLat;
-    /** 初始航向（度，正北为 0 顺时针） */
-    @Value("${wavenest.sim.ais.start-cog:90.0}")
+    /**
+     * 初始航向（度，正北为 0 顺时针）——赣江航道南昌→八一大桥段的走向。
+     *
+     * <p><b>2026-10-29 修复</b>：旧值 6.7° 是「起点→北巢方位角」（朝陆地机巢），
+     * 不是航道走向——沿 6.7° 跑 700 秒后离航道中心线 1149 m，船开上岸。
+     * 31.2° 才是沿赣江航道（朝阳→南昌→八一）的航段走向。
+     */
+    @Value("${wavenest.sim.ais.start-cog:31.2}")
     private double startCog;
     /** 航速（节） */
     @Value("${wavenest.sim.ais.sog-knots:8.0}")

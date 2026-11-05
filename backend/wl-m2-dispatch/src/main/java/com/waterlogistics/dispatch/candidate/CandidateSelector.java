@@ -11,9 +11,6 @@ import com.waterlogistics.storage.repository.NestMapper;
 import com.waterlogistics.storage.param.SysParamLoader;
 import org.springframework.stereotype.Service;
 
-import java.math.BigDecimal;
-import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -24,12 +21,13 @@ import java.util.List;
  * （简化目标：只看机巢→取货点直线距离；多目标精算顺延）。
  *
  * <p>约束：不做业务判断，只做数据装配 + 择优；阈值读 sys_param，不硬编码。
+ *
+ * <p><b>查询与组装口径都不在本类（逐字审查）</b>：表格条件来自
+ * {@link CandidateQueries}，实体→输入的映射来自 {@link CandidateInputAssembler}。
+ * 本类只剩「查 → 生成 → 取第一个」三行，任何人改口径不必再记着改两处。
  */
 @Service
 public class CandidateSelector {
-
-    private static final String DEFAULT_STATUS_IDLE = "空闲";
-    private static final String DEFAULT_NEST_AVAILABLE = "可用";
 
     private final DroneMapper droneMapper;
     private final NestMapper nestMapper;
@@ -48,14 +46,13 @@ public class CandidateSelector {
      * 为指定订单选最优候选组合。
      *
      * @return 最优候选；无可用候选时返回 null
+     * @throws IllegalArgumentException {@code order} 为 {@code null}（调用方缺陷）
+     * @throws IllegalStateException    订单缺 {@code ship_lon}/{@code ship_lat}/{@code goods_weight}
+     *                                  （MEDIUM.13：不填 0 兜底，避免造出 (0,0) 取货点）
      */
     public CandidateGenerator.CandidateCombo selectBest(OrderTaskEntity order) {
-        List<DroneEntity> drones = droneMapper.selectList(
-            new LambdaQueryWrapper<DroneEntity>()
-                .eq(DroneEntity::getStatus, DEFAULT_STATUS_IDLE));
-        List<NestEntity> nests = nestMapper.selectList(
-            new LambdaQueryWrapper<NestEntity>()
-                .eq(NestEntity::getStatus, DEFAULT_NEST_AVAILABLE));
+        List<DroneEntity> drones = droneMapper.selectList(CandidateQueries.idleAndHealthyDrones());
+        List<NestEntity> nests = nestMapper.selectList(CandidateQueries.availableNests());
 
         if (drones.isEmpty() || nests.isEmpty()) {
             return null;
@@ -70,40 +67,22 @@ public class CandidateSelector {
         if (combos.isEmpty()) {
             return null;
         }
-        // CandidateGenerator 已按距离升序，取第一个即为最优（简化）
+        // CandidateGenerator 已按距离升序，取第一个即为最优（简化）。
+        // 注意（Open CodeReview）：该排序契约未在本类与生成器之间显式声明，
+        // 生成器排序键变更（如接入 rank_key）时这里须同步——生产主链已不走本类
+        // （DispatchOrchestrator 走 CandidateFeasibilityPlanner），本类保留待组长裁定去留。
         return combos.get(0);
     }
 
+    /**
+     * 委托唯一组装实现（Open CodeReview：两份同源副本必须收敛成一份）。
+     *
+     * <p>保留这一层薄封装而不是直接内联，是为了让本类后续若被删除时
+     * 调用点集中在一处（本类如被裁定删除，只需删这一处调用）。
+     */
     private CandidateInput buildInput(OrderTaskEntity order,
                                       List<DroneEntity> drones,
                                       List<NestEntity> nests) {
-        double pickupLon = order.getShipLon() != null ? order.getShipLon().doubleValue() : 0.0;
-        double pickupLat = order.getShipLat() != null ? order.getShipLat().doubleValue() : 0.0;
-        double payloadKg = order.getGoodsWeight() != null ? order.getGoodsWeight().doubleValue() : 0.0;
-
-        List<CandidateInput.NestView> nestViews = new ArrayList<>();
-        for (NestEntity n : nests) {
-            List<String> allowed = n.getSupportedModels() != null
-                ? Arrays.asList(n.getSupportedModels().split(","))
-                : List.of();
-            nestViews.add(new CandidateInput.NestView(
-                n.getNestId(),
-                n.getLon() != null ? n.getLon().doubleValue() : 0.0,
-                n.getLat() != null ? n.getLat().doubleValue() : 0.0,
-                allowed));
-        }
-
-        List<CandidateInput.DroneView> droneViews = new ArrayList<>();
-        for (DroneEntity d : drones) {
-            droneViews.add(new CandidateInput.DroneView(
-                d.getDroneId(),
-                d.getCurrentNestId() != null ? d.getCurrentNestId() : d.getHomeNestId(),
-                d.getModel(),
-                d.getStatus(),
-                d.getBattery() != null ? d.getBattery().doubleValue() : 0.0,
-                d.getMaxPayload() != null ? d.getMaxPayload().doubleValue() : 0.0));
-        }
-
-        return new CandidateInput(pickupLon, pickupLat, payloadKg, nestViews, droneViews);
+        return CandidateInputAssembler.assemble(order, drones, nests);
     }
 }

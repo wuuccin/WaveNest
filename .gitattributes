@@ -43,6 +43,7 @@ docs/**/*.markdown text eol=crlf
 *.ico    binary
 *.jar    binary
 *.mp4    binary
+*.webm   binary
 *.ttf    binary
 *.woff   binary
 *.woff2  binary

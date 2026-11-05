@@ -2,6 +2,7 @@ package com.waterlogistics.algo.meeting;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -159,23 +160,21 @@ class RendezvousSolverTest {
     }
 
     /**
-     * 入参退化与数据覆盖不足：空点列／时限已过＝其他；点列不够长＝可求解窗口内无根（追不上）。
+     * 入参退化与数据覆盖不足：空点列为请求侧拒绝；时限已到＝追不上；点列不够长＝可求解窗口内无根（追不上）。
      */
     @Test
     void degenerateInputs_shouldFailFast() {
-        // 空点列
-        B_RendezvousSolution empty = RendezvousSolver.solve(new RendezvousSolveRequest(
+        // 空点列：请求构造期即拒绝（快照点列不可为空）
+        assertThrows(IllegalArgumentException.class, () -> RendezvousSolver.solve(new RendezvousSolveRequest(
                 "combo-1", nestLon(), LAT0, 15, noWind(),
                 new ShipTrackSnapshot("PV-1", "413000001", NOW, 3600, List.of()), null,
-                NOW, NOW + 3_600_000L, 30, EPSILON_SEC, MAX_ITER));
-        assertFalse(empty.hasSolution(), "空点列＝入参退化");
-        assertEquals(NoSolutionReason.OTHER, empty.noSolutionReason());
+                NOW, NOW + 3_600_000L, 30, EPSILON_SEC, MAX_ITER)), "空点列应拒绝");
 
-        // 允许时限已过（deadline ≤ now）
+        // 允许时限已到（deadline == now）：零时长窗口，船尚在 10 km 外即判追不上
         B_RendezvousSolution expired = solve(
                 snapshot(LON0, LAT0, 90, 5, 10, 400), 15, noWind(), NOW, 30);
-        assertFalse(expired.hasSolution(), "时限≤当前＝入参退化");
-        assertEquals(NoSolutionReason.OTHER, expired.noSolutionReason());
+        assertFalse(expired.hasSolution(), "时限已到且船不可及＝追不上");
+        assertEquals(NoSolutionReason.CANNOT_CATCH, expired.noSolutionReason());
 
         // 点列只覆盖 190 s，追及需 1000 s → 窗口截到末点后仍无根
         B_RendezvousSolution shortCover = solve(

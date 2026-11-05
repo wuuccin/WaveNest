@@ -20,6 +20,10 @@ import com.waterlogistics.contract.state.OrderStatus;
  * @param emergencyLandingPoint 失败时的实际迫降坐标，来源为已确认的
  *                              {@code emergency_landing_point} 记录；缺失时不得用最后已知机位冒充
  * @param handoverPhase         末段子阶段（接近／匹配／交接／脱离），不新增订单状态
+ * @param etaTs                 预计送达时刻，Unix 毫秒；未算出时为 null。
+ *                              与 {@code wakeEtaTs} 区分：那是「预计唤醒」，本字段是「预计送达」；
+ *                              由 ETA 计算给出（{@code EtaLowerBound} 的时长下界换算），
+ *                              前端只格式化展示，不据此改订单状态
  */
 public record OrderView(
 
@@ -37,5 +41,29 @@ public record OrderView(
 
         GeoPoint emergencyLandingPoint,
 
-        String handoverPhase) {
+        String handoverPhase,
+
+        Long etaTs) {
+
+    /**
+     * 兼容旧构造点：预计送达时刻尚未算出时传 {@code null}。
+     *
+     * <p>为什么保留：订单视图在多处被构造（受理、队列推进、飞行阶段推进），
+     * 新增字段不应强迫这些调用点同时改；ETA 未算出的订单本来就该是 {@code null}。
+     *
+     * @param orderId              订单标识
+     * @param orderStatus          订单状态
+     * @param eventTs              最近一次状态变化时刻，Unix 毫秒
+     * @param stateVersion         订单态版本号
+     * @param waitReason           等待原因；非「已受理待唤醒」时为 null
+     * @param wakeEtaTs            预计唤醒时刻，Unix 毫秒；无法估计时为 null
+     * @param emergencyLandingPoint 失败时实际迫降坐标；缺失时为 null
+     * @param handoverPhase        末段子阶段
+     */
+    public OrderView(String orderId, OrderStatus orderStatus, long eventTs, long stateVersion,
+            WaitReason waitReason, Long wakeEtaTs, GeoPoint emergencyLandingPoint,
+            String handoverPhase) {
+        this(orderId, orderStatus, eventTs, stateVersion, waitReason, wakeEtaTs,
+                emergencyLandingPoint, handoverPhase, null);
+    }
 }

@@ -14,11 +14,19 @@ public enum HandoverResult {
     private final String value;
 
     HandoverResult(String value) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException("交接结果口径词不能为空：" + name());
+        }
         this.value = value;
     }
 
     /** 返回对外口径的结果词 */
     public String getValue() {
+        return value;
+    }
+
+    @Override
+    public String toString() {
         return value;
     }
 
@@ -31,12 +39,13 @@ public enum HandoverResult {
         if (value == null || value.isBlank()) {
             throw new IllegalArgumentException("交接结果不能为空");
         }
-        String normalized = value.trim();
+        String normalized = value.strip();
         for (HandoverResult result : values()) {
             if (result.value.equals(normalized)) {
                 return result;
             }
         }
-        throw new IllegalArgumentException("未知交接结果：" + value);
+        throw new IllegalArgumentException("未知交接结果："
+                + value.replaceAll("[\\p{Cntrl}\\p{Cf}\\p{Zl}\\p{Zp}]", "?"));
     }
 }

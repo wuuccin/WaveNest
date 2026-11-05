@@ -4,7 +4,9 @@ import com.waterlogistics.algo.measurement.TelemetryState;
 import com.waterlogistics.monitor.store.FlightRecordStore;
 import java.util.List;
 import java.util.Map;
+import org.springframework.stereotype.Service;
 
+@Service
 public final class FlightQueryService {
     private final FlightRecordStore store;
     public FlightQueryService(FlightRecordStore store) { this.store = store; }

@@ -1,5 +1,7 @@
 package com.waterlogistics.rendezvous.trajectory;
 
+import com.waterlogistics.algo.meeting.model.EpochMillis;
+
 import java.util.Objects;
 
 
@@ -12,16 +14,17 @@ import java.util.Objects;
  * 与占位时间窗同粒度（《37-M6-数据库》§5.5）。
  *
  * @param comboId    绑定的候选组合标识
- * @param meetTMs    会面时刻（来自会面点解的 t*），Unix 毫秒
+ * @param meetMs     会面时刻（来自会面点解的 t*），Unix 毫秒
  * @param tauFineSec 精算飞行时长 τ_fine，秒（来自 {@code B_FlyableRoute}）
  * @param nowMs      当前时刻，Unix 毫秒（不可行判定基准）
  * @param timeGridMs 时刻精度粒度，毫秒（取整对齐用；来源 {@code sys_param}）
  */
+@SuppressWarnings("MissingJavadoc")
 public record TakeoffTimeCommand(
 
         String comboId,
 
-        long meetTMs,
+        long meetMs,
 
         int tauFineSec,
 
@@ -31,20 +34,22 @@ public record TakeoffTimeCommand(
 
     public TakeoffTimeCommand {
         Objects.requireNonNull(comboId, "comboId 不能为空");
-        if (comboId.isBlank()) {
+        comboId = comboId.strip();
+        if (comboId.isEmpty()) {
             throw new IllegalArgumentException("comboId 不能为空白字符串");
         }
-        if (tauFineSec <= 0) {
-            throw new IllegalArgumentException("精算飞行时长必须为正，实际 " + tauFineSec);
+        if (tauFineSec <= 0 || tauFineSec > 2_592_000) {
+            throw new IllegalArgumentException("精算飞行时长须在 [1, 2592000] 秒内，实际 " + tauFineSec);
         }
-        if (timeGridMs <= 0) {
-            throw new IllegalArgumentException("时刻精度粒度必须为正，实际 " + timeGridMs);
+        if (timeGridMs <= 0L || timeGridMs > 86_400_000L) {
+            throw new IllegalArgumentException(
+                    "时刻精度粒度须在 (0, 86400000] 毫秒内，实际 " + timeGridMs);
         }
-        if (meetTMs < 0) {
-            throw new IllegalArgumentException("会面时刻不能为负，实际 " + meetTMs);
+        if (!EpochMillis.isValid(meetMs)) {
+            throw new IllegalArgumentException("会面时刻须为 Unix 毫秒值，实际 " + meetMs);
         }
-        if (nowMs < 0) {
-            throw new IllegalArgumentException("当前时刻不能为负，实际 " + nowMs);
+        if (!EpochMillis.isValid(nowMs)) {
+            throw new IllegalArgumentException("当前时刻须为 Unix 毫秒值，实际 " + nowMs);
         }
     }
 }

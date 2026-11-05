@@ -3,6 +3,7 @@ package com.waterlogistics.monitor.detect;
 import com.waterlogistics.algo.detection.SysParamProvider;
 import com.waterlogistics.algo.measurement.Geo;
 import com.waterlogistics.algo.measurement.RouteMeasurement;
+import com.waterlogistics.contract.mq.AlertEventMessage;
 import com.waterlogistics.monitor.alert.AlertEventPublisher;
 import com.waterlogistics.monitor.alert.AlertRecorder;
 import org.junit.jupiter.api.Test;
@@ -27,12 +28,12 @@ class DetectionOrchestratorTest {
 
     /** MQ 发送替身：覆盖 publish 留痕，不碰 RabbitTemplate（不引第三方 mock 框架）。 */
     private static final class RecordingPublisher extends AlertEventPublisher {
-        final List<AlertRecorder.AlertEvent> sent = new ArrayList<>();
+        final List<AlertEventMessage> sent = new ArrayList<>();
         RecordingPublisher() {
             super(null);
         }
         @Override
-        public void publish(AlertRecorder.AlertEvent event) {
+        public void publish(AlertEventMessage event) {
             sent.add(event);
         }
     }
@@ -66,8 +67,8 @@ class DetectionOrchestratorTest {
         sink.sweep(130_000);
 
         assertEquals(2, pub.sent.size(), "失联首发 + 灭失补发应共 2 条");
-        AlertRecorder.AlertEvent lost = pub.sent.get(0);
-        AlertRecorder.AlertEvent loss = pub.sent.get(1);
+        AlertEventMessage lost = pub.sent.get(0);
+        AlertEventMessage loss = pub.sent.get(1);
         assertEquals("失联", lost.alertType());
         assertEquals("严重", lost.level());
         assertEquals("失联", loss.alertType());
@@ -137,7 +138,7 @@ class DetectionOrchestratorTest {
             sink.onSample(frame("uav-off", "order-off", null, p, 1_000 * i, true));
         }
         assertTrue(pub.sent.size() >= 1, "连续越限应触发偏航告警");
-        AlertRecorder.AlertEvent first = pub.sent.get(0);
+        AlertEventMessage first = pub.sent.get(0);
         assertEquals("偏航", first.alertType());
         assertTrue(List.of("警告", "严重").contains(first.level()));
 

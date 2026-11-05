@@ -7,7 +7,7 @@ package com.waterlogistics.contract.mq;
  * ＋ RabbitMQ（业务消息），本项目不引入 Kafka（《30-M1》§5 类名裁决 C3）。
  *
  * <p>五类前缀分区：原始 {@code raw.*}、解析后 {@code data.*}、告警 {@code alert.*}、
- * 任务方案 {@code task.*}、会面偏差回流 {@code rendezvous.*}。共 13 个主题，
+ * 任务方案 {@code task.*}、会面偏差回流 {@code rendezvous.*}。共 14 个主题，
  * 成员见 {@link #TOPICS}（增减须由收口方裁决）。
  */
 public final class TopicName {
@@ -46,6 +46,14 @@ public final class TopicName {
     /** 解析后的空域公告对象。生产方 M1，消费方 M2、M3、M5。 */
     public static final String DATA_NOTICE = "data.notice";
 
+    /**
+     * 投放成功回执。生产方 M1（仿真按需发布）或真实飞控／投放装置，消费方 M2。
+     *
+     * <p>它只表达「货已投放」这一事实，不携带航迹或控制指令。M2 收到成功回执后
+     * 把订单从末段交接推进到返航，收到失败回执则走意图变更重排。
+     */
+    public static final String DATA_UAV_DELIVERY = "data.uav.delivery";
+
     /** M4 异常告警（与 WebSocket 双推）。生产方 M4，消费方 M2、M5。 */
     public static final String ALERT_EVENT = "alert.event";
 
@@ -78,7 +86,7 @@ public final class TopicName {
     public static final java.util.List<String> TOPICS = java.util.List.of(
             RAW_AIS, RAW_UAV_TELEMETRY, RAW_WEATHER, RAW_HYDRO, RAW_NOTICE,
             DATA_AIS, DATA_UAV_TELEMETRY, DATA_WEATHER, DATA_HYDRO, DATA_NOTICE,
-            ALERT_EVENT, TASK_PLAN, RENDEZVOUS_DEVIATION);
+            ALERT_EVENT, TASK_PLAN, RENDEZVOUS_DEVIATION, DATA_UAV_DELIVERY);
 
     private TopicName() {
         // 常量容器，禁止实例化

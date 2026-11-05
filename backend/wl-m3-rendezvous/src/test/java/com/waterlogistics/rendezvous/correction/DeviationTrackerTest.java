@@ -46,8 +46,8 @@ class DeviationTrackerTest {
         DeviationTracker.PremiseVerdict north = DeviationTracker.track(120.005, 30.001, LONS, LATS, 500.0);
         DeviationTracker.PremiseVerdict south = DeviationTracker.track(120.005, 29.999, LONS, LATS, 500.0);
 
-        assertTrue(north.leftOfTrack(), "船偏在航迹左侧（面向东，左为北）");
-        assertFalse(south.leftOfTrack(), "船偏在航迹右侧");
+        assertTrue(north.isLeftOfTrack(), "船偏在航迹左侧（面向东，左为北）");
+        assertFalse(south.isLeftOfTrack(), "船偏在航迹右侧");
         assertTrue(north.signedXteM() > 0, "左侧为正：" + north.signedXteM());
         assertTrue(south.signedXteM() < 0, "右侧为负：" + south.signedXteM());
     }

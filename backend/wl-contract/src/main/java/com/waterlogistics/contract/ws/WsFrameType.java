@@ -23,7 +23,13 @@ public enum WsFrameType {
      * 订单状态推送：所有订单状态变化统一由该 {@code type} 推送，不再按状态分设消息。
      * 写入方为 M2（状态确认后写库再向对应授权终端推送）。
      */
-    ORDER_STATE("order_state");
+    ORDER_STATE("order_state"),
+
+    /**
+     * 规划航迹：三段航迹点列（去程／末段交接／返程），前端按段着色。
+     * 写入方为 M2（派发编排产出航迹后推送）。
+     */
+    PLAN_TRACK("plan_track");
 
     private final String type;
 

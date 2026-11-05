@@ -1,5 +1,7 @@
 package com.waterlogistics.algo.meeting.model;
 
+import java.util.Objects;
+
 /**
  * 起飞时刻算式结果 ＋ 是否不可行（{@code B_} 前缀＝算法层 B 组产出）——字段照
  * 《81-B组算法方案》§2.3 第（3）项一字不改。
@@ -12,7 +14,7 @@ package com.waterlogistics.algo.meeting.model;
  * 实际所用的时长</b>（首版＝精算 τ_fine）。字段命名与正文口径的出入已报收口方备案。
  *
  * @param comboId          绑定的候选组合标识
- * @param takeoffT         反推起飞时刻，Unix 毫秒（不可行时亦给算式结果，追溯用）
+ * @param takeoffT         反推起飞时刻，Unix 毫秒；不可行时仅供算术留痕，可能为负，不得当作有效时刻
  * @param feasible         是否可行
  * @param infeasibleReason 不可行原因（feasible=false 时给出，否则 null）
  * @param tauCoarseUsed    本次反推实际所用时长，秒（首版＝精算 τ_fine，见上述口径说明）
@@ -29,12 +31,48 @@ public record B_TakeoffTimeResult(
 
         int tauCoarseUsed) {
 
+    private static final int MAX_TAU_SEC = Integer.MAX_VALUE / 1000;
+
     public B_TakeoffTimeResult {
+        if (comboId == null || comboId.isBlank()) {
+            throw new IllegalArgumentException("comboId 不能为空或空白字符串");
+        }
+        comboId = comboId.strip();
+        if (feasible && !EpochMillis.isValid(takeoffT)) {
+            throw new IllegalArgumentException(
+                    "可行结果的起飞时刻须为 Unix 毫秒值，实际 " + takeoffT);
+        }
+        if (tauCoarseUsed <= 0 || tauCoarseUsed > MAX_TAU_SEC) {
+            throw new IllegalArgumentException("本次反推所用时长须在 [1, " + MAX_TAU_SEC
+                    + "] 秒内，实际 " + tauCoarseUsed);
+        }
         if (feasible && infeasibleReason != null) {
             throw new IllegalArgumentException("可行结果不应携带不可行原因");
         }
         if (!feasible && infeasibleReason == null) {
             throw new IllegalArgumentException("不可行结果必须给出不可行原因");
         }
+    }
+
+    @Override
+    public boolean equals(Object other) {
+        if (this == other) {
+            return true;
+        }
+        if (!(other instanceof B_TakeoffTimeResult that)) {
+            return false;
+        }
+        return this.feasible == that.feasible
+                && this.tauCoarseUsed == that.tauCoarseUsed
+                && Objects.equals(this.comboId, that.comboId)
+                && this.infeasibleReason == that.infeasibleReason
+                && (!this.feasible || this.takeoffT == that.takeoffT);
+    }
+
+    @Override
+    public int hashCode() {
+        int result = Objects.hash(this.comboId, Boolean.valueOf(this.feasible),
+                this.infeasibleReason, Integer.valueOf(this.tauCoarseUsed));
+        return this.feasible ? 31 * result + Long.hashCode(this.takeoffT) : result;
     }
 }

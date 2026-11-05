@@ -1,0 +1,72 @@
+/* ==========================================================================
+   预测看台（阶段二 1 · 前端）
+   —— 只新增类名，不改动任何既有规则，避免与别人正在动的页面互相踩。
+   判据「premise 非 VALID 有醒目标记」的视觉落点：
+     .prediction-table tbody tr.flagged   行底色偏红
+     .premise-chip.invalid / .unknown     状态徽标
+     .prediction-flagbar                  面板顶部计数条
+   三处都靠同一个判定（isPremiseFlagged），颜色只是它的表达。
+   ========================================================================== */
+
+.prediction-panel { border: 1px solid var(--line); border-radius: 8px; background: var(--paper); box-shadow: var(--shadow); margin-bottom: 18px; }
+.prediction-panel .panel-head { align-items: center; }
+.prediction-head-tools { display: flex; align-items: center; gap: 10px; }
+
+.prediction-source { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 19px; border-top: 1px solid #e8eeee; border-bottom: 1px solid #e8eeee; color: #7e5a2a; background: #fff8ed; font-size: 11px; }
+.prediction-source.live { color: var(--teal-dark); background: var(--teal-soft); }
+.prediction-source strong { font-weight: 750; }
+
+.prediction-notice { margin: 10px 19px 0; padding: 8px 11px; border-left: 3px solid var(--orange); border-radius: 5px; color: #7e5a2a; background: #fff8ed; font-size: 11px; line-height: 1.5; }
+.prediction-error { margin: 10px 19px 0; padding: 8px 11px; border-left: 3px solid var(--red); border-radius: 5px; color: #9f4047; background: #f9e7e7; font-size: 11px; line-height: 1.5; }
+
+/* 顶部计数条：不用滚到底也能知道有几条异常 */
+.prediction-flagbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 19px; padding: 9px 12px; border: 1px solid #f0c9c9; border-left: 3px solid var(--red); border-radius: 6px; color: #9f4047; background: #fdf2f2; font-size: 11px; line-height: 1.45; }
+.prediction-flagbar strong { font-size: 12px; }
+.prediction-flagbar.clear { color: var(--teal-dark); border-color: #c9e4dc; border-left-color: var(--teal); background: var(--teal-soft); }
+.flagbar-dot { width: 8px; height: 8px; flex: none; border-radius: 50%; background: var(--red); box-shadow: 0 0 0 3px rgba(189, 79, 85, .16); }
+.prediction-flagbar.clear .flagbar-dot { background: var(--teal); box-shadow: 0 0 0 3px rgba(12, 133, 119, .14); }
+
+.prediction-table-wrap { margin: 0 19px 14px; overflow: auto; border: 1px solid var(--line); border-radius: 6px; }
+.prediction-table { width: 100%; border-collapse: collapse; text-align: left; white-space: nowrap; }
+.prediction-table th { padding: 11px 13px; color: var(--muted); background: #f5f8f8; font-size: 11px; font-weight: 700; }
+.prediction-table td { padding: 11px 13px; border-top: 1px solid #e8eeee; color: #526a72; font-size: 12px; font-variant-numeric: tabular-nums; }
+.prediction-table tbody tr { cursor: pointer; }
+.prediction-table tbody tr:hover { background: #f5faf8; }
+.prediction-table tbody tr:focus-visible { outline: 2px solid var(--teal); outline-offset: -2px; }
+.prediction-table tbody tr.selected { background: #eaf6f2; box-shadow: inset 3px 0 0 var(--teal); }
+/* 醒目标记①：行底色（.selected 优先，但被选的异常船依然保留左红边） */
+.prediction-table tbody tr.flagged { background: #fdf6f6; box-shadow: inset 3px 0 0 var(--red); }
+.prediction-table tbody tr.flagged.selected { background: #fbecec; box-shadow: inset 3px 0 0 var(--red), inset 0 0 0 1px rgba(189, 79, 85, .35); }
+.prediction-table tbody tr.flagged td:first-child strong { color: #9f4047; }
+.prediction-table td:first-child strong { display: block; color: var(--ink); font-size: 12px; letter-spacing: .2px; }
+.prediction-table td:first-child small { display: block; margin-top: 4px; color: var(--subtle); font-size: 10px; }
+.prediction-version { color: #587178; font-size: 11px; }
+
+/* 醒目标记②：状态徽标 */
+.premise-chip { display: inline-flex; align-items: center; min-height: 21px; padding: 0 8px; border-radius: 999px; font-size: 11px; font-weight: 750; letter-spacing: .2px; }
+.premise-chip.valid { color: #267759; background: #e5f4ec; }
+.premise-chip.invalid { color: #fff; background: var(--red); }
+.premise-chip.unknown { color: #7e5a2a; background: #f7e6c8; }
+.premise-chip.unexpected { color: #fff; background: #7c2d3a; }
+.premise-caption { display: block; margin-top: 4px; color: var(--subtle); font-size: 10px; }
+
+.prediction-stale { color: var(--red); font-weight: 750; }
+
+.prediction-selected { display: flex; flex-wrap: wrap; align-items: center; gap: 18px; margin: 0 19px 16px; padding: 10px 12px; border: 1px dashed #b9d8d0; border-radius: 6px; background: #f6fbf9; font-size: 11px; }
+.prediction-selected span { display: block; color: var(--muted); }
+.prediction-selected strong { display: block; margin-top: 2px; color: var(--ink); font-size: 12px; }
+.prediction-selected .text-button { margin-left: auto; }
+.prediction-detail-error { flex: 1 1 100%; color: #9f4047; }
+
+/* 地图叠加：终点标记随前提状态变色；第 ③ 处醒目标记 */
+.prediction-end-pin { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 2px 6px; border-radius: 6px; color: #fff; background: #0f9f8c; box-shadow: 0 3px 10px rgba(16, 42, 51, .3); font-size: 10px; line-height: 1.25; text-align: center; }
+.prediction-end-pin span { opacity: .85; font-size: 9px; }
+.prediction-end-pin b { font-size: 11px; font-weight: 750; }
+.prediction-end-pin-invalid { background: var(--red); box-shadow: 0 0 0 3px rgba(189, 79, 85, .25), 0 3px 10px rgba(16, 42, 51, .35); }
+.prediction-end-pin-unknown { background: var(--orange); box-shadow: 0 0 0 3px rgba(201, 135, 54, .22), 0 3px 10px rgba(16, 42, 51, .3); }
+.prediction-end-pin-unexpected { background: #7c2d3a; box-shadow: 0 0 0 3px rgba(124, 45, 58, .3), 0 3px 10px rgba(16, 42, 51, .35); }
+
+@media (max-width: 760px) {
+  .prediction-table th, .prediction-table td { padding: 9px 8px; }
+  .prediction-table th:nth-child(2), .prediction-table td:nth-child(2) { display: none; }
+}

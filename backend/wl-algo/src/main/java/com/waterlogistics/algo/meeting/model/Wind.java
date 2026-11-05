@@ -7,9 +7,12 @@ package com.waterlogistics.algo.meeting.model;
  * 0° 为正北、顺时针增大；与航向（去向）参照系相同。两份库内文档未写死该口径，
  * 若 M1 仿真数据实为「去向」，在任一侧加 180° 换算即可（约定记入本节）。
  *
+ * <p><b>约定已由单测钉死</b>：{@code dir == bearing} 为逆风、{@code dir == bearing + 180°}
+ * 为顺风；接入侧若改传「去向」，须在入库前加 180° 换算。
+ *
  * @param speedMs 风速，m/s
- * @param dirDeg  风向（来向），度
- * @param gustMs  阵风，m/s（仅登记参数名目，当前无消费方）
+ * @param dirDeg  风向（来向），度；构造后归一化到 [0, 360)
+ * @param gustMs  阵风，m/s（0.0＝未提供；仅登记参数名目，当前无消费方）
  */
 public record Wind(
 
@@ -23,11 +26,22 @@ public record Wind(
         if (!Double.isFinite(speedMs) || speedMs < 0.0) {
             throw new IllegalArgumentException("风速须为非负有限值，实际 " + speedMs);
         }
-        if (!Double.isFinite(dirDeg) || dirDeg < 0.0 || dirDeg >= 360.0) {
-            throw new IllegalArgumentException("风向须为 [0,360) 内的有限值，实际 " + dirDeg);
+        if (!Double.isFinite(dirDeg)) {
+            throw new IllegalArgumentException("风向须为有限值，实际 " + dirDeg);
         }
         if (!Double.isFinite(gustMs) || gustMs < 0.0) {
             throw new IllegalArgumentException("阵风须为非负有限值，实际 " + gustMs);
         }
+        if (gustMs != 0.0 && gustMs < speedMs) {
+            throw new IllegalArgumentException("阵风不应小于持续风速，实际 gust=" + gustMs + "、speed=" + speedMs);
+        }
+        // 仅接受单圈内的等价写法；弧度值（0–6.28）无法在本层识别，须由入口校验单位
+        if (dirDeg < -360.0 || dirDeg > 360.0) {
+            throw new IllegalArgumentException("风向超出合理范围（度），疑似单位/口径错误，实际 " + dirDeg);
+        }
+        // 归一化：360 → 0；-0.0 → 0.0（保证 record 等值语义一致）
+        speedMs += 0.0;
+        gustMs += 0.0;
+        dirDeg = ((dirDeg % 360.0) + 360.0) % 360.0 + 0.0;
     }
 }

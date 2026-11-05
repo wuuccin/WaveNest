@@ -48,7 +48,7 @@ INSERT INTO `sys_param` (`param_key`, `param_value`, `category`, `description`) 
 ('lcStepM',             '5',      '阈值', '换道步进门限'),
 ('lcCount',             '3',      '阈值', '换道确认数'),
 ('lcInflate',           '2.0',    '阈值', '机动期带宽膨胀'),
-('alphaAlongMs',        '0.05',   '阈值', '纵向模型误差率'),
+('alphaAlongMs',        '0.10',   '阈值', '纵向模型误差率'),
 ('alphaCrossMs',        '0.03',   '阈值', '横向模型误差率'),
 ('lTolM',               '150',    '阈值', '纵向容忍上限'),
 ('wTolM',               '40',     '阈值', '横向容忍上限'),
@@ -153,10 +153,13 @@ INSERT INTO `sys_param` (`param_key`, `param_value`, `category`, `description`) 
 ('heartbeatLossWindowSec',       '120',  '窗口', '灭失判定窗口（秒）'),
 ('heartbeatCheckIntervalSec',    '5',    '窗口', '检测轮询间隔（秒）'),
 ('weatherWindWarningThreshold',  '8.0',  '阈值', '风速预警阈值（m/s）'),
-('weatherWindCriticalThreshold', '12.0', '阈值', '风速严重阈值（m/s）'),
+('weatherWindCriticalThreshold', '14.0', '阈值', '风速严重阈值（m/s）'),
 ('weatherWindSurgeThreshold',    '0.5',  '阈值', '风速突变阈值（(m/s)/s）'),
 ('weatherSurgeWindowSec',        '10',   '窗口', '突变检测窗口（秒）'),
 ('weatherClearDebounce',         '5',    '阈值', '清除防抖采样点数');
+-- 注：2026-10-27 T1-5——weatherWindCriticalThreshold 由 12.0 上调至 14.0，须高于机队最高
+--     机型抗风上限（M400 12.0 m/s，见 003）：留出 12～14 m/s 演示带，风速落在该区间时
+--     候选链全员抗风淘汰而闸门尚未熔断，「淘汰」与「熔断」两种行为可分别观察。
 -- 注：2026-10-18 已决——lowBatteryTrigger(20) 为全项目唯一低电量键，G 组告警与 E 组功能 10
 --     A5 兜底共用此键；原 E 组 e10LowBatteryAbs(15) 已删除，不再使用。
 

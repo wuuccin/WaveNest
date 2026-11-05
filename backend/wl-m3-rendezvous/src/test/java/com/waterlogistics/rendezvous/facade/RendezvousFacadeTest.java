@@ -86,16 +86,27 @@ class RendezvousFacadeTest {
         List<ShipPoint> points = new ArrayList<>();
         points.add(new ShipPoint(NOW, LON0, LAT0, 90.0, 0.0, 0.0));
         points.add(new ShipPoint(NOW + 10_000L, LON0, LAT0, 90.0, 0.0, 0.0));
-        StubSnapshotPort port = new StubSnapshotPort();
-        port.put(new ShipTrackSnapshot(null, MMSI, NOW, 86_400, points));
-        RendezvousFacade facade = new RendezvousFacade(port, droneId -> null);
-
-        assertThrows(SnapshotVersionMismatchException.class,
-                () -> facade.solve(command(VERSION)),
-                "快照版本缺失必须拒绝求解（fail closed）");
-        assertThrows(NullPointerException.class,
+        assertThrows(IllegalArgumentException.class,
+                () -> new ShipTrackSnapshot(null, MMSI, NOW, 86_400, points),
+                "快照版本缺失在模型构造期即拒绝");
+        assertThrows(IllegalArgumentException.class,
                 () -> command(null),
                 "期望版本缺失在命令构造期即拒绝");
+    }
+
+    /** 快照过期：点列仍覆盖求解时刻，但已超过有效期，服务层必须拒绝求解。 */
+    @Test
+    void solve_shouldReject_whenSnapshotExpired() {
+        StubSnapshotPort port = new StubSnapshotPort();
+        port.put(new ShipTrackSnapshot(VERSION, MMSI, NOW, 10, snapshot().points()));
+        RendezvousFacade facade = new RendezvousFacade(port, droneId -> null);
+        RendezvousCommand expired = new RendezvousCommand(
+                "combo-1", MMSI, VERSION,
+                nestLon(), LAT0, 15.0, new Wind(0, 0, 0),
+                NOW + 20_000L, NOW + 3_600_000L, 30, 0.01, 50);
+
+        assertThrows(SnapshotUnavailableException.class, () -> facade.solve(expired),
+                "超过有效期的快照必须拒绝求解");
     }
 
     /** 数据缺失：端口查无该船快照 → 拒绝求解（与「算法无解」区分），异常信息带船号。 */
@@ -121,7 +132,7 @@ class RendezvousFacadeTest {
                 60.0, 15.0, NOW, 5, List.of(), List.of(), 0.05, 0.2));
 
         assertEquals(200, route.tauFine(), "航迹经门面同一能力：3000/15＝200 s");
-        assertEquals("RV-RT-1-" + NOW, route.routeVersion(), "版本按起点时刻生成");
+        assertTrue(route.routeVersion().startsWith("RV-RT-1-" + NOW), "版本按起点时刻与几何指纹生成");
     }
 
     /** 门面冲突二查透传：空间远离由包围盒粗筛短路。 */
@@ -137,7 +148,7 @@ class RendezvousFacadeTest {
                         new Waypoint(122.1, 30.0, 60.0, 15.0, NOW + 600_000L)),
                 600, 0.0, 0.0, List.of(), List.of());
 
-        B_ConflictResult res = facade.checkConflict(a, b, new ConflictParams(100, 25, 1_000));
+        B_ConflictResult res = facade.detectConflict(a, b, new ConflictParams(100, 25, 1_000));
 
         assertFalse(res.conflictFlag(), "空间远离：包围盒粗筛短路");
         assertEquals("RV-A", res.checksumVersion(), "checksumVersion 取被查航迹版本");

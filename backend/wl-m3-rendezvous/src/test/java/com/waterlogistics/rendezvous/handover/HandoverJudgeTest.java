@@ -183,6 +183,9 @@ class HandoverJudgeTest {
         assertEquals("匹配", HandoverPhase.MATCH.getValue());
         assertEquals("交接", HandoverPhase.TRANSFER.getValue());
         assertEquals("脱离", HandoverPhase.DEPART.getValue());
+        assertEquals(HandoverPhase.values().length,
+                java.util.Arrays.stream(HandoverPhase.values()).map(HandoverPhase::getValue).distinct().count(),
+                "末段子阶段口径词须唯一");
     }
 
     // ===== 夹具 =====
