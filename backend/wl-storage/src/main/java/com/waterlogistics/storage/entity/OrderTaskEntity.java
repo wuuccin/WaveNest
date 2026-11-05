@@ -30,6 +30,9 @@ public class OrderTaskEntity {
     /** 目标船舶纬度（下单时） */
     private BigDecimal shipLat;
 
+    /** 货物所在巢；NULL＝未指定（取离船最近巢，11-05 序号 1） */
+    private String cargoNestId;
+
     /** 下单时间 */
     private LocalDateTime createTime;
 
@@ -48,6 +51,9 @@ public class OrderTaskEntity {
     /** 订单状态（23 §3） */
     private String status;
 
+    /** 等待原因编码（WaitReason.code）：仅「已受理待唤醒」有值，离开等待态清空 */
+    private String waitReason;
+
     /** 关联无人机 */
     private String droneId;
 
@@ -59,6 +65,9 @@ public class OrderTaskEntity {
 
     /** 组合会面起飞时间（回填） */
     private LocalDateTime meetTime;
+
+    /** 系统算出的预计送达时刻；NULL＝尚未算出（对外视图由 OrderView.etaTs 转毫秒） */
+    private LocalDateTime etaTs;
 
     /** 失败/终止原因 */
     private String failReason;

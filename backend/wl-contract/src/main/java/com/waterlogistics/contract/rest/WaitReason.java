@@ -19,7 +19,10 @@ public enum WaitReason {
     WAIT_CARGO("WAIT_CARGO"),
 
     /** 派单闸门处于熔断中，或关键数据不足暂缓派机 */
-    GATE_OR_DATA("GATE_OR_DATA");
+    GATE_OR_DATA("GATE_OR_DATA"),
+
+    /** 资源不可用：货物所在巢的时隙锁超时未释放／无可用占位，订单转入等待队列 */
+    WAIT_RESOURCE("WAIT_RESOURCE");
 
     private final String code;
 
