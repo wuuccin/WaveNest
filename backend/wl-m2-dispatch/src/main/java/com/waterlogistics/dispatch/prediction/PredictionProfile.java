@@ -2,6 +2,7 @@ package com.waterlogistics.dispatch.prediction;
 
 import com.waterlogistics.algo.estimation.MultiStepPredictor.SpeedLimitLookup;
 import com.waterlogistics.algo.estimation.WaterwayGeometry;
+import java.util.function.DoubleSupplier;
 
 /**
  * 预测实现的装配结果（M2 · 卢肄文 · 10-23 F4）：<b>模式 ＋ 断言网 ＋ 精算引擎</b>三件套。
@@ -76,7 +77,28 @@ public record PredictionProfile(
     public static PredictionProfile precise(PredictionSettings settings, PredictionAssurance assurance,
             PrecisePredictionEngine.Params params, WaterwayGeometry centerline,
             SpeedLimitLookup speedLimit) {
+        return precise(settings, assurance, params, centerline, speedLimit, null);
+    }
+
+    /**
+     * 精算版画像（带中心线、分段限速与速度偏置取值口）。
+     *
+     * <p><b>为什么偏置单独一个重载而不是塞进 {@code Params}</b>：{@code Params} 是启动时定值，
+     * 而偏置会被校准器在运行期回写（77 §8 G1）。塞进 {@code Params} 就等于「启动那一刻读一次」，
+     * 回写永远不生效——闭环会断在同一个地方，只是这次不报错、也没人看得出来。
+     *
+     * @param settings         预测参数（σ 初值、α、时域、步长）
+     * @param assurance        断言网（含赣江地理框）
+     * @param params           引擎参数（附录 B 初值）
+     * @param centerline       航道中心线；为空时沿用实测窗口建参考线
+     * @param speedLimit       航段分段限速查询；为 {@code null} 时恒不限速
+     * @param alongSpeedBiasMs 沿航道速度偏置取值口；为 {@code null} 时恒 0
+     * @return 画像
+     */
+    public static PredictionProfile precise(PredictionSettings settings, PredictionAssurance assurance,
+            PrecisePredictionEngine.Params params, WaterwayGeometry centerline,
+            SpeedLimitLookup speedLimit, DoubleSupplier alongSpeedBiasMs) {
         return new PredictionProfile(PredictionMode.PRECISE, assurance,
-                new PrecisePredictionEngine(settings, params, centerline, speedLimit));
+                new PrecisePredictionEngine(settings, params, centerline, speedLimit, alongSpeedBiasMs));
     }
 }
