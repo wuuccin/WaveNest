@@ -34,15 +34,21 @@ class PredictionConfigTest {
     private final SysParamLoader emptyParams = loaderWith();
 
     private PredictionProfile profile(String modeCode) {
-        return config.predictionProfile(settings, assurance, emptyParams, modeCode,
+        return config.predictionProfile(settings, assurance, emptyParams, noLedger(), modeCode,
                 50.0, 180.0, 40.0, 300.0, 1.0e-6, 75.0, 6.0, 0.5, 120.0, "",
                 SpeedLimitLookup.unbounded());
+    }
+
+    /** 纯单测无台账 Bean：传 {@code null} 由 {@code resolveCenterline} 跳过台账级。 */
+    private static org.springframework.beans.factory.ObjectProvider<CenterlineLedger> noLedger() {
+        return null;
     }
 
     @Test
     @DisplayName("中心线配置：给出顶点串时仍组装精算画像")
     void centerlineSpec_shouldStillAssemblePreciseProfile() {
         PredictionProfile profile = config.predictionProfile(settings, assurance, emptyParams,
+                noLedger(),
                 "precise",
                 50.0, 180.0, 40.0, 300.0, 1.0e-6, 75.0, 6.0, 0.5, 120.0,
                 "115.852,28.646;115.879,28.692", SpeedLimitLookup.unbounded());
@@ -61,6 +67,7 @@ class PredictionConfigTest {
         SysParamLoader withBias = loaderWith(
                 PredictionCalibrationService.KEY_ALONG_SPEED_BIAS, "0.35");
         PredictionProfile biased = config.predictionProfile(settings, assurance, withBias,
+                noLedger(),
                 "precise", 50.0, 180.0, 40.0, 300.0, 1.0e-6, 75.0, 6.0, 0.5, 120.0, "",
                 SpeedLimitLookup.unbounded());
         assertEquals(4.35, biased.engine().alongSpeedForPrediction(4.0), 1e-12,
