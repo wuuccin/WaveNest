@@ -60,8 +60,10 @@ public class SimUavTelemetryConnector implements DataSourceConnector {
      * 半径 0.00025°≈27.8 m 时，0.43 rad 对应约 12.0 m/s，与上报值一致，
      * M4 清洗按「位置差／时间差」反算不会判 {@code POSITION_JUMP}。
      *
-     * <p>默认值写在代码里而非 {@code application-m1-sim.yml}：该文件与激活 profile
-     * {@code sim} 不匹配，Spring 从不加载它，端口外的仿真参数实际全部取自本类的默认值。
+     * <p>默认值写在代码里：仿真参数的唯一来源是本类的 {@code @Value} 默认值。
+     * 原 {@code application-m1-sim.yml} 已于 11-06 删除——该文件与激活 profile
+     * {@code sim} 不匹配，Spring 从不加载它，两处参数各说各话（网格两点／步长零点零五八度
+     * 对三点／零点零三零度）。
      */
     @Value("${wavenest.sim.uav.phase-step:0.43}")
     private double phaseStep;

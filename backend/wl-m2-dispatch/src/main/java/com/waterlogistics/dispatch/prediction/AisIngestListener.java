@@ -16,8 +16,8 @@ import org.springframework.stereotype.Component;
  * 增量接入 {@code data.ais} 并驱动预测刷新（M2 · 卢肄文）——预测刷新驱动链的<b>入端</b>。
  *
  * <p><b>拓扑口径（为什么由本类声明队列）</b>：{@code 22} §1.2 只规定<b>主题名</b>
- * （＝路由键），未规定交换器与队列。交换器名由 M1 在
- * {@code application-m1-sim.yml} 中定为 {@code wavenest.mq.exchange = wavenest.data}（topic 型）；
+ * （＝路由键），未规定交换器与队列。交换器名 {@code wavenest.data}（topic 型）
+ * 由各生产者的 {@code wavenest.mq.exchange} 默认值统一给定；
  * 队列与绑定属<b>消费侧</b>责任，不声明则监听无处可挂，故本类用 {@link QueueBinding} 一并声明：
  *
  * <pre>
