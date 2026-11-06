@@ -146,6 +146,54 @@ class ConstantVelocityPredictorTest {
         assertEquals(270.0, result.courseDeg(), 1e-9);
     }
 
+    // ───────── 11-05 序号 2：前提结论不再无条件 VALID ─────────
+
+    @Test
+    @DisplayName("★ 未给前提监测结论 → UNKNOWN，而不是 VALID")
+    void premiseWithoutVerdict_shouldBeUnknown() {
+        PredictionResult result = ConstantVelocityPredictor.predict(
+                "413000001", LON, LAT, 3.0, 45.0, (long) T0, PARAMS);
+
+        assertEquals(PremiseStatus.UNKNOWN, result.premise(),
+                "本类只拿到经纬度/SOG/COG，没有 s 与 vAlongMs，P0–P4 一条也判不了；"
+                        + "写 VALID 等于告诉下游「前提已查过」，而下游会据此少做一次复核");
+    }
+
+    @Test
+    @DisplayName("给了监测结论 → 按结论映射（SUSPECT 与 NOT_APPLICABLE 走有损映射）")
+    void premiseWithVerdict_shouldMap() {
+        assertEquals(PremiseStatus.VALID, predictWith(PremiseMonitor.Verdict.VALID));
+        assertEquals(PremiseStatus.VALID, predictWith(PremiseMonitor.Verdict.SUSPECT),
+                "SUSPECT 语义是「前提仍成立，只是偏航」，映射为 VALID");
+        assertEquals(PremiseStatus.INVALID, predictWith(PremiseMonitor.Verdict.INVALID));
+        assertEquals(PremiseStatus.INVALID, predictWith(PremiseMonitor.Verdict.NOT_APPLICABLE),
+                "不适用与不可采信在下游处置上同为「别用这条轨迹」");
+        assertEquals(PremiseStatus.UNKNOWN, predictWith(PremiseMonitor.Verdict.UNKNOWN));
+    }
+
+    private static PremiseStatus predictWith(PremiseMonitor.Verdict verdict) {
+        return ConstantVelocityPredictor.predict(
+                "413000001", LON, LAT, 3.0, 45.0, (long) T0, PARAMS, verdict).premise();
+    }
+
+    @Test
+    @DisplayName("新增前提参数不改点列：同输入的几何结果与旧重载逐点一致")
+    void verdict_shouldNotAffectGeometry() {
+        PredictionResult without = ConstantVelocityPredictor.predict(
+                "413000001", LON, LAT, 3.0, 45.0, (long) T0, PARAMS);
+        PredictionResult with = ConstantVelocityPredictor.predict(
+                "413000001", LON, LAT, 3.0, 45.0, (long) T0, PARAMS,
+                PremiseMonitor.Verdict.INVALID);
+
+        assertEquals(without.points().size(), with.points().size());
+        for (int i = 0; i < without.points().size(); i++) {
+            assertEquals(without.points().get(i).lon(), with.points().get(i).lon(), 1e-12);
+            assertEquals(without.points().get(i).lat(), with.points().get(i).lat(), 1e-12);
+            assertEquals(without.points().get(i).sigmaAlongM(),
+                    with.points().get(i).sigmaAlongM(), 1e-12);
+        }
+    }
+
     /** 起点到预测终点的平面近似距离，m。 */
     private static double planarDistanceM(PredictionResult result) {
         EstimatedPoint last = result.points().get(result.points().size() - 1);

@@ -92,6 +92,7 @@ public class DispatchTrigger {
                 }
                 deferred.setEtaTs(toDbTime(event.etaTs()));
                 deferred.setPriority(event.priority());
+                deferred.setCargoNestId(event.cargoNestId());
                 deferred.setCreateTime(LocalDateTime.ofInstant(
                         Instant.ofEpochMilli(event.submitTsMs()), DB_ZONE));
                 deferred.setStatus(OrderStatus.ACCEPTED_WAIT_WAKE.getValue());
@@ -118,6 +119,7 @@ public class DispatchTrigger {
             }
             entity.setEtaTs(toDbTime(event.etaTs()));
             entity.setPriority(event.priority());
+            entity.setCargoNestId(event.cargoNestId());
             entity.setCreateTime(LocalDateTime.ofInstant(
                     Instant.ofEpochMilli(event.submitTsMs()), DB_ZONE));
             entity.setStatus(OrderStatus.PENDING_ACCEPT.getValue());

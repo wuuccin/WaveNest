@@ -15,8 +15,10 @@ package com.waterlogistics.algo.estimation;
  *   <li>{@link #UNKNOWN} —— 证据不足（冷启动、观测中断），既不能确认也不能否定。</li>
  * </ul>
  *
- * <p>今天是简化版：只要拿到一条有效 AIS 即返回 {@link #VALID}；完整的前提监测
- * （事实层／统计层 ＋ P 判据）属精算版，排期顺延（《编码分工表》§六）。
+ * <p>11-05 序号 2 起，取值不再由「拿到一条有效 AIS」直接给 {@link #VALID}：匀速外推拿不到
+ * 曲线坐标 {@code s} 与 {@code vAlongMs}，P0–P4 一条也判不了，故默认给 {@link #UNKNOWN}，
+ * 只有调用方真的跑过 {@link PremiseMonitor} 并传入结论时才落 {@link #VALID}／{@link #INVALID}。
+ * 理由见 {@code ConstantVelocityPredictor#predict} 的重载 javadoc。
  */
 public enum PremiseStatus {
 

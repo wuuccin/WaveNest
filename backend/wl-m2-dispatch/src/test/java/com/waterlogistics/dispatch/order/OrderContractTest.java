@@ -3,6 +3,7 @@ package com.waterlogistics.dispatch.order;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.waterlogistics.contract.order.OrderView;
@@ -142,5 +143,101 @@ class OrderContractTest {
     void cargoReadyPath_shouldFollowContract() {
         assertEquals("/api/orders/{orderId}/cargo-ready", ApiPath.CARGO_READY_TEMPLATE);
         assertEquals("/api/orders/ORD-1/cargo-ready", ApiPath.cargoReady("ORD-1"));
+    }
+
+    // ───────── 11-05 序号 2：响应与事件的字段组合校验 ─────────
+
+    private static OrderView view() {
+        return new OrderView("ORD-1", OrderStatus.PENDING_ACCEPT, ETA, 1L,
+                null, null, null, null, ETA);
+    }
+
+    @Test
+    @DisplayName("MED-BUG.37：accepted(null) 抛 IAE，不再是 NPE（业务拒绝不该变 500）")
+    void acceptedNull_shouldThrowIaeNotNpe() {
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> OrderSubmitResponse.accepted(null));
+        assertEquals("受理响应必须带订单视图", e.getMessage());
+    }
+
+    @Test
+    @DisplayName("MED-BUG.36：受理响应必须同时有订单号与视图")
+    void acceptedWithoutOrder_shouldThrow() {
+        assertThrows(IllegalArgumentException.class,
+                () -> new OrderSubmitResponse(true, "ORD-1", null, null, null, null, null, null));
+        assertThrows(IllegalArgumentException.class,
+                () -> new OrderSubmitResponse(true, null, view(), null, null, null, null, null));
+    }
+
+    @Test
+    @DisplayName("MED-BUG.36：拒绝响应必须带原因码，且不得带等待原因")
+    void rejectedCombination_shouldBeValidated() {
+        assertThrows(IllegalArgumentException.class,
+                () -> new OrderSubmitResponse(false, null, null, null, "说明", null, null, null));
+        assertThrows(IllegalArgumentException.class,
+                () -> new OrderSubmitResponse(false, null, null, "MMSI_MISSING", "说明",
+                        "WAIT_CARGO", null, null),
+                "拒绝了却告诉前端「在等货」是自相矛盾的");
+    }
+
+    @Test
+    @DisplayName("LOW-MAINT.10：拒绝时 message 为空 → 用原因码兜底，前端总有可显示文本")
+    void rejectedWithoutMessage_shouldFallBackToReasonCode() {
+        OrderSubmitResponse response = OrderSubmitResponse.rejected("MMSI_MISSING", "  ");
+
+        assertEquals("MMSI_MISSING", response.message());
+        assertFalse(response.accepted());
+    }
+
+    @Test
+    @DisplayName("唤醒时刻只在延后时有语义：受理即调度却带它 → 拒")
+    void wakeEtaWithoutWaitReason_shouldThrow() {
+        assertThrows(IllegalArgumentException.class,
+                () -> new OrderSubmitResponse(true, "ORD-1", view(), null, null, null,
+                        ETA, null));
+    }
+
+    @Test
+    @DisplayName("MED-BUG.38：载重 NaN／负／0 在事件构造期就拒")
+    void eventWithBadWeight_shouldThrow() {
+        assertThrows(IllegalArgumentException.class,
+                () -> new OrderSubmittedEvent("ORD-1", "413000001", Double.NaN, "医疗物资",
+                        ETA, "NORMAL", ETA, null, null));
+        assertThrows(IllegalArgumentException.class,
+                () -> new OrderSubmittedEvent("ORD-1", "413000001", -1.0, "医疗物资",
+                        ETA, "NORMAL", ETA, null, null));
+        assertThrows(IllegalArgumentException.class,
+                () -> new OrderSubmittedEvent("ORD-1", "413000001", 0.0, "医疗物资",
+                        ETA, "NORMAL", ETA, null, null));
+    }
+
+    @Test
+    @DisplayName("LOW-MAINT.11：submitTsMs 非正即视为漏传（原语表达不了「未设置」）")
+    void eventWithZeroTimestamp_shouldThrow() {
+        assertThrows(IllegalArgumentException.class,
+                () -> new OrderSubmittedEvent("ORD-1", "413000001", 5.0, "医疗物资",
+                        ETA, "NORMAL", 0L, null, null));
+    }
+
+    @Test
+    @DisplayName("事件里的货巢空白归一为 null（否则「␠」会作为独立货巢参与判重）")
+    void eventCargoNest_shouldTrimToNull() {
+        OrderSubmittedEvent event = new OrderSubmittedEvent("ORD-1", "413000001", 5.0, "医疗物资",
+                ETA, "NORMAL", ETA, null, null, null, "   ");
+
+        assertNull(event.cargoNestId());
+    }
+
+    @Test
+    @DisplayName("LOW-MAINT.9：状态事件的 orderId／orderStatus 缺失在发布侧就拒")
+    void stateEvent_shouldValidateIdentity() {
+        assertThrows(IllegalArgumentException.class,
+                () -> new OrderStateChangedEvent(new OrderView("  ", OrderStatus.PENDING_ACCEPT,
+                        ETA, 1L, null, null, null, null, null)));
+        assertThrows(IllegalArgumentException.class,
+                () -> new OrderStateChangedEvent(new OrderView("ORD-1", null, ETA, 1L,
+                        null, null, null, null, null)));
+        // 正常视图仍可通过
+        assertEquals("ORD-1", new OrderStateChangedEvent(view()).view().orderId());
     }
 }

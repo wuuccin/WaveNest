@@ -94,7 +94,9 @@ class AdmissionPipelineTest {
         assertTrue(decision.allowsSchedule());
         assertFalse(decision.hasSkippedCriteria());
         assertTrue(decision.etaLowerBoundSec() > 0.0);
-        assertEquals(NOW_MS, decision.enterTsMs(), "已在段内时驶入时刻即快照起点");
+        assertEquals(NOW_MS - 5_000L, decision.enterTsMs(),
+                "已在段内时取「已可证在段内的最早时刻」＝快照 t0 与最近有效观测取小，"
+                        + "再以判定时刻为上界（MED-BUG.26）");
     }
 
     @Test
@@ -394,5 +396,58 @@ class AdmissionPipelineTest {
         // MEDIUM.29：MMSI 只认 ASCII 0-9，全角数字与其他文字系统数字不放行
         assertFalse(AdmissionPipeline.isValidMmsi("４１３８００００１"), "全角数字");
         assertFalse(AdmissionPipeline.isValidMmsi("4138๐๐๐๐๑"), "非 ASCII 数字字符");
+    }
+
+    // ───────── 11-05 序号 2：重复单判据改为「同货巢 ＋ 同货型 ＋ 时间窗」 ─────────
+
+    /** 带货物所在巢的下单请求（其余字段同 {@link #request()}）。 */
+    private static AdmissionPipeline.OrderRequest requestAt(String mmsi, String cargoNestId) {
+        return new AdmissionPipeline.OrderRequest(
+                "ORD-1", mmsi, "MEDICINE", 10.0, DEADLINE_MS, "NORMAL", "G-1", cargoNestId);
+    }
+
+    private static boolean duplicate(AdmissionPipeline.OrderRequest request,
+            String priorMmsi, String priorNestId) {
+        AdmissionPipeline.PriorOrder prior = new AdmissionPipeline.PriorOrder(
+                priorMmsi, "MEDICINE", 10.0, NOW_MS - 60_000L, false, priorNestId);
+        return AdmissionPipeline.isDuplicate(request, List.of(prior), policy(), NOW_MS);
+    }
+
+    @Test
+    @DisplayName("★ 同货巢不同船 → 仍是重复单（判据已从「同船」改为「同货巢」）")
+    void sameNestDifferentShip_shouldBeDuplicate() {
+        assertTrue(duplicate(requestAt("413800001", "N-1"), "413800999", "N-1"),
+                "一批货被报两遍与「谁去承运」无关；按 MMSI 判会让换一条船下单就绕过判据");
+    }
+
+    @Test
+    @DisplayName("★ 同船不同货巢 → 不是重复单（同一船可为两个巢的两批货下单）")
+    void sameShipDifferentNest_shouldNotBeDuplicate() {
+        assertFalse(duplicate(requestAt("413800001", "N-1"), "413800001", "N-2"),
+                "按 MMSI 判会把「同一船的两批不同货」误判成重复，正常订单被拒");
+    }
+
+    @Test
+    @DisplayName("本单未指定货巢 → 退回按 MMSI 判（不能按 null==null 判重）")
+    void nullNest_shouldFallBackToMmsi() {
+        assertTrue(duplicate(requestAt("413800001", null), "413800001", "N-1"),
+                "同船同货型同重量同窗口，保守判重");
+        assertFalse(duplicate(requestAt("413800001", null), "413800999", "N-1"),
+                "两笔都没填货巢若按 null==null 判重，所有不填货巢的同货型订单都会被拒");
+    }
+
+    @Test
+    @DisplayName("本单指定货巢、既有单未指定 → 不同源（无从确认是同一批货）")
+    void requestedNestAgainstNullPrior_shouldNotBeDuplicate() {
+        assertFalse(duplicate(requestAt("413800001", "N-1"), "413800001", null));
+    }
+
+    @Test
+    @DisplayName("MED-BUG.28：mmsi 为 null 不抛 NPE（public 静态方法不能只靠调用方保证非空）")
+    void nullMmsi_shouldNotThrow() {
+        assertFalse(duplicate(requestAt(null, null), "413800001", "N-1"),
+                "改前 request.mmsi().equals(...) 在这里直接 NPE，把业务拒绝变成 500");
+        // 货巢路径不碰 mmsi，同样不应抛
+        assertTrue(duplicate(requestAt(null, "N-1"), "413800999", "N-1"));
     }
 }

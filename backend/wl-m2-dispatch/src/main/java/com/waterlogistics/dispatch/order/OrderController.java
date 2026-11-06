@@ -9,6 +9,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -48,9 +49,21 @@ public class OrderController {
      *
      * <p>始终返回 200：业务拒绝由响应体的 {@code accepted=false} ＋ {@code reasonCode}
      * 表达（理由见 {@link OrderSubmitResponse}）。
+     *
+     * <p><b>MED-BUG.33：{@code required = false} 不能省</b>。默认 {@code @RequestBody}
+     * 是必填，空 body／{@code Content-Type} 缺失时 Spring 在进入方法前就抛
+     * {@code HttpMessageNotReadableException}，框架回 400——于是「请求体缺失」这一种业务拒绝
+     * 走的是 4xx，而其余业务拒绝都走 200 ＋ {@code reasonCode}。前端只写一套分支就会漏掉它；
+     * 更糟的是 400 在监控上被归为「客户端错误」，与真正的接口故障混在一起。
+     * 放开必填后，空 body 会走 {@link OrderAdmissionService.RejectReason#REQUEST_MISSING}，
+     * 与其余拒绝同一口径。
+     *
+     * @param request 请求体（可为 {@code null}）
+     * @return 受理结果（恒 200）
      */
     @PostMapping(ApiPath.ORDERS)
-    public OrderSubmitResponse submitOrder(@RequestBody OrderSubmitRequest request) {
+    public OrderSubmitResponse submitOrder(
+            @RequestBody(required = false) OrderSubmitRequest request) {
         return admissionService.submit(request);
     }
 
@@ -60,11 +73,35 @@ public class OrderController {
      * <p>闸门摘要取自 {@link DispatchGateService#summary()}（功能 12 的展示侧，契约
      * {@code 22 §3.2}）。<b>本类不参与闸门判定</b>——熔断／解除由 {@code gate} 子包
      * 的 {@code trip}/{@code clear} 维护，接口只负责如实回显。
+     *
+     * <p>11-05 序号 2 · LOW-PERF.1：支持按状态过滤与条数上限，参数语义见
+     * {@link OrderAdmissionService#listOrders(String, Integer)}。两个参数都可省略，
+     * 省略时行为与改前一致（只是默认只回 200 条）。
+     *
+     * @param status 状态过滤（中文状态词或枚举名），可空
+     * @param limit  条数上限，可空（默认 200，最大 1000）
+     * @return 订单列表 ＋ 闸门摘要
      */
     @GetMapping(ApiPath.ORDERS)
-    public OrderListResponse listOrders() {
-        List<OrderView> orders = admissionService.listOrders();
+    public OrderListResponse listOrders(
+            @RequestParam(value = "status", required = false) String status,
+            @RequestParam(value = "limit", required = false) Integer limit) {
+        List<OrderView> orders = admissionService.listOrders(status, limit);
         return new OrderListResponse(orders, dispatchGateService.summary());
+    }
+
+    /**
+     * 无参重载：等同 {@code status=null, limit=null}（默认上限 200 条）。
+     *
+     * <p><b>不带 {@code @GetMapping}</b>，因此不会注册成第二个 handler——Spring 的
+     * 请求映射只认带注解的方法，同路径两个 handler 会在启动期报
+     * {@code Ambiguous mapping}。保留它只为让直接调用本类（单测、旁路脚本）的代码
+     * 不必因为新增两个查询参数而改签名。
+     *
+     * @return 订单列表 ＋ 闸门摘要
+     */
+    public OrderListResponse listOrders() {
+        return listOrders(null, null);
     }
 
     /**

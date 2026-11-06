@@ -28,7 +28,56 @@ class DispatchTriggerFixTest {
     void duplicateEventIsInsertedOnceAndUsesShanghaiTime() {
         Map<String, OrderTaskEntity> rows = new HashMap<>();
         AtomicInteger inserts = new AtomicInteger();
-        OrderTaskMapper mapper = (OrderTaskMapper) Proxy.newProxyInstance(
+        OrderTaskMapper mapper = mapper(rows, inserts);
+        DispatchTrigger trigger = new DispatchTrigger(mapper, null, null, prediction(),
+                transactionManager());
+        OrderSubmittedEvent event = new OrderSubmittedEvent(
+                "ORD-1", "123456789", 5.0, "medicine", TS + 60_000, "NORMAL", TS,
+                "WAIT_SHIP", TS + 30_000);
+        trigger.onOrderSubmitted(event);
+        trigger.onOrderSubmitted(event);
+        assertEquals(1, inserts.get());
+        assertEquals(OrderStatus.ACCEPTED_WAIT_WAKE.getValue(), rows.get("ORD-1").getStatus());
+        assertEquals(LocalDateTime.ofInstant(Instant.ofEpochMilli(TS), ZoneId.of("Asia/Shanghai")),
+                rows.get("ORD-1").getCreateTime());
+        assertNull(rows.get("ORD-1").getShipLon());
+    }
+
+    @Test
+    void cargoNestIdIsPersistedForDeferredOrder() {
+        Map<String, OrderTaskEntity> rows = new HashMap<>();
+        DispatchTrigger trigger = new DispatchTrigger(mapper(rows, new AtomicInteger()), null, null,
+                prediction(), transactionManager());
+        // 9 参旧构造（不带货巢）与 11 参新构造都要能落库，前者落 null
+        trigger.onOrderSubmitted(new OrderSubmittedEvent(
+                "ORD-NEST", "123456789", 5.0, "medicine", TS + 60_000, "NORMAL", TS,
+                "WAIT_CARGO", TS + 30_000, null, "NEST-A"));
+
+        assertEquals("NEST-A", rows.get("ORD-NEST").getCargoNestId(),
+                "11-05 序号 2：货巢要落库，否则罗才辉按货巢起降只能退回「离船最近巢」");
+    }
+
+    @Test
+    void missingCargoNestIsPersistedAsNull() {
+        Map<String, OrderTaskEntity> rows = new HashMap<>();
+        DispatchTrigger trigger = new DispatchTrigger(mapper(rows, new AtomicInteger()), null, null,
+                prediction(), transactionManager());
+        trigger.onOrderSubmitted(new OrderSubmittedEvent(
+                "ORD-NONEST", "123456789", 5.0, "medicine", TS + 60_000, "NORMAL", TS,
+                "WAIT_SHIP", TS + 30_000));
+
+        assertNull(rows.get("ORD-NONEST").getCargoNestId(),
+                "未指定货巢是「由下游取离船最近巢」，不是空串");
+    }
+
+    private static PredictionService prediction() {
+        return new PredictionService(
+                new PredictionSettings(20, .05, 15, .03, 1800, 60, 900), request -> {});
+    }
+
+    private static OrderTaskMapper mapper(Map<String, OrderTaskEntity> rows,
+            AtomicInteger inserts) {
+        return (OrderTaskMapper) Proxy.newProxyInstance(
                 OrderTaskMapper.class.getClassLoader(), new Class<?>[]{OrderTaskMapper.class},
                 (proxy, method, args) -> switch (method.getName()) {
                     case "selectById" -> rows.get(args[0]);
@@ -40,19 +89,6 @@ class DispatchTriggerFixTest {
                     }
                     default -> throw new UnsupportedOperationException(method.getName());
                 });
-        PredictionService prediction = new PredictionService(
-                new PredictionSettings(20, .05, 15, .03, 1800, 60, 900), request -> {});
-        DispatchTrigger trigger = new DispatchTrigger(mapper, null, null, prediction, transactionManager());
-        OrderSubmittedEvent event = new OrderSubmittedEvent(
-                "ORD-1", "123456789", 5.0, "medicine", TS + 60_000, "NORMAL", TS,
-                "WAIT_SHIP", TS + 30_000);
-        trigger.onOrderSubmitted(event);
-        trigger.onOrderSubmitted(event);
-        assertEquals(1, inserts.get());
-        assertEquals(OrderStatus.ACCEPTED_WAIT_WAKE.getValue(), rows.get("ORD-1").getStatus());
-        assertEquals(LocalDateTime.ofInstant(Instant.ofEpochMilli(TS), ZoneId.of("Asia/Shanghai")),
-                rows.get("ORD-1").getCreateTime());
-        assertNull(rows.get("ORD-1").getShipLon());
     }
 
     private static PlatformTransactionManager transactionManager() {
