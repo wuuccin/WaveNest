@@ -8,6 +8,7 @@ import com.waterlogistics.contract.mq.AlertEventMessage;
 import com.waterlogistics.contract.order.OrderView;
 import com.waterlogistics.contract.rest.WaitReason;
 import com.waterlogistics.contract.state.AlertType;
+import com.waterlogistics.contract.state.OrderStatus;
 import com.waterlogistics.dispatch.order.OrderStateChangedEvent;
 import com.waterlogistics.storage.entity.AlertEntity;
 import com.waterlogistics.storage.entity.OrderTaskEntity;
@@ -137,8 +138,11 @@ class WaitReasonAlertEmitterTest {
     }
 
     private OrderStateChangedEvent event(WaitReason reason) {
-        OrderView view = new OrderView(ORDER_ID, null, System.currentTimeMillis(), 1L,
-                reason, null, null, null);
+        // 11-05 序号 2：OrderStateChangedEvent 现在校验 orderStatus 非空（LOW-MAINT.9）。
+        // 带 waitReason 的订单语义就是「已受理待唤醒」，此前传 null 只是夹具偷懒——
+        // null 帧推到前端会让状态机读到 undefined，发布侧就该拒掉。
+        OrderView view = new OrderView(ORDER_ID, OrderStatus.ACCEPTED_WAIT_WAKE,
+                System.currentTimeMillis(), 1L, reason, null, null, null);
         return new OrderStateChangedEvent(view);
     }
 

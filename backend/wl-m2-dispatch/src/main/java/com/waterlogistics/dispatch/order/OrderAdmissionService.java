@@ -11,8 +11,10 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Pattern;
@@ -23,6 +25,8 @@ import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * 订单接入与接单判定（M2 · 卢肄文 · 模块二功能 1）。
@@ -52,6 +56,27 @@ public class OrderAdmissionService {
     /** AIS MMSI 为 9 位十进制数字。 */
     private static final Pattern MMSI_PATTERN = Pattern.compile("\\d{9}");
 
+    /**
+     * 进程实例码：启动时取一次，参与订单号，防「重启／多实例同毫秒撞号」（MED-BUG.32）。
+     *
+     * <p>取 8 位十六进制（UUID 前 8 位）而不是完整 UUID：{@code order_id} 只有
+     * {@code VARCHAR(64)}，且订单号要能被人工在日志里扫读；8 位足够把碰撞概率压到
+     * 与完整 UUID 同一量级（16^8 ≈ 4.3e9 分之一，且只在同一毫秒叠加）。
+     */
+    private static final String INSTANCE_TAG =
+            UUID.randomUUID().toString().substring(0, 8);
+
+    /**
+     * 订单列表默认返回条数（LOW-PERF.1）。
+     *
+     * <p>取 200 而不是「全部」：演示与联调时单屏最多看几十条，200 足够；而它在最坏情况下
+     * 也只是把一次响应体控制在几百 KB，不会把一个状态推送变成整包全量。
+     */
+    static final int DEFAULT_LIST_LIMIT = 200;
+
+    /** 订单列表硬上限：再大就不是「看列表」，而是「导出」，该走专门的导出接口。 */
+    static final int MAX_LIST_LIMIT = 1000;
+
     private final TaskLogRecorder taskLogRecorder;
 
     private final ApplicationEventPublisher eventPublisher;
@@ -65,6 +90,14 @@ public class OrderAdmissionService {
 
     /** 已受理订单，key = orderId。 */
     private final Map<String, OrderView> orders = new ConcurrentHashMap<>();
+
+    /**
+     * 事务内合并前的视图快照（MED-BUG.31）：事务回滚时按它把 {@link #orders} 退回去。
+     *
+     * <p>用实例字段而不是静态：同一个测试上下文里可能有多个本类实例，静态会串号。
+     * 内容在事务结束时（无论提交还是回滚）清空，不跨事务累积。
+     */
+    private final ThreadLocal<Map<String, OrderView>> mergeRollback = new ThreadLocal<>();
 
     private final AtomicLong sequence = new AtomicLong();
 
@@ -152,10 +185,12 @@ public class OrderAdmissionService {
         // B0：发布「订单已受理」事件（waitReason=null → 完整主链），由 DispatchTrigger 驱动
         // 落库 → 受理 → 组批调度；priority 写枚举名（HIGH.18），不透传原始请求串。
         // 11-05 序号 2：expectedTimeMs 改传系统算出的 deadline（不再是客户端提交值），
-        // etaTs 传未派单阶段的下界，两者都由 DispatchTrigger 落库。
+        // etaTs 传未派单阶段的下界，cargoNestId 传货巢（落 order_task.cargo_nest_id），
+        // 三者都由 DispatchTrigger 落库。
         eventPublisher.publishEvent(new OrderSubmittedEvent(
                 orderId, pipelineRequest.mmsi(), request.goodsWeight(), request.goodsType(),
-                decision.deadlineMs(), priority.name(), nowMs, null, null, decision.etaTsMs()));
+                decision.deadlineMs(), priority.name(), nowMs, null, null, decision.etaTsMs(),
+                pipelineRequest.cargoNestId()));
 
         return OrderSubmitResponse.accepted(view);
     }
@@ -193,10 +228,12 @@ public class OrderAdmissionService {
         eventPublisher.publishEvent(new OrderStateChangedEvent(view));
 
         // 延后事件：DispatchTrigger 只落库为「已受理待唤醒」，不受理、不组批
+        // 11-05 序号 2：cargoNestId 一并带出——延后单同样要能在库里看见「货在哪个巢」，
+        // 否则唤醒后被重判时货巢丢失，只能退回「离船最近巢」，与用户下单时的意图不符
         eventPublisher.publishEvent(new OrderSubmittedEvent(
                 orderId, pipelineRequest.mmsi(), request.goodsWeight(), request.goodsType(),
                 decision.deadlineMs(), pipelineRequest.priority(), nowMs,
-                waitReason.name(), wakeEtaTs, decision.etaTsMs()));
+                waitReason.name(), wakeEtaTs, decision.etaTsMs(), pipelineRequest.cargoNestId()));
 
         // 定时唤醒：tEnter−wakeMargin（等船）与 suspendRetrySec 重评点（数据不足／未进段）
         // 都给出确定时刻；事件型唤醒（闸门解除／货就绪）由既有链路兜住，wakeAtMs=0 不注册
@@ -225,6 +262,60 @@ public class OrderAdmissionService {
                 .toList();
     }
 
+    /**
+     * 订单列表快照，带状态过滤与条数上限（11-05 序号 2 · LOW-PERF.1）。
+     *
+     * <p><b>为什么必须有上限</b>：改前 {@code GET /api/orders} 一次返回全部订单。进程内
+     * {@link #orders} 只增不减（内存视图没有淘汰），演示跑一天就有几百上千条；
+     * 前端列表页一次渲染全部、每次状态推送又整包重发，请求体越滚越大，最后卡的是浏览器
+     * 而不是服务端——这类问题在演示现场才会显形，而那时已经没有改代码的时间。
+     *
+     * <p><b>为什么过滤放在服务层而不是 Controller</b>：{@link #orders} 的 owner 是本类，
+     * 「最新 N 条」的语义要贴着数据看；放在 Controller 里做，等于把遍历整表当成查询的代价
+     * 留给每个调用方。
+     *
+     * @param status 状态过滤：接受落库口径的中文状态词（如 {@code 待调度}）或枚举名
+     *               （如 {@code WAIT_DISPATCH}，忽略大小写）；空白表示不过滤。
+     *               <b>无法识别时返回空列表</b>：查询参数拼错是客户端错误，回「全部」
+     *               会让人误以为过滤生效了
+     * @param limit  条数上限；{@code null} 取 {@value #DEFAULT_LIST_LIMIT}，
+     *               超出 {@value #MAX_LIST_LIMIT} 按上限截断（防止一次拉全库当导出用）
+     * @return 按建单时间升序的订单视图
+     */
+    public List<OrderView> listOrders(String status, Integer limit) {
+        int cap = limit == null ? DEFAULT_LIST_LIMIT
+                : Math.max(1, Math.min(limit, MAX_LIST_LIMIT));
+        List<OrderView> sorted = listOrders();
+        if (status == null || status.isBlank()) {
+            return sorted.size() <= cap ? sorted : sorted.subList(0, cap);
+        }
+        OrderStatus wanted = parseStatus(status);
+        if (wanted == null) {
+            log.warn("订单列表状态过滤值无法识别，返回空列表：status={}", status);
+            return List.of();
+        }
+        List<OrderView> filtered = sorted.stream()
+                .filter(view -> view.orderStatus() == wanted)
+                .toList();
+        return filtered.size() <= cap ? filtered : filtered.subList(0, cap);
+    }
+
+    /**
+     * 解析状态过滤值：先按落库中文词，再按枚举名（忽略大小写）。
+     *
+     * @param raw 原始取值
+     * @return 枚举；无法识别返回 {@code null}
+     */
+    private static OrderStatus parseStatus(String raw) {
+        String value = raw.trim();
+        for (OrderStatus status : OrderStatus.values()) {
+            if (status.getValue().equals(value) || status.name().equalsIgnoreCase(value)) {
+                return status;
+            }
+        }
+        return null;
+    }
+
     /** 已受理订单数。 */
     public int orderCount() {
         return orders.size();
@@ -242,10 +333,68 @@ public class OrderAdmissionService {
     /**
      * 飞行态变化也并入 REST 快照：order_state 与 GET /api/orders 共用同一
      * stateVersion，避免重连后低版本快照把飞行阶段盖回「已派发」。
+     *
+     * <h3>MED-BUG.31：内存视图不得超前库（回滚补偿），但也不能延后到提交后</h3>
+     * <p>缺陷是真实的：{@code FlightPhaseAdvancer} 把「写 {@code order_task.status}」与
+     * 「发本事件」放在同一事务里，若事件在事务<b>内</b>就把视图改掉，事务随后回滚
+     * （约束冲突、占位释放失败后的后续写库失败），{@code GET /api/orders} 与实时端已经
+     * 显示「去程中」而库里还是「已派发」，且没有任何补偿把它改回去。
+     *
+     * <p><b>为什么不用 {@code @TransactionalEventListener(AFTER_COMMIT)}</b>（那是本类另一条
+     * 监听 {@link #onOrderStateChanged} 的做法）：AFTER_COMMIT 只在事务<b>真正提交</b>后触发，
+     * 于是「长事务内推进多拍」时视图一直停在旧状态——{@code @Transactional} 的集成测试是最极端的
+     * 例子（外层事务永不提交，6 条真库用例的视图断言会全部看不到更新），但生产里
+     * 批量补算事务同样会遇到。视图是给前端读的，它应该「立即反映最新一次已发出的状态」，
+     * 而正确性靠回滚补偿守住，不靠延后。
+     *
+     * <p>补偿口径：在事务内第一次合并某单前，记下它当时的视图；事务回滚时按记录逐单退回
+     * （原本没有该单的，直接移除）。用「事务内首见值」而不是「每次合并的前一个值」，
+     * 是因为同一事务可能推进多拍，逐次回退只能退回上一拍、退不回事前状态。
      */
     @EventListener
     public void onFlightPhaseChanged(FlightPhaseChangedEvent event) {
-        merge(event.view());
+        mergeWithRollback(event.view());
+    }
+
+    /**
+     * 合并视图，并在事务回滚时退回合并前的状态。
+     *
+     * @param next 新视图
+     */
+    private void mergeWithRollback(OrderView next) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            // 无事务（单测直调、旁路调用）：没有回滚风险，直接合并
+            merge(next);
+            return;
+        }
+        Map<String, OrderView> rollback = mergeRollback.get();
+        if (rollback == null) {
+            rollback = new HashMap<>();
+            mergeRollback.set(rollback);
+            Map<String, OrderView> recorded = rollback;
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCompletion(int status) {
+                    try {
+                        if (status == TransactionSynchronization.STATUS_ROLLED_BACK) {
+                            recorded.forEach((orderId, before) -> {
+                                if (before == null) {
+                                    orders.remove(orderId);
+                                } else {
+                                    orders.put(orderId, before);
+                                }
+                            });
+                            log.info("事务回滚，内存订单视图已回退 {} 单", recorded.size());
+                        }
+                    } finally {
+                        recorded.clear();
+                        mergeRollback.remove();
+                    }
+                }
+            });
+        }
+        rollback.putIfAbsent(next.orderId(), orders.get(next.orderId()));
+        merge(next);
     }
 
     private void merge(OrderView next) {
@@ -261,6 +410,9 @@ public class OrderAdmissionService {
      * <b>非终止订单</b>」——订单是否非终止以 {@code order_task.status} 为权威；内存登记会
      * 在重启后丢失、且与落库状态漂移（如订单已被人工终止但登记还在）。
      * 本查询发生在本单落库之前，不含自身，无自匹配问题。
+     *
+     * <p>11-05 序号 2：一并带出 {@code cargo_nest_id}——重复单判据已从「同 MMSI ＋ 同货型」
+     * 改为「同货巢 ＋ 同货型 ＋ 时间窗」，没有这一列就没有判据本身。
      */
     private List<AdmissionPipeline.PriorOrder> snapshotPriorOrders() {
         List<String> terminalValues = List.of(
@@ -276,7 +428,8 @@ public class OrderAdmissionService {
                         row.getCreateTime() == null ? 0L
                                 : row.getCreateTime().atZone(ZoneId.systemDefault())
                                         .toInstant().toEpochMilli(),
-                        false))
+                        false,
+                        row.getCargoNestId()))
                 .toList();
     }
 
@@ -317,9 +470,25 @@ public class OrderAdmissionService {
         return null;
     }
 
-    /** 订单号：{@code ORD-<毫秒时间戳>-<序号>}，进程内唯一、可按时间排序。 */
+    /**
+     * 订单号：{@code ORD-<毫秒时间戳>-<实例码>-<序号>}，可直接按时间排序。
+     *
+     * <p><b>MED-BUG.32：为什么不是「时间戳 ＋ 进程内序号」</b>。{@code order_id} 是
+     * {@code order_task} 的<b>主键</b>，撞号的后果不是「两条重单」而是第二条直接插入失败
+     * （{@code Duplicate entry}），整笔下单变成 500。原实现只有毫秒戳与
+     * {@link #sequence}，两类场景必撞：
+     * <ul>
+     *   <li><b>重启</b>：{@code sequence} 归零，重启后同一毫秒内下的第一笔就与重启前那笔同号；</li>
+     *   <li><b>多实例</b>：两台实例各自从 1 开始，同一毫秒各下一单就同号。</li>
+     * </ul>
+     * 加静态实例码（进程启动时取一次 UUID 前缀）后，碰撞概率降到与 UUID 同级，
+     * 而时间戳仍在前缀，运维按订单号排序、按日志检索的既有习惯不受影响。
+     *
+     * @param nowMs 下单时刻，Unix 毫秒
+     * @return 订单号（长度约 30，远小于 {@code order_id} 的 {@code VARCHAR(64)}）
+     */
     private String nextOrderId(long nowMs) {
-        return "ORD-" + nowMs + "-" + sequence.incrementAndGet();
+        return "ORD-" + nowMs + "-" + INSTANCE_TAG + "-" + sequence.incrementAndGet();
     }
 
     /**

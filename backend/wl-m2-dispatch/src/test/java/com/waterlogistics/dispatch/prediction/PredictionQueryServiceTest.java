@@ -52,7 +52,8 @@ class PredictionQueryServiceTest {
 
         PredictionQueryService.PredictionShipSummary first = resp.ships().get(0);
         assertEquals(1L, first.version());
-        assertEquals("VALID", first.premise());
+        // 11-05 序号 2：匀速档前提为 UNKNOWN（未做 P0–P4 判定），摘要如实透出
+        assertEquals("UNKNOWN", first.premise());
         assertEquals(11, first.pointCount(), "600 s / 60 s + 1 = 11 点");
         assertFalse(first.validityRemainingSec() < 0, "有效期剩余不得为负");
     }

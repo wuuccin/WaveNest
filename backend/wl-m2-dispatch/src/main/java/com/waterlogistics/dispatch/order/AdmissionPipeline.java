@@ -8,6 +8,7 @@ import com.waterlogistics.algo.estimation.ServiceSegmentGate;
 import com.waterlogistics.algo.estimation.WaterwayGeometry;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -259,9 +260,25 @@ public final class AdmissionPipeline {
      * @param goodsWeightKg 载重，kg
      * @param submitTsMs    提交时刻
      * @param terminal      是否已处于终止态（终止态不参与重复判定）
+     * @param cargoNestId   货物所在巢；{@code null}＝该单下单时未指定。
+     *                      11-05 序号 2 起参与重复单判据，见 {@link #isDuplicate}
      */
     public record PriorOrder(String mmsi, String cargoType, double goodsWeightKg, long submitTsMs,
-            boolean terminal) {
+            boolean terminal, String cargoNestId) {
+
+        /**
+         * 兼容 11-05 序号 2 之前的 5 参构造：未带货物所在巢。
+         *
+         * @param mmsi          船 MMSI
+         * @param cargoType     货物类型
+         * @param goodsWeightKg 载重，kg
+         * @param submitTsMs    提交时刻
+         * @param terminal      是否终止态
+         */
+        public PriorOrder(String mmsi, String cargoType, double goodsWeightKg, long submitTsMs,
+                boolean terminal) {
+            this(mmsi, cargoType, goodsWeightKg, submitTsMs, terminal, null);
+        }
     }
 
     /**
@@ -381,7 +398,10 @@ public final class AdmissionPipeline {
      * @param wakeEvent       唤醒事件
      * @param skippedCriteria <b>本次未判定的判据名</b>——空着不等于放过，必须能被看见
      * @param etaLowerBoundSec 时间可行性下界 {@code etaMin}，s（未算出时为 {@code NaN}）
-     * @param enterTsMs       驶入服务航段时刻，Unix 毫秒（未算出时为 {@code null}）
+     * @param enterTsMs       驶入服务航段时刻，Unix 毫秒（未算出时为 {@code null}）。
+     *                        <b>船已在段内时给的是「已可证在段内的最早时刻」</b>（快照 {@code t0}
+     *                        与最近有效观测时刻取小、以判定时刻为上界），是保守下界而非精确驶入
+     *                        时刻——精确值需要位置历史序列，本链路只有快照（MED-BUG.26）
      * @param detail          人读说明
      * @param deadlineMs      系统送达截止时刻，Unix 毫秒；未算出处为 {@code null}。
      *                        取值＝{@code min(客户端期望, 船驶出服务航段时刻, 下单+最大配送时限)}，
@@ -543,7 +563,14 @@ public final class AdmissionPipeline {
         } else {
             ServiceSegment segment = input.serviceSegment();
             if (input.ship().inSegment()) {
-                enterTsMs = input.snapshot().t0Ms();      // 已在段内：驶入时刻即当前
+                // MED-BUG.26：改前直接取快照 t0——那是「预测起始时刻」，既不是驶入时刻，
+                // 也没夹到当前（补算或时钟偏差时 t0 可能在未来，于是决策记录里写着
+                // 「船在 30 秒后才驶入，而它已经在段内」）。改为取「已可证在段内的最早时刻」：
+                // t0 与最近有效观测时刻取小，再以 nowMs 为上界。
+                // 真实驶入时刻需要位置历史序列，本链路只拿得到快照，故这里给的是保守下界，
+                // 语义写进 Decision.enterTsMs 的 javadoc，避免下游把它当精确值用。
+                enterTsMs = Math.min(Math.min(input.snapshot().t0Ms(),
+                        input.ship().lastAisTsMs()), nowMs);
             } else {
                 ServiceSegmentGate.EntryResult entry = ServiceSegmentGate.firstEntry(
                         input.snapshot().points(), segment.geometry(), segment.startS(),
@@ -626,8 +653,30 @@ public final class AdmissionPipeline {
     // ───────────── 判据细节 ─────────────
 
     /**
-     * 重复单：同一 {@code mmsi} ＋ 同一 {@code cargoType} ＋ 重量差 ≤ {@code weightTolKg}，
-     * 且下单时间落在 {@code dupWindowSec} 内的既有<b>非终止态</b>订单（§3.1.3）。
+     * 重复单：同<b>货巢</b>（或同 {@code mmsi}）＋ 同 {@code cargoType} ＋ 重量差
+     * ≤ {@code weightTolKg}，且下单时间落在 {@code dupWindowSec} 内的既有<b>非终止态</b>订单。
+     *
+     * <h3>11-05 序号 2：判据由「同 MMSI ＋ 同货型」改为「同货巢 ＋ 同货型 ＋ 时间窗」</h3>
+     * <p>重复不是「同一艘船提交了两次」，而是<b>同一批货被报了两遍</b>——货的物理起点是巢，
+     * 船只是承运方。按 MMSI 判会漏掉真正的一批货重复提交（换一条船下单就绕过判据），
+     * 又会把「同一条船为两个不同巢的两批货下单」误判成重复。
+     *
+     * <p><b>为什么未指定货巢时退回按 MMSI 判</b>：{@code cargoNestId} 可空（＝取离船最近巢），
+     * 两个都没指定的单在数据上是「同货巢」——若直接按 {@code null == null} 判重，
+     * 所有不填货巢的同货型订单都会被判成重复单，等于把正常下单堵死。退回按船判是保守口径：
+     * 同一艘船在同一时间窗内不该同时接两笔同货型同重量的单。
+     *
+     * <h3>MED-BUG.28：{@code equals} 防 null</h3>
+     * <p>改前直接 `request.mmsi().equals(prior.mmsi())`。{@link OrderRequest#isComplete()}
+     * 确实保证了非空，但本方法是 {@code public static}——任一调用方绕过判定链直接调用时
+     * 就是 NPE，而 NPE 会让整笔下单返回 500（业务拒绝本应走 200 ＋ reasonCode）。
+     * 统一改用 {@link Objects#equals}，把「谁保证非空」这件事从前提变成实现细节。
+     *
+     * @param request     本单
+     * @param priorOrders 既有非终止单（{@code null} 表不判）
+     * @param policy      判据参数（用 {@code weightTolKg} 与 {@code dupWindowSec}）
+     * @param nowMs       判定时刻，Unix 毫秒
+     * @return 是否判为重复
      */
     public static boolean isDuplicate(OrderRequest request, List<PriorOrder> priorOrders,
             Policy policy, long nowMs) {
@@ -636,11 +685,13 @@ public final class AdmissionPipeline {
         }
         long windowMs = policy.dupWindowSec() * 1000L;
         for (PriorOrder prior : priorOrders) {
-            if (prior.terminal()) {
+            if (prior == null || prior.terminal()) {
                 continue;
             }
-            if (!request.mmsi().equals(prior.mmsi())
-                    || !request.cargoType().equals(prior.cargoType())) {
+            if (!sameCargoOrigin(request, prior)) {
+                continue;
+            }
+            if (!Objects.equals(request.cargoType(), prior.cargoType())) {
                 continue;
             }
             if (Math.abs(request.goodsWeightKg() - prior.goodsWeightKg()) > policy.weightTolKg()) {
@@ -651,6 +702,23 @@ public final class AdmissionPipeline {
             }
         }
         return false;
+    }
+
+    /**
+     * 两单是否出自同一批货（重复单判据的「同源」部分）。
+     *
+     * <p>本单指定了货巢 → 必须同货巢（既有单未指定货巢时不算同源，因为无法确认）；
+     * 本单未指定 → 退回按 {@code mmsi} 判，理由见 {@link #isDuplicate}。
+     *
+     * @param request 本单
+     * @param prior   既有单
+     * @return 是否同源
+     */
+    private static boolean sameCargoOrigin(OrderRequest request, PriorOrder prior) {
+        if (request.cargoNestId() != null) {
+            return request.cargoNestId().equals(prior.cargoNestId());
+        }
+        return Objects.equals(request.mmsi(), prior.mmsi());
     }
 
     /** MMSI 为 9 位十进制数字。 */

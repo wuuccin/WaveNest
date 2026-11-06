@@ -56,7 +56,9 @@ class PredictionServiceTest {
         assertEquals(T0, snapshot.t0Ms());
         assertEquals(11, snapshot.points().size(), "600 s / 60 s + 1 = 11 点");
         assertEquals(1, snapshot.version(), "首次刷新版本号为 1");
-        assertEquals("VALID", snapshot.premise());
+        // 11-05 序号 2：匀速档不再无条件写 VALID——它拿不到 s／vAlongMs，P0–P4 一条也判不了，
+        // 「没查过」必须与「查过且成立」区分（详见 ConstantVelocityPredictor#predict 重载）
+        assertEquals("UNKNOWN", snapshot.premise());
         assertEquals(900L, snapshot.validitySec());
         assertEquals(1, service.trackedShipCount());
     }

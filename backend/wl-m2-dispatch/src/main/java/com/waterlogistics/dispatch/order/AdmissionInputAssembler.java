@@ -1,11 +1,15 @@
 package com.waterlogistics.dispatch.order;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.waterlogistics.algo.estimation.EstimatedPoint;
 import com.waterlogistics.algo.estimation.WaterwayGeometry;
+import com.waterlogistics.contract.state.GoodsStatus;
 import com.waterlogistics.dispatch.gate.DispatchGateService;
 import com.waterlogistics.dispatch.prediction.PredictionService;
 import com.waterlogistics.dispatch.prediction.PredictionSnapshot;
+import com.waterlogistics.storage.entity.GoodsEntity;
 import com.waterlogistics.storage.entity.NestEntity;
+import com.waterlogistics.storage.repository.GoodsMapper;
 import com.waterlogistics.storage.repository.NestMapper;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -13,6 +17,9 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -29,7 +36,8 @@ import org.springframework.stereotype.Service;
  * <p><b>两处「空着」的判定</b>（与 {@code AdmissionPipeline} 类头的约定一致，
  * 空着会被记进 {@code skippedCriteria}，不是静默放过）：
  * <ul>
- *   <li>{@code goodsReady}：货就绪状态属货主／M1 侧，本模块无数据源，传 {@code null} 跳过；</li>
+ *   <li>{@code goodsReady}：11-05 序号 2 起<b>已接通</b>——按 {@code goods.status = 已就绪}
+ *       且（指定了货巢时）{@code goods.location} 与之一致判定，见 {@link #goodsReady}；</li>
  *   <li>{@code connectorAlive}：采集链路健康暂无查询口，传 {@code null} 只按 TTL 判。</li>
  * </ul>
  *
@@ -41,11 +49,26 @@ import org.springframework.stereotype.Service;
 @Service
 public class AdmissionInputAssembler {
 
+    private static final Logger log = LoggerFactory.getLogger(AdmissionInputAssembler.class);
+
+    /** 货物状态词，取值以 {@link GoodsStatus} 为准，不在本类重复字面量。 */
+    private static final String GOODS_READY = GoodsStatus.READY.getValue();
+
     private final PredictionService predictionService;
 
     private final NestMapper nestMapper;
 
     private final DispatchGateService dispatchGateService;
+
+    /**
+     * 货物表查询（11-05 序号 2 接货况用）；{@code null} 表示未装配。
+     *
+     * <p>{@code null} 不是「静默放过」：{@link #goodsReady} 会返回 {@code null}，
+     * 判定链把它记进 {@code skippedCriteria（GOODS_READY）}，调用方与调度员都能看见
+     * 「这一单其实没被完整判定过」。保留可空是为了让不关心货况的单元测试
+     * 不必造一张货物桩表。
+     */
+    private final GoodsMapper goodsMapper;
 
     private final WaterwayGeometry segmentGeometry;
 
@@ -58,6 +81,37 @@ public class AdmissionInputAssembler {
 
     private final AdmissionPipeline.Policy policy;
 
+    /**
+     * 生产装配用。
+     *
+     * <p><b>{@code @Autowired} 不能省</b>：本类有两个构造器（本方法 ＋ 下面那个不带
+     * {@link GoodsMapper} 的兼容构造器），Spring 的「唯一构造器自动推断」只在构造器
+     * <b>恰好一个</b>时才生效；有多个而无一标注，容器会退回找无参构造器并报
+     * {@code No default constructor found}。这个坑在单测里完全看不见——单测直接
+     * {@code new}，只有加载 {@code ApplicationContext} 的集成测试才会炸。
+     *
+     * @param predictionService  预测服务（船位与快照）
+     * @param nestMapper         机巢表
+     * @param dispatchGateService 闸门状态
+     * @param segmentVertices    服务航段折线「lon,lat;lon,lat;…」
+     * @param segmentStartS      服务航段起点弧长，m
+     * @param segmentEndS        服务航段终点弧长，m（0＝取折线全长）
+     * @param corridorHalfWidthM 走廊半宽，m
+     * @param cargoWhitelist     货物类型白名单
+     * @param maxPayloadAllTypesKg 全机型载重上界，kg
+     * @param maxPayloadMargin   载重上界裕度
+     * @param ttlAisMs           数据新鲜度 TTL，ms
+     * @param vMaxCruiseMs       最大巡航速度，m/s
+     * @param tHandoverMinSec    交接时长下界，s
+     * @param wakeMarginSec      提前唤醒余量，s
+     * @param suspendRetrySec    暂缓重试周期，s
+     * @param horizonSec         预测时域，s
+     * @param weightTolKg        重复单重量容差，kg
+     * @param dupWindowSec       重复单时间窗，s
+     * @param maxDeliverySec     最大配送时限，s
+     * @param goodsMapper        货物表（接货况判据的数据源，11-05 序号 2）
+     */
+    @Autowired
     public AdmissionInputAssembler(
             PredictionService predictionService,
             NestMapper nestMapper,
@@ -87,10 +141,12 @@ public class AdmissionInputAssembler {
             @Value("${wavenest.m2.admission.dup-window-sec:300}") long dupWindowSec,
             // 11-05 序号 2：系统 deadline 的业务上限（s）。与 horizonSec 分开，因为二者语义不同——
             // horizonSec 是「预测能看多远」，本值才是「最多允许多久送到」。
-            @Value("${wavenest.m2.admission.max-delivery-sec:1800}") long maxDeliverySec) {
+            @Value("${wavenest.m2.admission.max-delivery-sec:1800}") long maxDeliverySec,
+            GoodsMapper goodsMapper) {
         this.predictionService = predictionService;
         this.nestMapper = nestMapper;
         this.dispatchGateService = dispatchGateService;
+        this.goodsMapper = goodsMapper;
         this.segmentGeometry = parseVertices(segmentVertices);
         this.segmentStartS = segmentStartS;
         this.segmentEndS = segmentEndS > segmentStartS
@@ -100,6 +156,58 @@ public class AdmissionInputAssembler {
                 maxPayloadAllTypesKg, maxPayloadMargin, ttlAisMs, vMaxCruiseMs, tHandoverMinSec,
                 wakeMarginSec, suspendRetrySec, horizonSec, weightTolKg, dupWindowSec,
                 maxDeliverySec);
+    }
+
+    /**
+     * 兼容 11-05 序号 2 之前的 19 参构造：不接货物表，接货况判据跳过并可见。
+     *
+     * <p>保留理由与 {@link OrderSubmitRequest} 的 5 参构造器一致：调用点主要在单测里，
+     * 「不关心货况」的用例不该被迫造一张货物桩表。
+     *
+     * @param predictionService  预测服务
+     * @param nestMapper         机巢表
+     * @param dispatchGateService 闸门状态
+     * @param segmentVertices    服务航段折线
+     * @param segmentStartS      服务航段起点弧长，m
+     * @param segmentEndS        服务航段终点弧长，m
+     * @param corridorHalfWidthM 走廊半宽，m
+     * @param cargoWhitelist     货物类型白名单
+     * @param maxPayloadAllTypesKg 全机型载重上界，kg
+     * @param maxPayloadMargin   载重上界裕度
+     * @param ttlAisMs           数据新鲜度 TTL，ms
+     * @param vMaxCruiseMs       最大巡航速度，m/s
+     * @param tHandoverMinSec    交接时长下界，s
+     * @param wakeMarginSec      提前唤醒余量，s
+     * @param suspendRetrySec    暂缓重试周期，s
+     * @param horizonSec         预测时域，s
+     * @param weightTolKg        重复单重量容差，kg
+     * @param dupWindowSec       重复单时间窗，s
+     * @param maxDeliverySec     最大配送时限，s
+     */
+    public AdmissionInputAssembler(
+            PredictionService predictionService,
+            NestMapper nestMapper,
+            DispatchGateService dispatchGateService,
+            String segmentVertices,
+            double segmentStartS,
+            double segmentEndS,
+            double corridorHalfWidthM,
+            String cargoWhitelist,
+            double maxPayloadAllTypesKg,
+            double maxPayloadMargin,
+            long ttlAisMs,
+            double vMaxCruiseMs,
+            double tHandoverMinSec,
+            long wakeMarginSec,
+            long suspendRetrySec,
+            long horizonSec,
+            double weightTolKg,
+            long dupWindowSec,
+            long maxDeliverySec) {
+        this(predictionService, nestMapper, dispatchGateService, segmentVertices, segmentStartS,
+                segmentEndS, corridorHalfWidthM, cargoWhitelist, maxPayloadAllTypesKg,
+                maxPayloadMargin, ttlAisMs, vMaxCruiseMs, tHandoverMinSec, wakeMarginSec,
+                suspendRetrySec, horizonSec, weightTolKg, dupWindowSec, maxDeliverySec, null);
     }
 
     /**
@@ -148,11 +256,74 @@ public class AdmissionInputAssembler {
 
         return new AdmissionPipeline.Input(request, nowMs, ship, snapshotView, nests,
                 new AdmissionPipeline.ServiceSegment(segmentGeometry, segmentStartS, segmentEndS),
-                null /* goodsReady：无数据源，跳过并可见 */,
+                goodsReady(request),
                 !dispatchGateService.isOpen(),
                 priorOrders,
                 null /* connectorAlive：暂无查询口，只按 TTL 判 */,
                 policy);
+    }
+
+    /**
+     * 接货况判据（{@code 80} §3.1.2 ⑦ 状态闸门）——11-05 序号 2 接通。
+     *
+     * <p>判据：该订单的全部货物行 {@code goods.status = 已就绪}，且<b>指定了货巢时</b>
+     * {@code goods.location} 与之一致。返回三值，与 {@link AdmissionPipeline.Input#goodsReady}
+     * 的三态一一对应：
+     * <ul>
+     *   <li>{@code null} —— <b>查无货物行</b>（或未装配货物表）：判据跳过，由判定链记进
+     *       {@code skippedCriteria}。为什么不判 {@code false}：货行由 M6 在下单落库时建，
+     *       尚未接通前「查无行」是<b>数据源缺失</b>而不是「货没好」——按 {@code false} 处理会让
+     *       每一笔正常下单都延后等一个永远不来的 {@code GOODS_READY} 事件，主链停摆。
+     *       这与本类既有的「空着但可见」口径一致。</li>
+     *   <li>{@code false} —— 有货行，但存在一行未就绪，或货不在指定巢：延后等货。</li>
+     *   <li>{@code true} —— 全部就绪（且货巢对得上）。</li>
+     * </ul>
+     *
+     * <p><b>为什么 {@code location} 为空时不算「不在指定巢」</b>：{@code goods.location}
+     * 是 {@code 001_init.sql} §5.3 的可空列（「当前位置：所在巢/迫降点/空中」），
+     * 下单建行时通常不填。若把 NULL 判成「位置不匹配」，那些没填位置就绪的货会永远等不到
+     * 派单——一个可空字段变成全局死锁。故只在 {@code location} 有值时比对；
+     * 要更严可后续由货主侧强制回填，判据本身不必改。
+     *
+     * <p><b>为什么任一行未就绪就整单判否</b>：{@code goods} 允许一单多货行
+     * （{@code idx_goods_order} 非唯一），货齐才叫「可以派」，取 {@code allMatch} 而不是
+     * 「有一行就绪就行」——后者会让半单货先飞走。
+     *
+     * @param request 判定请求（{@code orderId} 与 {@code cargoNestId} 均已归一）
+     * @return {@code null}＝跳过；否则货是否已备好
+     */
+    private Boolean goodsReady(AdmissionPipeline.OrderRequest request) {
+        if (goodsMapper == null) {
+            return null;
+        }
+        List<GoodsEntity> rows;
+        try {
+            rows = goodsMapper.selectList(new LambdaQueryWrapper<GoodsEntity>()
+                    .eq(GoodsEntity::getOrderId, request.orderId()));
+        } catch (RuntimeException e) {
+            // 查库故障不得把下单打成 500：判定链按「未判定」处理，并让运维从日志看见
+            log.warn("查货物就绪状态失败，本次跳过该判据：orderId={} err={}",
+                    request.orderId(), e.getMessage());
+            return null;
+        }
+        if (rows == null || rows.isEmpty()) {
+            log.debug("订单查无货物行，接货况判据跳过：orderId={}", request.orderId());
+            return null;
+        }
+        String wantedNest = request.cargoNestId();
+        for (GoodsEntity row : rows) {
+            if (!GOODS_READY.equals(row.getStatus())) {
+                return false;
+            }
+            String location = row.getLocation();
+            if (wantedNest != null && location != null && !location.isBlank()
+                    && !wantedNest.equals(location.trim())) {
+                log.info("货物已就绪但不在指定巢：orderId={} goodsId={} 位置={} 期望={}",
+                        request.orderId(), row.getGoodsId(), location, wantedNest);
+                return false;
+            }
+        }
+        return true;
     }
 
     /** 判据参数（只读视图，供测试与日志核对生效值）。 */

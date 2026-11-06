@@ -51,7 +51,7 @@ public final class ConstantVelocityPredictor {
     }
 
     /**
-     * 由一条船舶观测外推未来轨迹。
+     * 由一条船舶观测外推未来轨迹（不附前提监测结论，前提记为 {@link PremiseStatus#UNKNOWN}）。
      *
      * @param mmsi    船舶 MMSI
      * @param lon     观测经度
@@ -71,6 +71,43 @@ public final class ConstantVelocityPredictor {
             double cogDeg,
             long t0Ms,
             PredictionParams params) {
+        return predict(mmsi, lon, lat, sogMs, cogDeg, t0Ms, params, null);
+    }
+
+    /**
+     * 由一条船舶观测外推未来轨迹，并附上<b>前提监测结论</b>。
+     *
+     * <p><b>为什么不再无条件写 {@link PremiseStatus#VALID}</b>：本类的输入只有
+     * 经纬度／SOG／COG，<b>没有曲线坐标 {@code s} 与沿程速度 {@code vAlongMs}</b>，
+     * 因此 P0 方向翻转、P2 停车、P3 分汊歧义、P4 受限水域这四条确定性判据一条也判不了。
+     * 在没有任何证据的情况下写 VALID，等于对下游说「这条轨迹的前提已经查过」——
+     * 而下游（M2 接单判定的数据质量、E 组纠偏门槛）正是按 VALID 决定「不必再问」的。
+     * 这是一个<b>不会报错、只会让下游少做事</b>的缺陷，所以宁可为 UNKNOWN。
+     *
+     * <p>调用方若已经把 {@link PremiseMonitor} 跑过（拿到了 {@code s}／{@code vAlongMs}
+     * 与 {@code NavPhaseTracker} 的航行阶段），可把结论从这里传进来；判据本身仍归
+     * {@link PremiseMonitor}，本类只承接、不复判，避免同一组判据两处维护。
+     *
+     * @param mmsi    船舶 MMSI
+     * @param lon     观测经度
+     * @param lat     观测纬度
+     * @param sogMs   对地航速，<b>m/s</b>
+     * @param cogDeg  对地航向，度
+     * @param t0Ms    观测时刻，Unix 毫秒
+     * @param params  预测参数
+     * @param verdict 前提监测结论；{@code null}＝未监测（记为 {@link PremiseStatus#UNKNOWN}）
+     * @return 预测结果
+     * @throws IllegalArgumentException 输入超出物理/地理范围时抛出
+     */
+    public static PredictionResult predict(
+            String mmsi,
+            double lon,
+            double lat,
+            double sogMs,
+            double cogDeg,
+            long t0Ms,
+            PredictionParams params,
+            PremiseMonitor.Verdict verdict) {
 
         validate(mmsi, lon, lat, sogMs, cogDeg);
 
@@ -99,9 +136,11 @@ public final class ConstantVelocityPredictor {
                     t0Ms + tauSec * 1000L, pointLon, pointLat, sigmaAlongM, sigmaCrossM));
         }
 
-        // 简化版恒判前提成立：完整前提监测（80 §3.2.8）排期顺延
+        // 前提结论：有监测结论就用（SUSPECT 经 toStatus 有损映射为 VALID，语义是「前提仍成立」），
+        // 没有就是 UNKNOWN——「没查过」和「查过且成立」必须能被下游区分
+        PremiseStatus premise = verdict == null ? PremiseStatus.UNKNOWN : verdict.toStatus();
         return new PredictionResult(
-                mmsi, t0Ms, courseDeg, params.validitySec(), PremiseStatus.VALID, points);
+                mmsi, t0Ms, courseDeg, params.validitySec(), premise, points);
     }
 
     /** 把任意角度归一到 [0, 360)。 */
