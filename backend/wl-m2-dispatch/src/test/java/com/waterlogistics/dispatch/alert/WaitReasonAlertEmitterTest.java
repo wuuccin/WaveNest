@@ -117,14 +117,15 @@ class WaitReasonAlertEmitterTest {
     }
 
     @Test
-    @DisplayName("emitCargoNestTimeout 写一条货到巢超时告警")
-    void cargoNestTimeout_shouldEmitCargoNestTimeoutAlert() {
-        emitter.emitCargoNestTimeout(ORDER_ID);
-
+    @DisplayName("11-06 序号 1：货到巢超时入口已移除，等待原因两类各自覆盖")
+    void cargoNestTimeoutEntryRemoved_waitReasonsCoverBothAlerts() {
+        emitter.onOrderStateChanged(event(WaitReason.WAIT_CARGO));
         assertEquals(1, alertTable.size());
-        assertEquals(AlertType.CARGO_NEST_TIMEOUT.getValue(), alertTable.get(0).getAlertType());
-        assertEquals(1, mqMessages.size());
-        assertEquals(AlertType.CARGO_NEST_TIMEOUT.getValue(), mqMessages.get(0).alertType());
+        assertEquals(AlertType.WAIT_CARGO_TIMEOUT.getValue(), alertTable.get(0).getAlertType());
+
+        emitter.onOrderStateChanged(event(WaitReason.WAIT_RESOURCE));
+        assertEquals(2, alertTable.size());
+        assertEquals(AlertType.WAIT_RESOURCE.getValue(), alertTable.get(1).getAlertType());
     }
 
     @Test

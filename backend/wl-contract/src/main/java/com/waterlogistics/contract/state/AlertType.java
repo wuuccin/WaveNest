@@ -7,9 +7,14 @@ package com.waterlogistics.contract.state;
  * <p>前五类由 M4 检测产出：M4 消费 {@code data.weather} 并在模块层执行检测与判级，
  * M2 只做决策、不检测、不产告警（U-02 裁定）。
  *
- * <p>后三类为 M2 等待原因透出告警（11-05 序号 2 宋冰鑫）：订单进入等待态时由
+ * <p>后两类为 M2 等待原因透出告警（11-05 序号 2 宋冰鑫）：订单进入等待态时由
  * M2 直接写 alert 表并发 alert.event，不走 M4 检测链路。alert_type 列沿用现有
  * VARCHAR(32)，不新增表、不新增列。
+ *
+ * <p>11-06 序号 1 裁撤「货到巢超时」一类：货物到巢关的锁超时实际走
+ * {@code WAIT_RESOURCE} 分支，该告警类型无生产调用点，只在单测触发。
+ * 对外暴露一个永不触发的告警类型比不实现更糟，故移除；货到巢超时若要成为
+ * 真实告警，需在门关侧补独立超时分支，属后续功能。
  */
 public enum AlertType {
 
@@ -32,10 +37,7 @@ public enum AlertType {
     WAIT_CARGO_TIMEOUT("装货超时"),
 
     /** 等待资源（订单因资源不足转入 WAIT_RESOURCE 等待队列） */
-    WAIT_RESOURCE("等待资源"),
-
-    /** 货到巢超时（货物已到巢但超时未被无人机取走） */
-    CARGO_NEST_TIMEOUT("货到巢超时");
+    WAIT_RESOURCE("等待资源");
 
     private final String value;
 

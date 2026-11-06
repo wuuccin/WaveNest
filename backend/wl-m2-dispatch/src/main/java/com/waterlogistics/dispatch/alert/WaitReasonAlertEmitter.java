@@ -32,15 +32,16 @@ import org.springframework.transaction.event.TransactionalEventListener;
  * {@link WaitReason#WAIT_CARGO} 或 {@link WaitReason#WAIT_RESOURCE} 时，
  * 写一条 {@code alert} 记录并经 {@code alert.event} MQ 推送给前端告警列表。
  *
- * <p>三类等待告警口径：
+ * <p>两类等待告警口径：
  * <ul>
  *   <li>{@link WaitReason#WAIT_CARGO} → {@link AlertType#WAIT_CARGO_TIMEOUT}（装货超时）：
  *       订单因货物未就绪进入等待，货物所在巢时隙锁超时未释放；</li>
  *   <li>{@link WaitReason#WAIT_RESOURCE} → {@link AlertType#WAIT_RESOURCE}（等待资源）：
  *       订单因资源不足转入等待队列；</li>
- *   <li>货到巢超时 → {@link AlertType#CARGO_NEST_TIMEOUT}（货到巢超时）：
- *       由 {@link #emitCargoNestTimeout(String)} 主动调用，触发源在张睿哲序号 2 的货到巢关逻辑。</li>
  * </ul>
+ *
+ * <p>11-06 序号 1：原第三类「货到巢超时」已裁撤（无生产调用点）。
+ * 货物到巢关的锁超时实际走 {@code WAIT_RESOURCE} 分支，由本类按等待原因自动发「等待资源」。
  *
  * <p>去重口径：同一订单同一等待原因在一次等待窗口内只发一条告警；当 waitReason 离开该值
  * （变为 null 或其他等待原因）时清除去重标记，下次重新进入会再发。
@@ -95,25 +96,12 @@ public class WaitReasonAlertEmitter {
     }
 
     /**
-     * 货到巢超时告警入口。
+     * 同一订单同一等待原因在一次等待窗口内只发一条。
      *
-     * <p>触发源在张睿哲序号 2 的货到巢关与锁定释放逻辑：货物已到巢但超时未被无人机取走时，
-     * 由其调用本方法写一条 {@link AlertType#CARGO_NEST_TIMEOUT} 告警。
-     *
-     * @param orderId 订单标识
+     * <p>11-06 序号 1：原「货到巢超时」入口（{@code emitCargoNestTimeout}）已移除。
+     * 该入口在生产链路无调用点——货物到巢关的锁超时实际走 {@code WAIT_RESOURCE} 分支，
+     * 由本类按等待原因自动发「等待资源」告警，不需要独立入口。
      */
-    public void emitCargoNestTimeout(String orderId) {
-        if (orderId == null || orderId.isBlank()) {
-            return;
-        }
-        String key = dedupKey(orderId, AlertType.CARGO_NEST_TIMEOUT);
-        if (!emitted.add(key)) {
-            return;
-        }
-        emit(orderId, AlertType.CARGO_NEST_TIMEOUT);
-    }
-
-    /** 同一订单同一等待原因在一次等待窗口内只发一条。 */
     private void emitIfAbsent(String orderId, WaitReason reason, AlertType type) {
         String key = dedupKey(orderId, type);
         if (!emitted.add(key)) {

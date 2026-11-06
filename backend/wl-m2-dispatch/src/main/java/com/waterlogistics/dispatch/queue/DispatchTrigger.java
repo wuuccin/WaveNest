@@ -5,7 +5,9 @@ import com.waterlogistics.contract.ws.ShipTrajPoint;
 import com.waterlogistics.dispatch.order.OrderSubmittedEvent;
 import com.waterlogistics.dispatch.plan.DispatchOrchestrator;
 import com.waterlogistics.dispatch.prediction.PredictionService;
+import com.waterlogistics.storage.entity.GoodsEntity;
 import com.waterlogistics.storage.entity.OrderTaskEntity;
+import com.waterlogistics.storage.repository.GoodsMapper;
 import com.waterlogistics.storage.repository.OrderTaskMapper;
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -48,20 +50,43 @@ public class DispatchTrigger {
      */
     private static final int BATCH_SIZE = 20;
 
+    /**
+     * 货物初始状态（{@code 23` §6 货物状态机首态）：拣选打包中，未通过就绪检查。
+     * 与 {@code 001_init.sql} §5.3 的列默认值一致。
+     */
+    private static final String GOODS_STATUS_NOT_READY = "未就绪";
+
     private final OrderTaskMapper orderTaskMapper;
+    private final GoodsMapper goodsMapper;
     private final TaskQueueService taskQueueService;
     private final DispatchOrchestrator dispatchOrchestrator;
     private final PredictionService predictionService;
     private final TransactionTemplate transactionTemplate;
 
-    public DispatchTrigger(OrderTaskMapper orderTaskMapper, TaskQueueService taskQueueService,
+    @org.springframework.beans.factory.annotation.Autowired
+    public DispatchTrigger(OrderTaskMapper orderTaskMapper, GoodsMapper goodsMapper,
+            TaskQueueService taskQueueService,
             DispatchOrchestrator dispatchOrchestrator, PredictionService predictionService,
             PlatformTransactionManager transactionManager) {
         this.orderTaskMapper = orderTaskMapper;
+        this.goodsMapper = goodsMapper;
         this.taskQueueService = taskQueueService;
         this.dispatchOrchestrator = dispatchOrchestrator;
         this.predictionService = predictionService;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
+    }
+
+    /**
+     * 兼容构造器：旧 arity（不含 {@code GoodsMapper}），货物行不落库。
+     *
+     * <p>保留给既有单测与调用点；生产装配走含 {@code GoodsMapper} 的构造器。
+     * 未接 {@code GoodsMapper} 时跳过建行，不抛异常——货物档案缺失不该阻断订单落库。
+     */
+    public DispatchTrigger(OrderTaskMapper orderTaskMapper, TaskQueueService taskQueueService,
+            DispatchOrchestrator dispatchOrchestrator, PredictionService predictionService,
+            PlatformTransactionManager transactionManager) {
+        this(orderTaskMapper, null, taskQueueService, dispatchOrchestrator, predictionService,
+                transactionManager);
     }
 
     /**
@@ -106,6 +131,7 @@ public class DispatchTrigger {
                 transactionTemplate.executeWithoutResult(status -> {
                     if (orderTaskMapper.selectById(orderId) == null) {
                         orderTaskMapper.insert(deferred);
+                        insertGoodsRow(event);
                     }
                 });
                 log.info("延后单落库：orderId={} waitReason={} wakeEtaTs={}",
@@ -135,6 +161,7 @@ public class DispatchTrigger {
                     throw new IllegalStateException("订单事件重复投递：" + orderId);
                 }
                 orderTaskMapper.insert(entity);
+                insertGoodsRow(event);
                 // 落库与受理是一笔短事务；编排另起事务，不持有下单写锁。
                 taskQueueService.accept(entity);
             });
@@ -164,6 +191,36 @@ public class DispatchTrigger {
             // 事件由下单请求同步发布；失败留在日志中，由监控和重试链路处理，
             // 不把调度异常伪装成下单接口失败。
         }
+    }
+
+    /**
+     * 建货物行（11-06 序号 1 · 货物档案落库）。
+     *
+     * <p>与订单同事务建「未就绪」行，货物就绪与否交给运营录入（{@code 37} §2 状态维护方划分：
+     * 未就绪 → 已就绪 的写入方是运营侧）。此前全仓无生产代码写 {@code goods}，
+     * 导致带货巢订单永远读不到货物行——货到巢关判未就绪、订单卡在等货待唤醒。
+     *
+     * <p>{@code goods_id} 取 {@code G-{orderId}-1}：一单一货行，标识可由订单号直接推出，
+     * 不另引入随机段，避免重投事件造出第二条货物行。
+     *
+     * <p>{@code location} 只在指定了货巢时有值；未指定货巢留空——空值表示「货还没到某个巢」，
+     * 不是「货在别处」，与接单侧「空 location 不算不在指定巢」的口径一致。
+     *
+     * @param event 订单受理事件，提供订单号、货型、重量、货巢
+     */
+    private void insertGoodsRow(OrderSubmittedEvent event) {
+        if (goodsMapper == null) {
+            // 兼容构造器路径（既有单测）：货物档案缺失不阻断订单落库
+            return;
+        }
+        GoodsEntity goods = new GoodsEntity();
+        goods.setGoodsId("G-" + event.orderId() + "-1");
+        goods.setOrderId(event.orderId());
+        goods.setWeight(event.goodsWeightDecimal());
+        goods.setType(event.goodsType());
+        goods.setStatus(GOODS_STATUS_NOT_READY);
+        goods.setLocation(event.cargoNestId());
+        goodsMapper.insert(goods);
     }
 
     /**
