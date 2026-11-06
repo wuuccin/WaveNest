@@ -6,8 +6,10 @@ import com.waterlogistics.contract.rest.DispatchGate;
 import com.waterlogistics.contract.rest.GateSource;
 import com.waterlogistics.contract.rest.GateStatus;
 import com.waterlogistics.contract.state.OrderStatus;
+import com.waterlogistics.contract.state.GoodsStatus;
 import com.waterlogistics.dispatch.gate.DispatchGateService;
 import com.waterlogistics.dispatch.order.OrderAdmissionService;
+import com.waterlogistics.dispatch.order.CargoReadyService;
 import com.waterlogistics.dispatch.order.OrderSubmitRequest;
 import com.waterlogistics.dispatch.order.OrderSubmitResponse;
 import com.waterlogistics.dispatch.prediction.PredictionService;
@@ -16,6 +18,8 @@ import com.waterlogistics.dispatch.queue.TaskQueueService;
 import com.waterlogistics.dispatch.taskstate.FlightPhaseAdvancer;
 import com.waterlogistics.dispatch.taskstate.FlightPhaseChangedEvent;
 import com.waterlogistics.storage.entity.OrderTaskEntity;
+import com.waterlogistics.storage.entity.GoodsEntity;
+import com.waterlogistics.storage.repository.GoodsMapper;
 import com.waterlogistics.storage.entity.TaskLogEntity;
 import com.waterlogistics.storage.param.SysParamLoader;
 import com.waterlogistics.storage.repository.OrderTaskMapper;
@@ -55,6 +59,8 @@ class SmokeM6M2Test {
     @Autowired
     private OrderTaskMapper orderTaskMapper;
     @Autowired
+    private GoodsMapper goodsMapper;
+    @Autowired
     private TaskLogMapper taskLogMapper;
     @Autowired
     private TaskQueueService taskQueueService;
@@ -62,6 +68,8 @@ class SmokeM6M2Test {
     private DispatchGateService dispatchGateService;
     @Autowired
     private OrderAdmissionService admissionService;
+    @Autowired
+    private CargoReadyService cargoReadyService;
     @Autowired
     private PredictionService predictionService;
     @Autowired
@@ -113,6 +121,7 @@ class SmokeM6M2Test {
                 System.currentTimeMillis() + 3_600_000L, "URGENT"));
         assertThat(resp.accepted()).isTrue();
         String orderId = resp.orderId();
+        assertThat(cargoReadyService.markReady(orderId).accepted()).isTrue();
 
         // 自然触发后订单应已到「已派发」，四字段均有值（C0 完成判据）
         OrderTaskEntity after = orderTaskMapper.selectById(orderId);
@@ -180,6 +189,12 @@ class SmokeM6M2Test {
         OrderTaskEntity forRedispatch = orderTaskMapper.selectById(orderId);
         forRedispatch.setStatus(OrderStatus.DISPATCHED.getValue());
         orderTaskMapper.updateById(forRedispatch);
+        // 旧用例模拟第二个派发周期：第一周期已交付，真实业务不能把同一货物再装机。
+        // 本段只验证周期缓存边界，因此显式重置测试货物夹具。
+        GoodsEntity goodsForSecondCycle = goodsMapper.selectById("G-" + orderId + "-1");
+        goodsForSecondCycle.setStatus(GoodsStatus.READY.getValue());
+        goodsForSecondCycle.setDroneId(null);
+        goodsMapper.updateById(goodsForSecondCycle);
         String droneId = after.getDroneId();
         BigDecimal meetLon = after.getMeetLon();
         BigDecimal meetLat = after.getMeetLat();

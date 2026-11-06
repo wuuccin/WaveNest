@@ -7,6 +7,7 @@ import com.waterlogistics.algo.meeting.GeoApprox;
 import com.waterlogistics.contract.order.OrderView;
 import com.waterlogistics.contract.state.OrderStatus;
 import com.waterlogistics.dispatch.order.OrderStateChangedEvent;
+import com.waterlogistics.dispatch.goods.GoodsLifecycleService;
 import com.waterlogistics.dispatch.rendezvous.NestLookup;
 import com.waterlogistics.dispatch.rendezvous.NestLookup.NestPosition;
 import com.waterlogistics.dispatch.resource.OccupancySlotService;
@@ -134,6 +135,9 @@ public class FlightPhaseAdvancer {
     private final Clock clock;
     private final OccupancySlotService occupancySlotService;
     private final NestLookup nestLookup;
+
+    @Autowired(required = false)
+    private GoodsLifecycleService goodsLifecycleService;
 
     /** orderId → 版本兜底计数器（task_log 自增主键不可用时用）。 */
     private final Map<String, AtomicLong> fallbackVersions = new ConcurrentHashMap<>();
@@ -536,6 +540,13 @@ public class FlightPhaseAdvancer {
                 log.error("订单态与飞行阶段不一致，跳过本次审计：orderId={} 期望 {} → {}",
                         order.getOrderId(), from.getValue(), to.getValue());
                 return;
+            }
+
+            if (to == OrderStatus.OUTBOUND && goodsLifecycleService != null) {
+                goodsLifecycleService.load(order.getOrderId(), order.getDroneId());
+            }
+            if (to == OrderStatus.RETURNING && goodsLifecycleService != null) {
+                goodsLifecycleService.deliver(order.getOrderId(), order.getDroneId());
             }
 
             TaskLogEntity entry = new TaskLogEntity();

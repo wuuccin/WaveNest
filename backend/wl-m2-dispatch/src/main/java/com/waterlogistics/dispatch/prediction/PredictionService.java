@@ -2,7 +2,10 @@ package com.waterlogistics.dispatch.prediction;
 
 import com.waterlogistics.algo.estimation.ConstantVelocityPredictor;
 import com.waterlogistics.algo.estimation.EstimatedPoint;
+import com.waterlogistics.algo.estimation.NavPhaseTracker;
+import com.waterlogistics.algo.estimation.PremiseMonitor;
 import com.waterlogistics.algo.estimation.PredictionResult;
+import com.waterlogistics.algo.estimation.WaterwayGeometry;
 import com.waterlogistics.algo.inflight.HeadingSample;
 import com.waterlogistics.algo.inflight.IntentChangeJudge;
 import com.waterlogistics.contract.mq.AisMessage;
@@ -111,6 +114,37 @@ public class PredictionService {
      * 加 volatile 让「已装配」这件事对其他线程可见，避免读到一个陈旧的 null。
      */
     private volatile PredictionCalibrationService calibration;
+
+    /**
+     * 每船前提监测器与航行阶段机（11-06 序号 2 · 匀速路径接 {@link PremiseMonitor}）。
+     *
+     * <p><b>为什么按船缓存</b>：{@link PremiseMonitor} 的 P0／P1 判据依赖锁定的方向参考
+     * {@code dirRef0} 与航向参考 {@code courseRef}，{@link NavPhaseTracker} 的停车判定依赖
+     * 位移窗口——两者都是<b>逐拍推进</b>的有状态机，每帧新建等于冷启动，判据永远出不来。
+     * 模式照搬精算侧 {@code PrecisePredictionEngine.ShipState}，只是匀速路径没有整份
+     * {@code ShipState}，按需各挂一张 Map。
+     *
+     * <p><b>首帧只建不喂（预热帧）</b>：单帧输入不足以支撑方向／驻留判据，首帧强制出
+     * {@code UNKNOWN}，第二帧起才推进事实层——与「输入不足返回 UNKNOWN」的硬判据对齐，
+     * 也与接入前「匀速路径前提恒 UNKNOWN」的首帧行为无缝衔接。
+     */
+    private final Map<String, PremiseMonitor> premiseMonitors = new ConcurrentHashMap<>();
+
+    private final Map<String, NavPhaseTracker> navPhases = new ConcurrentHashMap<>();
+
+    /** 每船最近一次<b>成功推进</b>前提监测的观测时标，ms；同拍重算不重复推进。 */
+    private final Map<String, Long> premiseLastTsMs = new ConcurrentHashMap<>();
+
+    /** 每船最近一次前提监测结论；同拍重算（同一观测再算一版）时直接复用。 */
+    private final Map<String, PremiseMonitor.Verdict> lastPremiseVerdicts = new ConcurrentHashMap<>();
+
+    /**
+     * 中心线台账读取器（可选依赖）：非空时匀速路径的前提监测用真中心线投影算
+     * 沿航道弧长与走向，P0／P3 判据完整；为空时 P0／P3 退化（见 {@link #advancePremise}）。
+     *
+     * <p>与 {@link #calibration} 同一模式：setter 注入的可选增强，纯算法单测不必造台账。
+     */
+    private volatile CenterlineLedger centerlineLedger;
 
     /** 每船最新快照。key = mmsi。 */
     private final Map<String, PredictionSnapshot> latestSnapshots = new ConcurrentHashMap<>();
@@ -223,6 +257,18 @@ public class PredictionService {
     @Autowired(required = false)
     void bindCalibration(PredictionCalibrationService calibration) {
         this.calibration = calibration;
+    }
+
+    /**
+     * 注入中心线台账读取器（可选依赖，见 {@link #centerlineLedger} 字段说明）。
+     *
+     * <p>setter 注入的理由与 {@link #bindCalibration} 相同：台账实现需要
+     * {@code CenterlinePointMapper}，本类会在纯算法单测里被 {@code new} 出来，
+     * 必需依赖会逼每个测试造一台库。
+     */
+    @Autowired(required = false)
+    void bindCenterlineLedger(CenterlineLedger centerlineLedger) {
+        this.centerlineLedger = centerlineLedger;
     }
 
     /** 当前生效的预测实现。 */
@@ -417,6 +463,10 @@ public class PredictionService {
         // 单位归一：AisMessage 保持源单位（节），算法层统一 SI（m/s）
         double sogMs = ConstantVelocityPredictor.knotsToMs(message.sog());
 
+        // 11-06 序号 2：调匀速预测器前先跑前提监测，结论传入八参重载。
+        // 接入前走七参重载、前提恒 UNKNOWN——诚实但不等于「已接」。
+        PremiseMonitor.Verdict verdict = advancePremise(message, sogMs);
+
         PredictionResult result = ConstantVelocityPredictor.predict(
                 message.mmsi(),
                 message.lon(),
@@ -424,7 +474,8 @@ public class PredictionService {
                 sogMs,
                 message.cog(),
                 message.ts(),
-                settings.toParams());
+                settings.toParams(),
+                verdict);
 
         PredictionSnapshot snapshot = new PredictionSnapshot(
                 result.mmsi(),
@@ -443,6 +494,106 @@ public class PredictionService {
 
         assertStructure(snapshot, "constant");
         return snapshot;
+    }
+
+    /**
+     * 推进一步匀速路径的前提监测（11-06 序号 2）。
+     *
+     * <p><b>结论只做透传，不在本类复判</b>：事实层判据（P0 方向翻转、P1 偏航、P2 停车、
+     * P3 分汊、P4 受限水域）全部住在算法层 {@link PremiseMonitor}，四档映射走既有的
+     * {@code Verdict#toStatus}（在 {@code ConstantVelocityPredictor.predict} 八参重载内发生）。
+     *
+     * <h3>输入从哪来（观测比精算侧薄，逐项写明取舍）</h3>
+     * <ul>
+     *   <li><b>{@code s}（沿航道弧长）与走向</b>：有中心线台账（{@link CenterlineLedger} 已装配）
+     *       时投影观测点取 {@code s} 与该处走向 {@code course(s)}；无台账时退化为
+     *       {@code s = 0}、走向未知。</li>
+     *   <li><b>{@code vAlongMs}（带符号沿航道速度）</b>：有中心线时
+     *       {@code sog · cos(cog − course(s))}——船逆向走时为负，P0 方向翻转判得出来；
+     *       无中心线时没有方向参考可投影，取 {@code sog}（恒正），<b>P0 退化</b>
+     *       （方向参考缺失，判不出翻转），但 P1 偏航仍用观测 COG 对锁定参考判，不受影响。</li>
+     *   <li><b>名义速度</b>：匀速路径没有分段限速来源，取本帧 {@code sog}——
+     *       缺口比 ρ 恒为 0，「减速」态不触发。这是输入变薄后的诚实退化，
+     *       不是把停船判据悄悄关掉：P2 的绝对速度门与位移窗仍然在工作。</li>
+     *   <li><b>分汊／受限水域</b>：本航段无分汊数据源、无锚地多边形判定，恒传 {@code false}
+     *       （P3／P4 由此不触发；精算侧有同样约束）。</li>
+     * </ul>
+     *
+     * <h3>重算路径的保护</h3>
+     * <p>{@link #recompute} 会拿<b>同一条观测</b>再算一版：{@link NavPhaseTracker} 对时间
+     * 未前进抛 {@link IllegalStateException}，不拦就会让重算这一拍炸掉。按观测时标去重——
+     * 同一时标不推进、直接复用上一次结论（同一条观测的前提结论本来就不该变）。
+     *
+     * <p>监测是增强项：任何异常都按「本拍无结论」处理（返回 {@code null}，快照前提记
+     * {@code UNKNOWN}），不让前提监测的意外拦停预测链路——与 {@link #calibrate} 同一口径。
+     *
+     * @param message 本帧观测
+     * @param sogMs   本帧对地航速，m/s（已由调用方从节归一）
+     * @return 本帧前提结论；输入不足（首帧预热）或监测异常时为 {@code null}（记 UNKNOWN）
+     */
+    private PremiseMonitor.Verdict advancePremise(AisMessage message, double sogMs) {
+        String mmsi = message.mmsi();
+        Long lastTs = premiseLastTsMs.get(mmsi);
+        if (lastTs != null && lastTs == message.ts()) {
+            // 同拍重算：同一观测的前提结论不变，复用即可，不重复推进状态机
+            return lastPremiseVerdicts.get(mmsi);
+        }
+        try {
+            WaterwayGeometry centerline = centerlineForPremise();
+            double s = 0.0;
+            double courseDeg = Double.NaN;
+            if (centerline != null) {
+                WaterwayGeometry.Projection projection = centerline.project(message.lon(), message.lat());
+                s = projection.s();
+                courseDeg = centerline.courseDegAt(s);
+            }
+            double vAlongMs = Double.isNaN(courseDeg)
+                    ? sogMs
+                    : sogMs * Math.cos(Math.toRadians(message.cog() - courseDeg));
+
+            PremiseMonitor monitor = premiseMonitors.get(mmsi);
+            if (monitor == null) {
+                // 首帧（预热帧）：只建状态机不喂——单帧输入不足以支撑方向／驻留判据，
+                // 本拍返回 null，快照前提记 UNKNOWN，与接入前首帧行为一致
+                int dirRefSign = vAlongMs >= 0.0 ? 1 : -1;
+                PremiseMonitor created = new PremiseMonitor(PremiseMonitor.Params.defaults(),
+                        dirRefSign, List.of());
+                if (!Double.isNaN(courseDeg)) {
+                    created.lockCourseRef(courseDeg);
+                }
+                premiseMonitors.put(mmsi, created);
+                navPhases.putIfAbsent(mmsi, new NavPhaseTracker(NavPhaseTracker.Params.defaults()));
+                // 预热帧也登记时标：重算路径若拿同一条观测再来，会在这里被去重拦下，
+                // 不会对刚建好的状态机二次推进（NavPhaseTracker 对时间未前进会抛）
+                premiseLastTsMs.put(mmsi, message.ts());
+                return null;
+            }
+
+            NavPhaseTracker navPhase = navPhases.get(mmsi);
+            NavPhaseTracker.Phase phase = navPhase == null ? null : navPhase.update(
+                    new NavPhaseTracker.Observation(message.ts(), s, vAlongMs, sogMs, false));
+            PremiseMonitor.Assessment assessment = monitor.observe(new PremiseMonitor.Observation(
+                    message.ts(), s, vAlongMs, message.cog(), phase, false, false));
+
+            premiseLastTsMs.put(mmsi, message.ts());
+            lastPremiseVerdicts.put(mmsi, assessment.verdict());
+            return assessment.verdict();
+        } catch (RuntimeException e) {
+            // 前提监测是增强项：它的异常绝不能让预测这一拍失败（与 calibrate 同口径）
+            log.warn("匀速路径前提监测推进失败，本拍前提记 UNKNOWN：mmsi={}", mmsi, e);
+            return null;
+        }
+    }
+
+    /**
+     * 取前提监测用的中心线几何；台账未装配或读取失败时返回 {@code null}（判据退化，不抛）。
+     *
+     * <p>台账在装配期读一次后由 {@link CenterlineLedger} 缓存在返回值里，这里每次调用
+     * {@code load()} 只是取回同一个几何对象，不产生逐拍查表。
+     */
+    private WaterwayGeometry centerlineForPremise() {
+        CenterlineLedger ledger = centerlineLedger;
+        return ledger == null ? null : ledger.load();
     }
 
     /** 精算版：点列、主轴方位、有效期、前提与新息序列都来自引擎，不再用配置常量占位。 */
@@ -515,7 +666,8 @@ public class PredictionService {
      *       用观测时刻对 {@code ttlMs} 判，因为观测本身没有有效期字段。</li>
      * </ul>
      *
-     * <p>四个 Map 同步清理：快照、观测、上版航向、版本计数器。版本计数器必须清——
+     * <p>八个 Map 同步清理：快照、观测、上版航向、版本计数器、前提监测器、航行阶段机、
+     * 前提监测时标与最近结论。版本计数器必须清——
      * 若只清快照留着计数器，船再次出现时版本从旧值继续涨，前端按「版本跳变＝换了一版」的
      * 假设会漏判；清掉后重新从 1 起，与「新会话」的语义一致。
      *
@@ -545,6 +697,12 @@ public class PredictionService {
             lastObservations.remove(mmsi);
             lastObservedCog.remove(mmsi);
             versionCounters.remove(mmsi);
+            // 前提监测三张表同步清理（11-06 序号 2）：状态机与版本计数器同理，
+            // 船再次出现时按「新会话」重新锁定方向参考，而不是沿用失联前的旧结论
+            premiseMonitors.remove(mmsi);
+            navPhases.remove(mmsi);
+            premiseLastTsMs.remove(mmsi);
+            lastPremiseVerdicts.remove(mmsi);
         }
         log.info("清理失联船舶预测状态：{} 条（{}），剩余在跟踪 {} 条",
                 stale.size(), stale, latestSnapshots.size());

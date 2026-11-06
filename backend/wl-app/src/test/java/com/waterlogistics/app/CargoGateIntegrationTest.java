@@ -6,11 +6,13 @@ import com.waterlogistics.contract.mq.AisMessage;
 import com.waterlogistics.dispatch.order.CargoReadyService;
 import com.waterlogistics.dispatch.prediction.PredictionService;
 import com.waterlogistics.dispatch.queue.CargoGateWaker;
+import com.waterlogistics.dispatch.queue.CargoNestGate;
 import com.waterlogistics.dispatch.queue.TaskQueueService;
 import com.waterlogistics.storage.entity.GoodsEntity;
 import com.waterlogistics.storage.entity.NestEntity;
 import com.waterlogistics.storage.entity.OccupancySlotEntity;
 import com.waterlogistics.storage.entity.OrderTaskEntity;
+import com.waterlogistics.storage.param.SysParamLoader;
 import com.waterlogistics.storage.repository.GoodsMapper;
 import com.waterlogistics.storage.repository.NestMapper;
 import com.waterlogistics.storage.repository.OccupancySlotMapper;
@@ -41,6 +43,10 @@ import org.springframework.transaction.annotation.Transactional;
  *       wait_reason=WAIT_RESOURCE 且锁已释放（alert 行由宋冰鑫序号 2 负责）；</li>
  *   <li><b>毒帧死信</b>：坏字节帧进 AIS 队列一次即落 DLQ，不重投。</li>
  * </ol>
+ *
+ * <p><b>11-06 复核（张睿哲）</b>：把「同批两单的优先级序与紧期限优先」「两个
+ * {@code sys_param} 取值与 012 登记一致」两条判据各自固化为独立用例，
+ * 队列逻辑本身未改。</p>
  *
  * <p>DB 侧测试事务回滚；MQ 侧毒帧落 DLQ 不清理（死信本就是给人看的）。
  * 自带轮询关掉（cargo-gate-poll-enabled=false），放行/超时都由测试手动 tick 驱动。</p>
@@ -76,6 +82,10 @@ class CargoGateIntegrationTest {
     private OccupancySlotMapper occupancySlotMapper;
     @Autowired
     private RabbitTemplate rabbitTemplate;
+    @Autowired
+    private CargoNestGate cargoNestGate;
+    @Autowired
+    private SysParamLoader sysParamLoader;
 
     // ─────────────────────── selectNext 取单序（硬判据 5 前半） ───────────────────────
 
@@ -95,6 +105,50 @@ class CargoGateIntegrationTest {
         assertThat(picked.indexOf(emergency)).isLessThan(picked.indexOf(urgent));
         assertThat(picked.indexOf(urgent)).isLessThan(picked.indexOf(normalEarly));
         assertThat(picked.indexOf(normalEarly)).isLessThan(picked.indexOf(normalLate));
+    }
+
+    // ─────────────── 11-06 张睿哲：同批两单的优先级序与紧期限优先 ───────────────
+
+    @Test
+    @DisplayName("同批两单：应急单期限更晚仍先于常规单（优先级压过期限）")
+    void selectNext_twoOrders_priorityBeatsDeadline() {
+        LocalDateTime now = LocalDateTime.now();
+        String normalTight = insertWaitingOrder("NORMAL", now.plusMinutes(30), now.minusMinutes(2));
+        String emergencyLoose = insertWaitingOrder("EMERGENCY", now.plusHours(3), now.minusMinutes(1));
+
+        List<String> picked = taskQueueService.selectNext(500).stream()
+                .map(OrderTaskEntity::getOrderId).toList();
+
+        assertThat(picked.indexOf(emergencyLoose)).isLessThan(picked.indexOf(normalTight));
+    }
+
+    @Test
+    @DisplayName("同批两单：同优先级紧期限先取（expected_time 早者先）")
+    void selectNext_twoOrders_tighterDeadlineFirst() {
+        LocalDateTime now = LocalDateTime.now();
+        String loose = insertWaitingOrder("URGENT", now.plusHours(3), now.minusMinutes(2));
+        String tight = insertWaitingOrder("URGENT", now.plusMinutes(20), now.minusMinutes(1));
+
+        List<String> picked = taskQueueService.selectNext(500).stream()
+                .map(OrderTaskEntity::getOrderId).toList();
+
+        assertThat(picked.indexOf(tight)).isLessThan(picked.indexOf(loose));
+    }
+
+    // ─────────────── 11-06 张睿哲：两个参数在 sys_param 的取值与代码缺省一致 ───────────────
+
+    @Test
+    @DisplayName("sys_param：cargoLockTimeoutSec=300、delayPenaltyWeight=1.0，与 012 登记一致并被实际读取")
+    void cargoGateParams_match012Registration() {
+        assertThat(sysParamLoader.getInt(CargoNestGate.LOCK_TIMEOUT_KEY, -1))
+                .as("cargoLockTimeoutSec 须与 deploy/sql/012_cargo_gate_params.sql 的 300 一致")
+                .isEqualTo(300);
+        assertThat(cargoNestGate.lockTimeoutSec())
+                .as("门关与轮询实际读取到的锁超时须与库内参数一致")
+                .isEqualTo(300);
+        assertThat(sysParamLoader.getDouble("delayPenaltyWeight", -1.0))
+                .as("delayPenaltyWeight 须与 deploy/sql/012_cargo_gate_params.sql 的 1.0 一致")
+                .isEqualTo(1.0);
     }
 
     // ─────────────────────── 货后到链路（硬判据 2） ───────────────────────
