@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.waterlogistics.contract.mq.AisMessage;
 import com.waterlogistics.contract.state.OrderStatus;
 import com.waterlogistics.dispatch.order.OrderAdmissionService;
+import com.waterlogistics.dispatch.order.CargoReadyService;
 import com.waterlogistics.dispatch.order.OrderSubmitRequest;
 import com.waterlogistics.dispatch.order.OrderSubmitResponse;
 import com.waterlogistics.dispatch.prediction.PredictionService;
@@ -46,6 +47,8 @@ class OrderEtaDeadlineIntegrationTest {
     @Autowired
     private OrderAdmissionService admissionService;
     @Autowired
+    private CargoReadyService cargoReadyService;
+    @Autowired
     private PredictionService predictionService;
     @Autowired
     private OrderTaskMapper orderTaskMapper;
@@ -86,6 +89,7 @@ class OrderEtaDeadlineIntegrationTest {
         OrderSubmitResponse resp = admissionService.submit(new OrderSubmitRequest(
                 MMSI, 5.5, "医疗物资", null, "URGENT"));
         assertThat(resp.accepted()).isTrue();
+        assertThat(cargoReadyService.markReady(resp.orderId()).accepted()).isTrue();
 
         // 把会面时刻回拨到已过时刻，让飞行阶段推进器一次补记完整飞行
         OrderTaskEntity row = orderTaskMapper.selectById(resp.orderId());
