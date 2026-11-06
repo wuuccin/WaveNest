@@ -6,6 +6,7 @@ import com.waterlogistics.contract.order.OrderView;
 import com.waterlogistics.contract.rest.WaitReason;
 import com.waterlogistics.contract.state.OrderStatus;
 import com.waterlogistics.dispatch.gate.DispatchGateService;
+import com.waterlogistics.dispatch.goods.GoodsLifecycleService;
 import com.waterlogistics.dispatch.order.OrderStateChangedEvent;
 import com.waterlogistics.storage.entity.DroneEntity;
 import com.waterlogistics.storage.entity.OrderTaskEntity;
@@ -61,6 +62,8 @@ public class TaskQueueService {
     private final ApplicationEventPublisher eventPublisher;
     /** 货到巢关（11-05 序号 2）；老构造器为 null 时跳过（仅影响早期单测） */
     private final CargoNestGate cargoNestGate;
+    @Autowired(required = false)
+    private GoodsLifecycleService goodsLifecycleService;
     private final Map<String, AtomicLong> fallbackVersions = new ConcurrentHashMap<>();
 
     public TaskQueueService(OrderTaskMapper orderTaskMapper, TaskLogMapper taskLogMapper,
@@ -286,6 +289,7 @@ public class TaskQueueService {
      *
      * @throws IllegalStateException 订单不存在，或状态不属于末段交接中、返航中、已完成
      */
+    @Transactional
     public void markHandoverDone(String orderId) {
         OrderTaskEntity order = orderTaskMapper.selectById(orderId);
         if (order == null) {
@@ -328,6 +332,10 @@ public class TaskQueueService {
         if (updated != 1) {
             throw new IllegalStateException("订单 " + order.getOrderId()
                     + " 状态冲突：从 " + from.getValue() + " 流转到 " + to.getValue() + " 失败");
+        }
+        if (from == OrderStatus.HANDOVER && to == OrderStatus.RETURNING
+                && goodsLifecycleService != null) {
+            goodsLifecycleService.deliver(order.getOrderId(), order.getDroneId());
         }
         order.setStatus(to.getValue());
         order.setWaitReason(waitReasonCode);

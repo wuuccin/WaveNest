@@ -10,6 +10,7 @@ import com.waterlogistics.algo.inflight.IntentChangeSignal;
 import com.waterlogistics.algo.inflight.NestCandidate;
 import com.waterlogistics.contract.state.OrderStatus;
 import com.waterlogistics.dispatch.homecoming.HomecomingService;
+import com.waterlogistics.dispatch.goods.GoodsLifecycleService;
 import com.waterlogistics.dispatch.plan.DispatchOrchestrator;
 import com.waterlogistics.dispatch.queue.TaskQueueService;
 import java.util.EnumSet;
@@ -17,6 +18,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
@@ -59,6 +61,8 @@ public class RescheduleService {
 
     /** 选机→会面→派发 共用编排（C0 抽出，10-21；首派与重派同一串法） */
     private final DispatchOrchestrator dispatchOrchestrator;
+    @Autowired(required = false)
+    private GoodsLifecycleService goodsLifecycleService;
 
     public RescheduleService(TaskQueueService taskQueueService,
             HomecomingService homecoming,
@@ -155,6 +159,11 @@ public class RescheduleService {
         // HIGH.32：DTO 只做「快失败」提示，落地前按库里最新状态在<b>同一事务</b>内重校验，
         // 再交给 requeue 的条件更新入口（WHERE status=当前），杜绝检查后状态被并发推进
         requireNotInFlight(cmd.orderId());
+        if (goodsLifecycleService != null) {
+            // 野外迫降由 requireRequeueable 拒绝；仅落巢且回收确认后才写已回收。
+            goodsLifecycleService.recycle(cmd.orderId(), cmd.goodsId(), cmd.droneId(),
+                    cmd.landingPointId());
+        }
         taskQueueService.requeue(cmd.orderId());
     }
 
