@@ -2,6 +2,7 @@ package com.waterlogistics.dispatch.prediction;
 
 import com.waterlogistics.algo.estimation.AisObservationFilter;
 import com.waterlogistics.algo.estimation.AlongTrackKalmanFilter;
+import com.waterlogistics.algo.estimation.CenterlineBend;
 import com.waterlogistics.algo.estimation.ConstantVelocityPredictor;
 import com.waterlogistics.algo.estimation.EstimatedPoint;
 import com.waterlogistics.algo.estimation.LateralOuFilter;
@@ -196,6 +197,16 @@ public class PrecisePredictionEngine implements ResidualSampleSource {
      * 照加会把静止的船预测成漂移。取 0.1 与 AIS 的 {@code sog} 分辨率（0.1 kn）同量级。
      */
     static final double ALONG_BIAS_MIN_SPEED_MS = 0.1;
+
+    /**
+     * 赣江定稿航段典型弯道弦高的量级，m —— <b>只用于注释与日志对照，不参与计算</b>。
+     *
+     * <p>算法：单个弯约 11.3°（0.197 rad），窗宽 {@code Λ = 500 m}，
+     * {@code h = Λ²·κ/8 = Λ·Δψ/8 = 500 × 0.197 / 8 ≈ 12.3 m}。与
+     * {@code sys_param.sigmaEM = 15 m} 同阶，故弯道弦高不可忽略（见
+     * {@link #crossTrackSigmaE}）。计算值一律由 {@code CenterlineBend} 按实际几何给出。
+     */
+    static final double BEND_SIGMA_TYPICAL_M = 12.3;
 
     /**
      * 引擎参数（{@code 80} 附录 B 的建议初值；{@code sys_param} 未登记这些键，按纪律不臆造键名）。
@@ -1009,6 +1020,44 @@ public class PrecisePredictionEngine implements ResidualSampleSource {
         return vAlongMs * biased <= 0.0 ? 0.0 : biased;
     }
 
+    /**
+     * 横向 OU 的稳态标准差 {@code σ_e}：观测口径并入<b>当前弧长处的弯道弦高</b>。
+     *
+     * <h3>为什么 σ_e 不能是常数（11-06 序号 2 · 真航道拓扑约束下的横向 OU 参数标定）</h3>
+     * <p>{@code sys_param.sigmaEM = 15 m} 的语义是「单侧航道内正常横向摆动」——它是从
+     * AIS 横向偏移统计出来的<b>观测量</b>，本身没错。错在把「参考线是折线」这个几何事实
+     * 当成了零：折线用一段长 {@code Λ} 的弦代替半径 {@code 1/κ} 的圆弧，两者的最大横向偏差是
+     * 弦高 {@code h = Λ²·κ/8}（{@link CenterlineBend#sagittaM}）。预测沿折线推进，弯道里每个
+     * 预测点都带着这个偏差，而 {@code σ_cross} 若只反映观测噪声，就会把一条已经压岸的预测
+     * 判成「可信」——{@link MultiStepPredictor#validitySec} 正是拿 {@code σ_cross} 与
+     * {@code wTolM = 40 m} 比的，弯道弦高在赣江场景已达 {@value #BEND_SIGMA_TYPICAL_M} m 量级，
+     * 与 {@code σ_e0} 同阶，忽略它就是系统性低估。
+     *
+     * <h3>为什么只有真中心线才加</h3>
+     * <p>{@code centerline == null} 时参考线是<b>逐船自建</b>的（实测窗口 ＋ 尾端直线延伸），
+     * 它上面的「曲率」来自 AIS 位置噪声造成的折线抖动，没有江道语义——把它算成弯道会给
+     * 一条正常的直线航行船无端加宽带宽，比不加更错。故该退化口径原样返回 {@code σ_e0}，
+     * 行为与 11-06 之前逐位一致。
+     *
+     * <h3>为什么取当前弧长处的曲率、不沿预测时域积分</h3>
+     * <p>{@code σ_e} 是 OU 的<b>稳态</b>参数（回复目标处的散布），物理上属于「船此刻所处的
+     * 水域」；沿 {@code τ} 变化的部分由 {@code σ_cross(τ)} 自带的 {@code α_cross·τ} 与
+     * {@code Var_e(τ)} 承担。若把未来航段的曲率也提前并进稳态，{@code σ_cross(0)} 会跟着变，
+     * 而 {@code τ = 0} 的点就是当前观测本身、误差应为 0——那会造成「当前点也有横向误差」的假象。
+     * 船驶入弯道时本方法逐拍重算，带宽随之抬升，这正是「随曲率变化」的可观测形式。
+     *
+     * @param state 该船状态（取当前弧长 {@code s} 与参考线几何）
+     * @return 参与横向 OU 预测的稳态标准差，m
+     */
+    double crossTrackSigmaE(ShipState state) {
+        double sigmaE0 = settings.sigma0CrossM();
+        if (centerline == null) {
+            return sigmaE0;
+        }
+        return CenterlineBend.sigmaEPredictionM(sigmaE0, params.laneHalfWidthM(),
+                state.geometry, state.along.s());
+    }
+
     private LateralOuFilter.Params lateralParams() {
         LateralOuFilter.Params base = LateralOuFilter.Params.defaults();
         return new LateralOuFilter.Params(
@@ -1045,7 +1094,7 @@ public class PrecisePredictionEngine implements ResidualSampleSource {
                 state.along.covarianceSV(),
                 state.along.varianceV(),
                 MultiStepPredictor.LateralForecast.from(state.lateral, state.lateral.varianceE(),
-                        settings.sigma0CrossM(), params.tauESec()),
+                        crossTrackSigmaE(state), params.tauESec()),
                 state.geometry,
                 speedLimit);
 
