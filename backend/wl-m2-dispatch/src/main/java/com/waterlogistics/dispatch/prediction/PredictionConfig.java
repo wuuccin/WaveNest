@@ -5,6 +5,7 @@ import com.waterlogistics.algo.estimation.WaterwayGeometry;
 import com.waterlogistics.storage.param.SysParamLoader;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.function.DoubleSupplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -70,6 +71,15 @@ public class PredictionConfig {
 
     /** 缺省：快照有效期，s —— {@code sys_param} 尚无此键（不臆造）。 */
     static final long DEFAULT_VALIDITY_SEC = 900L;
+
+    /**
+     * 限速段覆盖长度与中心线总长的容差，m。
+     *
+     * <p>取 1 m 而不是 0：两者都按折线累计长度算，但一条来自配置、一条来自几何，
+     * 末段边界恰好写在「总长」上（如 {@code ...,5780,2.5} 对 5785.4 m 的折线）时，
+     * 差几米属正常写法，不该每次都告警。真正的错位是百米量级。
+     */
+    static final double COVERAGE_TOLERANCE_M = 1.0;
 
     /**
      * 组装预测参数：五个键读 {@code sys_param}，两个未登记键用缺省。
@@ -215,8 +225,61 @@ public class PredictionConfig {
 
         log.info("预测层运行在精算版：观测滤波 ＋ 曲线坐标 ＋ 协方差传播 ＋ 横向 OU（{} = {}）",
                 KEY_MODE, mode.code());
+        WaterwayGeometry centerline = parseCenterline(centerlineSpec);
         return PredictionProfile.precise(settings, assurance, params,
-                parseCenterline(centerlineSpec), speedLimit, alongSpeedBiasSupplier(sysParamLoader));
+                centerline, speedLimitFor(centerline, speedLimit),
+                alongSpeedBiasSupplier(sysParamLoader));
+    }
+
+    /**
+     * 分段限速与中心线的<b>基准一致性</b>闸门（11-06 序号 2 · 卢肄文）。
+     *
+     * <h3>为什么必须有这道闸门</h3>
+     * <p>限速段的 {@code fromS／toS} 是<b>沿中心线的绝对弧长</b>（{@link CenterlineSpeedLimitLookup}
+     * 类注释），它只有在「预测用的参考线 ＝ 同一中心线、同一原点」时才指向正确的位置。
+     * 而引擎有两条参考线来源：
+     * <ol>
+     *   <li>配了 {@code wavenest.m2.prediction.centerline} → 用真中心线，{@code s} 从中心线首点起算；</li>
+     *   <li>没配（或配得不足两点）→ <b>逐船自建</b>参考线（实测窗口 ＋ 尾端直线延伸），
+     *       {@code s} 是「该船本窗首条实测点起算的里程」。</li>
+     * </ol>
+     * <p>第 2 种口径下把限速段照常传进引擎，等于拿「本船自建折线的里程」去查「真中心线的限速表」：
+     * 船、窗、时刻一变，{@code s} 的原点就变，同一个 {@code s} 在不同船上指向完全不同的水域。
+     * 这不是精度问题，是<b>基准错位</b>——限速会在任意位置生效，且不会有任何报错。
+     *
+     * <p>故：中心线缺失时限速<b>整体关闭</b>（回落不限速，与未配置限速同义），并告警说明原因；
+     * 中心线存在但限速段越过总长时不再关闭，只告警——那通常意味着配置按旧折线定的，
+     * 段内部分仍能按段生效，关闭它反而丢掉全部限速。
+     *
+     * @param centerline 参考中心线；为 {@code null} 表示走逐船自建的退化口径
+     * @param speedLimit 装配出的限速查询
+     * @return 与参考线基准一致的限速查询
+     */
+    SpeedLimitLookup speedLimitFor(WaterwayGeometry centerline, SpeedLimitLookup speedLimit) {
+        if (speedLimit == null) {
+            return SpeedLimitLookup.unbounded();
+        }
+        if (!(speedLimit instanceof CenterlineSpeedLimitLookup lookup) || lookup.isUnbounded()) {
+            // 常数限速／不限速没有弧长基准问题，原样透传
+            return speedLimit;
+        }
+        if (centerline == null) {
+            log.warn("分段限速已配置但航道中心线缺失：本次预测改用逐船自建的参考线，"
+                    + "限速段的弧长原点与参考线不同源，已整体关闭分段限速以免按错位置生效"
+                    + "（段覆盖至 {} m；要恢复限速请补 wavenest.m2.prediction.centerline 配置）",
+                    lookup.maxCoveredS());
+            return SpeedLimitLookup.unbounded();
+        }
+        double total = centerline.totalLengthM();
+        double covered = lookup.maxCoveredS();
+        if (covered > total + COVERAGE_TOLERANCE_M) {
+            log.warn("分段限速覆盖至 {} m，超出中心线总长 {} m（差 {} m）：末段落在航段之外、"
+                    + "将按不限速处理。限速段是按另一条折线定的还是中心线换过版本？",
+                    String.format(Locale.ROOT, "%.1f", covered),
+                    String.format(Locale.ROOT, "%.1f", total),
+                    String.format(Locale.ROOT, "%.1f", covered - total));
+        }
+        return speedLimit;
     }
 
     /**

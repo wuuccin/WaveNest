@@ -85,6 +85,29 @@ public final class CenterlineSpeedLimitLookup implements SpeedLimitLookup {
         return switchPointsM.clone();
     }
 
+    /**
+     * 限速段覆盖到的最大弧长 {@code max(toS)}，m；未配置（恒不限速）时返回 0。
+     *
+     * <p><b>为什么模块层需要这个数</b>：限速段的 {@code fromS／toS} 是<b>真中心线的绝对弧长</b>，
+     * 只有与中心线同一原点、同一尺度时才有意义。它一旦大于中心线总长，说明配置是按另一条
+     * 参考线（或旧版折线）定的，末段会落在航段之外、永远不生效。装配处（{@code PredictionConfig}）
+     * 用本方法做这条一致性校验并在装配期告警，而不是等运行时从预测数值上"感觉不对"。
+     *
+     * @return 覆盖到的最大弧长，m
+     */
+    public double maxCoveredS() {
+        double max = 0.0;
+        for (Segment seg : segments) {
+            max = Math.max(max, seg.toS());
+        }
+        return max;
+    }
+
+    /** 是否等价于「恒不限速」（未配置或解析失败时的兜底实例）。 */
+    public boolean isUnbounded() {
+        return segments.isEmpty();
+    }
+
     private static double[] buildSwitchPoints(List<Segment> segments) {
         double[] raw = new double[segments.size() * 2];
         int n = 0;
@@ -101,6 +124,12 @@ public final class CenterlineSpeedLimitLookup implements SpeedLimitLookup {
 
     /**
      * 从配置串解析分段限速；空串或解析失败时返回「恒不限速」的兜底实例。
+     *
+     * <p><b>解析失败一律回落而不是抛出</b>：本类的契约是「一条配置写坏不许把整条预测链路拦停」。
+     * 数字段写坏（{@code "0,2000,abc"}）与段数／区间写坏同属配置错误，语义应一致；
+     * 若让 {@link NumberFormatException} 冒到 {@code @Bean} 装配处，故障会表现为
+     * 「后端起不来」——比降级到不限速严重得多，且现场很难一眼看出根因在这一行 yml。
+     * 装配处据 {@link #isUnbounded()} 与入参非空判断是否告警。
      *
      * @param spec 配置串，格式 {@code "fromS,toS,speedMs;..."}，可为 {@code null} 或空
      * @return 解析出的分段限速；空或非法时等价 {@link SpeedLimitLookup#unbounded()}
@@ -120,9 +149,19 @@ public final class CenterlineSpeedLimitLookup implements SpeedLimitLookup {
             if (parts.length != 3) {
                 return UNBOUNDED;
             }
-            double fromS = Double.parseDouble(parts[0].trim());
-            double toS = Double.parseDouble(parts[1].trim());
-            double speedMs = Double.parseDouble(parts[2].trim());
+            double fromS;
+            double toS;
+            double speedMs;
+            try {
+                fromS = Double.parseDouble(parts[0].trim());
+                toS = Double.parseDouble(parts[1].trim());
+                speedMs = Double.parseDouble(parts[2].trim());
+            } catch (NumberFormatException ex) {
+                return UNBOUNDED;
+            }
+            if (!Double.isFinite(fromS) || !Double.isFinite(toS) || !Double.isFinite(speedMs)) {
+                return UNBOUNDED;
+            }
             if (!(fromS < toS) || !(speedMs > 0.0)) {
                 return UNBOUNDED;
             }
@@ -135,3 +174,4 @@ public final class CenterlineSpeedLimitLookup implements SpeedLimitLookup {
         return list.isEmpty() ? UNBOUNDED : new CenterlineSpeedLimitLookup(list);
     }
 }
+
