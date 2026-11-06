@@ -163,8 +163,15 @@ public final class WaterwayGeometry {
                 bestDistance = distance;
                 bestSegment = i;
                 bestAlongRatio = ratio;
-                // 叉积 > 0 表示点在行进方向左侧；取负号使"右侧为正"
-                bestSignedCrossM = -(segX * pointY - segY * pointX) / Math.sqrt(segLengthSquared);
+                // 叉积 > 0 表示点在行进方向左侧；取负号使"右侧为正"。
+                // 用「点到夹紧点的向量」取模：垂足在段内时它就是垂距（与叉积/段长代数等价）；
+                // 垂足被夹到端点时，叉积/段长给的是法向投影分量（几何上不存在的中轴距离，
+                // 如巢位在折线端点西南侧时只有 216 m，而到端点实距 591 m），必须取模。
+                double crossDx = pointX - closestX;
+                double crossDy = pointY - closestY;
+                double perpendicular = -(segX * crossDy - segY * crossDx)
+                        / Math.sqrt(segLengthSquared);
+                bestSignedCrossM = Math.copySign(Math.hypot(crossDx, crossDy), perpendicular);
             }
         }
 

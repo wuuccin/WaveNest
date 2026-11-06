@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.function.DoubleSupplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -184,6 +185,7 @@ public class PredictionConfig {
     public PredictionProfile predictionProfile(PredictionSettings settings,
             PredictionAssurance assurance,
             SysParamLoader sysParamLoader,
+            ObjectProvider<CenterlineLedger> centerlineLedger,
             @Value("${wavenest.m2.prediction.mode:precise}") String modeCode,
             @Value("${wavenest.m2.prediction.lane-half-width-m:50}") double laneHalfWidthM,
             @Value("${wavenest.m2.prediction.l-tol-m:180}") double lTolM,
@@ -216,7 +218,38 @@ public class PredictionConfig {
         log.info("预测层运行在精算版：观测滤波 ＋ 曲线坐标 ＋ 协方差传播 ＋ 横向 OU（{} = {}）",
                 KEY_MODE, mode.code());
         return PredictionProfile.precise(settings, assurance, params,
-                parseCenterline(centerlineSpec), speedLimit, alongSpeedBiasSupplier(sysParamLoader));
+                resolveCenterline(centerlineLedger, centerlineSpec), speedLimit,
+                alongSpeedBiasSupplier(sysParamLoader));
+    }
+
+    /**
+     * 解析精算参考线：台账优先，配置串兜底，两者皆缺再落实测窗口建线的退化口径。
+     *
+     * <p>优先级（11-06 序号 2）：{@code centerline_point} 台账（{@link CenterlineLedger}，
+     * 表缺失／无行／里程自检不过时返回 {@code null}）→ 配置串
+     * {@code wavenest.m2.prediction.centerline} → {@code null}（引擎退化口径）。
+     * 三级来源的内容都应是同一条赣江定稿折线；台账在前是因为它有版本列与里程自检，
+     * 灌错能在装配期被发现，配置串改了只能靠重启生效且无自检。
+     *
+     * @param centerlineLedger 台账读取器；未装配（纯单测、或引擎侧无 storage 依赖）时跳过
+     * @param centerlineSpec   中心线配置串，格式 {@code "lon,lat;lon,lat;..."}
+     * @return 参考折线；三级来源皆缺时为 {@code null}
+     */
+    private static WaterwayGeometry resolveCenterline(ObjectProvider<CenterlineLedger> centerlineLedger,
+            String centerlineSpec) {
+        CenterlineLedger ledger = centerlineLedger == null ? null : centerlineLedger.getIfAvailable();
+        if (ledger != null) {
+            WaterwayGeometry fromLedger = ledger.load();
+            if (fromLedger != null) {
+                return fromLedger;
+            }
+            log.info("中心线台账不可用，尝试配置串兜底：chart={}", ledger.chartId());
+        }
+        WaterwayGeometry fromSpec = parseCenterline(centerlineSpec);
+        if (fromSpec == null) {
+            log.info("中心线台账与配置串均未提供，精算参考线沿用实测窗口建线的退化口径");
+        }
+        return fromSpec;
     }
 
     /**
