@@ -6,12 +6,14 @@
 
 /* ── 图例线型：点划线用 border 的复合写法做不到，用背景渐变画 ── */
 .map-line-plan-outbound,
+.map-line-plan-transfer,
 .map-line-plan-terminal,
 .map-line-plan-return {
   height: 5px;
   border-top: 0;
   background-repeat: repeat-x;
 }
+.map-line-plan-transfer { background-image: repeating-linear-gradient(90deg, #5b6b7c 0 9px, transparent 9px 15px, #5b6b7c 15px 17px, transparent 17px 23px); }
 .map-line-plan-outbound { background-image: repeating-linear-gradient(90deg, #1d4f85 0 9px, transparent 9px 15px, #1d4f85 15px 17px, transparent 17px 23px); }
 .map-line-plan-terminal { background-image: repeating-linear-gradient(90deg, #9a6414 0 9px, transparent 9px 15px, #9a6414 15px 17px, transparent 17px 23px); }
 .map-line-plan-return   { background-image: repeating-linear-gradient(90deg, #12695a 0 9px, transparent 9px 15px, #12695a 15px 17px, transparent 17px 23px); }
@@ -32,6 +34,7 @@
   box-shadow: 0 2px 6px #0f2a3355;
   pointer-events: none;
 }
+.plan-track-tag-空机转场 { background: #5b6b7c; }
 .plan-track-tag-去程 { background: #1d4f85; }
 .plan-track-tag-末段交接 { background: #9a6414; }
 .plan-track-tag-返程 { background: #12695a; }

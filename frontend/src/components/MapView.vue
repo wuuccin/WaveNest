@@ -372,6 +372,7 @@ onUnmounted(() => { clearTimeout(fallbackTimer); if (map && debugEnabled) map.of
       <span v-if="displayAirspace.some(item => item.kind === 'waterway') || displayAirspace.filter(item => item.kind === 'bridge').length >= 2"><i class="map-line map-line-waterway"></i> 航道参考</span>
       <span v-if="branchRoute"><i class="map-line" :class="branchRoute.type === 'continue' ? 'map-line-continue' : 'map-line-abandon'"></i> {{ branchRoute.type === 'continue' ? '原机改道续送' : '原机带货返航' }}</span>
       <span v-if="prediction.overlay"><i class="map-line" :class="prediction.overlay.premise === 'VALID' ? 'map-line-ship' : 'map-line-change'"></i> 预测看台 · {{ prediction.overlay.mmsi }}</span>
+      <span v-if="planTrack.count"><i class="map-line map-line-plan-transfer"></i> 空机转场</span>
       <span v-if="planTrack.count"><i class="map-line map-line-plan-outbound"></i> 计划去程</span>
       <span v-if="planTrack.count"><i class="map-line map-line-plan-terminal"></i> 计划末段交接</span>
       <span v-if="planTrack.count"><i class="map-line map-line-plan-return"></i> 计划返程</span>

@@ -63,7 +63,7 @@ class RendezvousCoordinatorTest {
     @Test
     void solveFor_shouldReturnMeetPlanWhenSolvable() {
         RendezvousCoordinator coordinator = new RendezvousCoordinator(
-                new StubbedFacade(true), id -> droneContext(), mmsi -> snapshot(), sysParams(), (lon, lat, now) -> null);
+                new StubbedFacade(true), id -> droneContext(), mmsi -> snapshot(), sysParams(), (lon, lat, now) -> null, id -> null);
 
         RendezvousCoordinator.MeetPlan plan = coordinator.solveFor(order(), "COMBO-1", "DRONE-1");
 
@@ -77,11 +77,47 @@ class RendezvousCoordinatorTest {
         assertEquals("1", plan.snapshotVersion(), "快照版本须与 M2 常驻层一致");
     }
 
+    /** 指定货物所在巢时：会面求解起点取货巢，无人机当前巢单独留给转场与返航。 */
+    @Test
+    void solveFor_shouldStartFromCargoNestWhenSpecified() {
+        StubbedFacade facade = new StubbedFacade(true);
+        OrderTaskEntity order = order();
+        order.setCargoNestId("NEST-B");
+        RendezvousCoordinator coordinator = new RendezvousCoordinator(
+                facade, id -> droneContext(), mmsi -> snapshot(), sysParams(), (lon, lat, now) -> null,
+                id -> new NestLookup.NestPosition("NEST-B", 121.5, 30.5));
+
+        RendezvousCoordinator.MeetPlan plan = coordinator.solveFor(order, "COMBO-1", "DRONE-1");
+
+        assertEquals(121.5, plan.nestLon(), 1e-9, "求解起点取货物所在巢经度");
+        assertEquals(30.5, plan.nestLat(), 1e-9, "求解起点取货物所在巢纬度");
+        assertEquals(120.10, plan.droneNestLon(), 1e-9, "无人机当前巢经度单独保留");
+        assertEquals(30.20, plan.droneNestLat(), 1e-9, "无人机当前巢纬度单独保留");
+        assertEquals(121.5, facade.lastCommand().nestLon(), 1e-9, "求解命令起点取货巢");
+        assertEquals(30.5, facade.lastCommand().nestLat(), 1e-9, "求解命令起点取货巢");
+    }
+
+    /** 货物所在巢指定但台账查无坐标：拒绝求解，不得退回无人机当前巢。 */
+    @Test
+    void solveFor_shouldRejectWhenCargoNestMissing() {
+        OrderTaskEntity order = order();
+        order.setCargoNestId("NEST-X");
+        RendezvousCoordinator coordinator = new RendezvousCoordinator(
+                new StubbedFacade(true), id -> droneContext(), mmsi -> snapshot(), sysParams(), (lon, lat, now) -> null,
+                id -> null);
+
+        IllegalStateException thrown = assertThrows(IllegalStateException.class,
+                () -> coordinator.solveFor(order, "COMBO-1", "DRONE-1"));
+
+        assertTrue(thrown.getMessage().contains("货物所在巢"),
+                "须点明是货物所在巢不可用：" + thrown.getMessage());
+    }
+
     /** 台账查无：连求解起点都无从确定，必须在起步阶段就拒绝 */
     @Test
     void solveFor_shouldRejectWhenDroneLedgerMissing() {
         RendezvousCoordinator coordinator = new RendezvousCoordinator(
-                new StubbedFacade(true), id -> null, mmsi -> snapshot(), sysParams(), (lon, lat, now) -> null);
+                new StubbedFacade(true), id -> null, mmsi -> snapshot(), sysParams(), (lon, lat, now) -> null, id -> null);
 
         IllegalStateException thrown = assertThrows(IllegalStateException.class,
                 () -> coordinator.solveFor(order(), "COMBO-1", "DRONE-X"));
@@ -94,7 +130,7 @@ class RendezvousCoordinatorTest {
     @Test
     void solveFor_shouldRejectWhenSnapshotMissing() {
         RendezvousCoordinator coordinator = new RendezvousCoordinator(
-                new StubbedFacade(true), id -> droneContext(), mmsi -> null, sysParams(), (lon, lat, now) -> null);
+                new StubbedFacade(true), id -> droneContext(), mmsi -> null, sysParams(), (lon, lat, now) -> null, id -> null);
 
         IllegalStateException thrown = assertThrows(IllegalStateException.class,
                 () -> coordinator.solveFor(order(), "COMBO-1", "DRONE-1"));
@@ -107,7 +143,7 @@ class RendezvousCoordinatorTest {
     @Test
     void solveFor_shouldRejectWhenUnsolvable() {
         RendezvousCoordinator coordinator = new RendezvousCoordinator(
-                new StubbedFacade(false), id -> droneContext(), mmsi -> snapshot(), sysParams(), (lon, lat, now) -> null);
+                new StubbedFacade(false), id -> droneContext(), mmsi -> snapshot(), sysParams(), (lon, lat, now) -> null, id -> null);
 
         IllegalStateException thrown = assertThrows(IllegalStateException.class,
                 () -> coordinator.solveFor(order(), "COMBO-1", "DRONE-1"));
@@ -122,7 +158,7 @@ class RendezvousCoordinatorTest {
         StubbedFacade facade = new StubbedFacade(true);
         RendezvousCoordinator coordinator = new RendezvousCoordinator(
                 facade, id -> droneContext(), mmsi -> snapshot(), sysParams(),
-                (lon, lat, now) -> new WeatherSnapshotPort.LatestWind(4.5, 300.0, MEET_T_MS));
+                (lon, lat, now) -> new WeatherSnapshotPort.LatestWind(4.5, 300.0, MEET_T_MS), id -> null);
 
         coordinator.solveFor(order(), "COMBO-1", "DRONE-1");
 
@@ -151,7 +187,7 @@ class RendezvousCoordinatorTest {
             }
         };
         RendezvousCoordinator coordinator = new RendezvousCoordinator(
-                facade, id -> droneContext(), mmsi -> snapshot(), params, (lon, lat, now) -> null);
+                facade, id -> droneContext(), mmsi -> snapshot(), params, (lon, lat, now) -> null, id -> null);
 
         coordinator.solveFor(order(), "COMBO-1", "DRONE-1");
 
@@ -166,11 +202,11 @@ class RendezvousCoordinatorTest {
         RendezvousCoordinator headwind = new RendezvousCoordinator(
                 new RendezvousFacade(mmsi -> movingSnapshot(), id -> null)::solve,
                 id -> droneContextAt(15.0), mmsi -> movingSnapshot(), sysParams(),
-                (lon, lat, now) -> new WeatherSnapshotPort.LatestWind(3.0, 90.0, MEET_T_MS));
+                (lon, lat, now) -> new WeatherSnapshotPort.LatestWind(3.0, 90.0, MEET_T_MS), id -> null);
         RendezvousCoordinator tailwind = new RendezvousCoordinator(
                 new RendezvousFacade(mmsi -> movingSnapshot(), id -> null)::solve,
                 id -> droneContextAt(15.0), mmsi -> movingSnapshot(), sysParams(),
-                (lon, lat, now) -> new WeatherSnapshotPort.LatestWind(3.0, 270.0, MEET_T_MS));
+                (lon, lat, now) -> new WeatherSnapshotPort.LatestWind(3.0, 270.0, MEET_T_MS), id -> null);
 
         RendezvousCoordinator.MeetPlan head = headwind.solveFor(order(), "COMBO-1", "DRONE-1");
         RendezvousCoordinator.MeetPlan tail = tailwind.solveFor(order(), "COMBO-1", "DRONE-1");
@@ -186,11 +222,11 @@ class RendezvousCoordinatorTest {
         RendezvousCoordinator headwind = new RendezvousCoordinator(
                 new RendezvousFacade(mmsi -> movingSnapshot(), id -> null)::solve,
                 id -> droneContextAt(15.0), mmsi -> movingSnapshot(), sysParams(),
-                new WeatherSnapshotAdapter(storeWithWind(now, 90.0)));
+                new WeatherSnapshotAdapter(storeWithWind(now, 90.0)), id -> null);
         RendezvousCoordinator tailwind = new RendezvousCoordinator(
                 new RendezvousFacade(mmsi -> movingSnapshot(), id -> null)::solve,
                 id -> droneContextAt(15.0), mmsi -> movingSnapshot(), sysParams(),
-                new WeatherSnapshotAdapter(storeWithWind(now, 270.0)));
+                new WeatherSnapshotAdapter(storeWithWind(now, 270.0)), id -> null);
 
         RendezvousCoordinator.MeetPlan head = headwind.solveFor(order(), "COMBO-1", "DRONE-1");
         RendezvousCoordinator.MeetPlan tail = tailwind.solveFor(order(), "COMBO-1", "DRONE-1");

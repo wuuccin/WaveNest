@@ -80,15 +80,18 @@ public class RendezvousCoordinator {
     private final TrajectorySnapshotPort snapshotPort;
     private final SysParamLoader sysParamLoader;
     private final WeatherSnapshotPort weatherSnapshotPort;
+    private final NestLookup nestLookup;
 
     public RendezvousCoordinator(RendezvousPort rendezvousPort,
             DroneContextPort droneContextPort, TrajectorySnapshotPort snapshotPort,
-            SysParamLoader sysParamLoader, WeatherSnapshotPort weatherSnapshotPort) {
+            SysParamLoader sysParamLoader, WeatherSnapshotPort weatherSnapshotPort,
+            NestLookup nestLookup) {
         this.rendezvousPort = rendezvousPort;
         this.droneContextPort = droneContextPort;
         this.snapshotPort = snapshotPort;
         this.sysParamLoader = sysParamLoader;
         this.weatherSnapshotPort = weatherSnapshotPort;
+        this.nestLookup = nestLookup;
     }
 
     /**
@@ -100,27 +103,43 @@ public class RendezvousCoordinator {
      * @param meetTime 会面时刻（组合级回填与航迹起点推算的依据）
      * @param solutionId 算法层解标识（留痕用）
      * @param snapshotVersion 求解所用快照版本（与 M2 常驻层一致，便于事后核对）
-     * @param nestLon 执行机归属机巢经度
-     * @param nestLat 执行机归属机巢纬度
+     * @param nestLon 求解起点机巢经度（有货物所在巢时取货物所在巢，否则取无人机当前所在巢）
+     * @param nestLat 求解起点机巢纬度
      * @param droneSpeedMs 执行机巡航速度
      * @param handoverEndLon 交接完成位置经度
      * @param handoverEndLat 交接完成位置纬度
      * @param terminalSpeedMs 末段伴飞速度
+     * @param droneNestLon 无人机当前所在巢经度（返航落点与空机转场起点）
+     * @param droneNestLat 无人机当前所在巢纬度
      */
     public record MeetPlan(double meetLon, double meetLat, LocalDateTime meetTime,
             String solutionId, String snapshotVersion,
             double nestLon, double nestLat, double droneSpeedMs,
-            double handoverEndLon, double handoverEndLat, double terminalSpeedMs) {
+            double handoverEndLon, double handoverEndLat, double terminalSpeedMs,
+            double droneNestLon, double droneNestLat) {
+
+        /** 兼容构造：不区分求解起点与无人机当前巢（无空机转场）。 */
+        public MeetPlan(double meetLon, double meetLat, LocalDateTime meetTime,
+                String solutionId, String snapshotVersion,
+                double nestLon, double nestLat, double droneSpeedMs,
+                double handoverEndLon, double handoverEndLat, double terminalSpeedMs) {
+            this(meetLon, meetLat, meetTime, solutionId, snapshotVersion,
+                    nestLon, nestLat, droneSpeedMs, handoverEndLon, handoverEndLat, terminalSpeedMs,
+                    nestLon, nestLat);
+        }
     }
 
     /**
      * 为某订单＋某候选组合求会面点（M2 第 3 步 · 判「追得上」，《22-接口契约》§5）。
      *
+     * <p>求解起点优先取订单的货物所在巢；订单未指定货物所在巢时取无人机当前所在巢。
+     * 货物所在巢已指定但台账查无坐标时拒绝求解，不退回无人机当前所在巢。
+     *
      * @param order   目标订单（取 {@code shipMmsi}）
      * @param comboId 候选组合标识（会面点为组合级产物）
      * @param droneId 执行机（用于反查机巢起点与机型速度）
      * @return 会面方案
-     * @throws IllegalStateException 台账查不到／快照缺失／求解无解——<b>三种情况都不得静默放行</b>：
+     * @throws IllegalStateException 台账查不到／快照缺失／货物所在巢查无坐标／求解无解——<b>四种情况都不得静默放行</b>：
      *         无解若按「now＋固定缓冲」派发，等于用一个假的会面时刻把货送出去，
      *         与 {@code TaskQueueService#dispatch} 的真实回填语义冲突。
      */
@@ -130,6 +149,8 @@ public class RendezvousCoordinator {
             throw new IllegalStateException("执行机 " + droneId + " 台账或归属机巢查无，会面求解无从起步");
         }
 
+        NestLookup.NestPosition start = resolveStartNest(order, drone);
+
         String shipMmsi = order.getShipMmsi();
         ShipTrackSnapshot snapshot = snapshotPort.latest(shipMmsi);
         if (snapshot == null) {
@@ -138,16 +159,23 @@ public class RendezvousCoordinator {
         }
 
         long nowMs = System.currentTimeMillis();
+        // 空机转场也占时间：求解时间原点后移转场时长，避免按「机已在货巢」求出
+        // meet ≈ now + 去程，再反推出落在过去的起飞时刻。
+        double transferDistanceM = GeoApprox.distanceM(
+                drone.nestLon(), drone.nestLat(), start.lon(), start.lat());
+        long transferMs = Math.max(0L, Math.round(
+                transferDistanceM / drone.cruiseSpeedMs() * 1000.0));
+        long solveStartMs = nowMs + transferMs;
         RendezvousCommand command = new RendezvousCommand(
                 comboId,
                 shipMmsi,
                 snapshot.version(),
-                drone.nestLon(),
-                drone.nestLat(),
+                start.lon(),
+                start.lat(),
                 drone.cruiseSpeedMs(),
-                representativeWind(drone.nestLon(), drone.nestLat(), nowMs),
-                nowMs,
-                nowMs + sysParamLoader.getInt(HORIZON_SEC_KEY, DEFAULT_HORIZON_SEC) * 1000L,
+                representativeWind(start.lon(), start.lat(), nowMs),
+                solveStartMs,
+                solveStartMs + sysParamLoader.getInt(HORIZON_SEC_KEY, DEFAULT_HORIZON_SEC) * 1000L,
                 sysParamLoader.getInt(WINDOW_MARGIN_SEC_KEY, DEFAULT_WINDOW_MARGIN_SEC),
                 sysParamLoader.getDouble(EPSILON_SEC_KEY, DEFAULT_EPSILON_SEC),
                 sysParamLoader.getInt(MAX_ITER_KEY, DEFAULT_MAX_ITER));
@@ -178,12 +206,34 @@ public class RendezvousCoordinator {
                 toLocalDateTime(meetMs),
                 solution.solutionId(),
                 solution.snapshotVersion(),
-                drone.nestLon(),
-                drone.nestLat(),
+                start.lon(),
+                start.lat(),
                 drone.cruiseSpeedMs(),
                 handoverEndLon,
                 handoverEndLat,
-                terminalSpeedMs);    }
+                terminalSpeedMs,
+                drone.nestLon(),
+                drone.nestLat());
+    }
+
+    /**
+     * 求解起点：有货物所在巢时取货物所在巢，否则取无人机当前所在巢。
+     *
+     * <p>货物所在巢已指定但台账查无坐标时直接拒绝，不退回无人机当前所在巢。
+     * 退回会把「货在北巢、机在南巢」的空机转场段凭空抹掉，现场看不出异常。
+     */
+    private NestLookup.NestPosition resolveStartNest(OrderTaskEntity order, DroneContext drone) {
+        String cargoNestId = order.getCargoNestId();
+        if (cargoNestId == null || cargoNestId.isBlank()) {
+            return new NestLookup.NestPosition(drone.currentNestId(), drone.nestLon(), drone.nestLat());
+        }
+        NestLookup.NestPosition cargo = nestLookup.find(cargoNestId.trim());
+        if (cargo == null) {
+            throw new IllegalStateException("订单 " + order.getOrderId() + " 货物所在巢 "
+                    + cargoNestId + " 台账查无坐标，会面求解拒绝：不得退回无人机当前所在巢");
+        }
+        return cargo;
+    }
 
     /**
      * 代表风况。

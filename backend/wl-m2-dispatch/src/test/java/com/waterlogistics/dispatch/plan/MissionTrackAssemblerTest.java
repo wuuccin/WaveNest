@@ -21,6 +21,8 @@ class MissionTrackAssemblerTest {
     private static final ZoneId ZONE = ZoneId.of("Asia/Shanghai");
     private static final double NEST_LON = 115.848;
     private static final double NEST_LAT = 28.642;
+    private static final double DRONE_NEST_LON = 115.858;
+    private static final double DRONE_NEST_LAT = 28.652;
     private static final double MEET_LON = 115.870;
     private static final double MEET_LAT = 28.680;
     private static final double HANDOVER_LON = 115.8701;
@@ -60,10 +62,58 @@ class MissionTrackAssemblerTest {
         assertNotNull(frame.segments().get(2).points().get(1).tMs());
     }
 
+    @Test
+    void assemble_shouldAddTransferSegmentWhenCargoNestDiffers() {
+        StubPort port = new StubPort();
+        MissionTrackAssembler assembler = new MissionTrackAssembler(port, new SysParamLoader(null));
+        MeetPlan plan = planWithTransfer();
+
+        PlanTrackFrame frame = assembler.assemble("ORD-2", "COMBO-2", plan);
+
+        assertEquals(4, frame.segments().size(), "货巢≠机巢时去程拆为转场与取货后去程两段");
+        assertEquals(PlanTrackFrame.SEGMENT_TRANSFER, frame.segments().get(0).kind(), "转场使用独立分段词");
+        assertEquals(PlanTrackFrame.SEGMENT_OUTBOUND, frame.segments().get(1).kind(), "取货后去程用去程口径");
+        assertEquals(PlanTrackFrame.SEGMENT_TERMINAL, frame.segments().get(2).kind());
+        assertEquals(PlanTrackFrame.SEGMENT_RETURN, frame.segments().get(3).kind());
+
+        assertEquals(4, port.commands.size(), "转场、去程、末段、返程各调一次航迹生成");
+        assertEquals(DRONE_NEST_LON, port.commands.get(0).startLon(), 1e-9, "转场从无人机当前巢起飞");
+        assertEquals(DRONE_NEST_LAT, port.commands.get(0).startLat(), 1e-9);
+        assertEquals(NEST_LON, port.commands.get(0).endLon(), 1e-9, "转场终点为货物所在巢");
+        assertEquals(NEST_LAT, port.commands.get(0).endLat(), 1e-9);
+        assertEquals(NEST_LON, port.commands.get(1).startLon(), 1e-9, "取货后去程从货巢起飞");
+        assertEquals(NEST_LAT, port.commands.get(1).startLat(), 1e-9);
+        assertEquals(DRONE_NEST_LON, port.commands.get(3).endLon(), 1e-9, "返程回无人机当前巢");
+        assertEquals(DRONE_NEST_LAT, port.commands.get(3).endLat(), 1e-9);
+
+        long meetMs = plan.meetTime().atZone(ZONE).toInstant().toEpochMilli();
+        long transferSec = Math.max(1L, Math.round(GeoApprox.distanceM(
+                DRONE_NEST_LON, DRONE_NEST_LAT, NEST_LON, NEST_LAT) / plan.droneSpeedMs()));
+        long outboundSec = Math.max(1L, Math.round(GeoApprox.distanceM(
+                NEST_LON, NEST_LAT, MEET_LON, MEET_LAT) / plan.droneSpeedMs()));
+        assertEquals(meetMs - (transferSec + outboundSec) * 1000L, port.commands.get(0).startMs(),
+                "起飞时刻按转场加去程时长反推");
+        assertEquals(port.commands.get(0).startMs() + 60_000L, port.commands.get(1).startMs(),
+                "取货后去程接转场末点");
+        assertEquals(port.commands.get(1).startMs() + 60_000L, port.commands.get(2).startMs(),
+                "末段接去程末点");
+        assertEquals(port.commands.get(2).startMs() + 60_000L, port.commands.get(3).startMs(),
+                "返程接末段末点");
+
+        assertEquals(3, frame.segments().get(0).points().size(), "转场保留首点");
+        assertEquals(2, frame.segments().get(1).points().size(), "取货后去程跳过重复的边界首点");
+    }
+
     private static MeetPlan plan() {
         return new MeetPlan(MEET_LON, MEET_LAT, LocalDateTime.of(2026, 11, 3, 12, 0),
                 "SOL-1", "v1", NEST_LON, NEST_LAT, 12.0,
                 HANDOVER_LON, HANDOVER_LAT, 4.12);
+    }
+
+    private static MeetPlan planWithTransfer() {
+        return new MeetPlan(MEET_LON, MEET_LAT, LocalDateTime.of(2026, 11, 3, 12, 0),
+                "SOL-2", "v1", NEST_LON, NEST_LAT, 12.0,
+                HANDOVER_LON, HANDOVER_LAT, 4.12, DRONE_NEST_LON, DRONE_NEST_LAT);
     }
 
     private static final class StubPort implements MissionTrackPort {

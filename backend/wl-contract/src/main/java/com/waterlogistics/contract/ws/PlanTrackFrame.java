@@ -5,9 +5,11 @@ import java.util.List;
 /**
  * 规划航迹帧 {@code plan_track}——依据《22-接口契约》§4。
  *
- * <p>它把一次派发产出的三段航迹（去程／末段交接／返程）推给前端，供大屏按分段着色。
- * 与 {@code ship_traj} 的分工：本帧是<b>计划航迹</b>（机巢到会面点、会面点到交接点、
- * 交接点到归巢），{@code ship_traj} 是<b>船舶预测轨迹</b>，两者不可互相替代。
+ * <p>它把一次派发产出的三段主航迹（去程／末段交接／返程）推给前端，供大屏按分段着色。
+ * 货巢与机巢不同时，去程拆为「空机转场」与「取货后去程」两段，转场使用独立分段词，
+ * 顺序为转场、去程、末段交接、返程。与 {@code ship_traj} 的分工：本帧是<b>计划航迹</b>
+ * （机巢到会面点、会面点到交接点、交接点到归巢），{@code ship_traj} 是<b>船舶预测轨迹</b>，
+ * 两者不可互相替代。
  *
  * <p><b>摘要口径</b>：{@code opType} 取 {@value #OP_TYPE}，写 {@code task_log} 的
  * {@code op_type} 列；一条派发只写一条摘要，不逐点落库。
@@ -16,7 +18,8 @@ import java.util.List;
  * @param routeId  航迹编号，与 {@code B_FlyableRoute.routeId} 同源
  * @param comboId  组合编号，未组批时为 {@code null}
  * @param opType   摘要操作词，见 {@link #OP_TYPE}
- * @param segments 三段航迹，顺序固定为去程、末段交接、返程
+ * @param segments 航迹分段。通常为去程、末段交接、返程三段；货巢与机巢不同时，
+ *                 去程前多一段空机转场，顺序为转场、去程、末段交接、返程
  */
 public record PlanTrackFrame(
         String orderId,
@@ -28,7 +31,8 @@ public record PlanTrackFrame(
     /** 本帧在 {@code task_log} 摘要里使用的操作词。 */
     public static final String OP_TYPE = "规划航迹";
 
-    /** 分段口径词，与《36-M5-可视化》§3 的三段着色一一对应。 */
+    /** 分段口径词，与《36-M5-可视化》§3 的分段着色一一对应。 */
+    public static final String SEGMENT_TRANSFER = "空机转场";
     public static final String SEGMENT_OUTBOUND = "去程";
     public static final String SEGMENT_TERMINAL = "末段交接";
     public static final String SEGMENT_RETURN = "返程";

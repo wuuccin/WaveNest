@@ -37,6 +37,17 @@ class FlightPhaseTimelineTest {
     }
 
     @Test
+    @DisplayName("去程含转场、返程只按会面点到落点距离：两段时长分开")
+    void schedule_shouldUseSeparateReturnDistance() {
+        List<FlightPhaseTimeline.Transition> schedule =
+                FlightPhaseTimeline.schedule(MEET, 960.0, 480.0, 12.0, 120);
+
+        assertEquals(MEET - 80_000L, schedule.get(0).dueMs(), "去程含转场共 960 m，80 s");
+        assertEquals(MEET + 120_000L, schedule.get(2).dueMs());
+        assertEquals(MEET + 160_000L, schedule.get(3).dueMs(), "返程 480 m，40 s，不沿用去程 80 s");
+    }
+
+    @Test
     @DisplayName("审计时刻钳制：到期时刻早于下界时顺延，保证日志时间不倒挂")
     void auditTs_shouldNeverGoBackwards() {
         assertEquals(MEET, FlightPhaseTimeline.auditTs(MEET, MEET - 1_000L), "到期更晚时取到期时刻");
@@ -55,6 +66,8 @@ class FlightPhaseTimelineTest {
                 () -> FlightPhaseTimeline.schedule(MEET, -1.0, 12.0, 120));
         assertThrows(IllegalArgumentException.class,
                 () -> FlightPhaseTimeline.schedule(MEET, 960.0, 0.0, 120));
+        assertThrows(IllegalArgumentException.class,
+                () -> FlightPhaseTimeline.schedule(MEET, 960.0, -1.0, 12.0, 120));
         assertThrows(IllegalArgumentException.class,
                 () -> FlightPhaseTimeline.schedule(MEET, 960.0, 12.0, -1));
     }
