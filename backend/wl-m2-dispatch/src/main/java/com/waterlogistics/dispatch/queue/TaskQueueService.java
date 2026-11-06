@@ -1,5 +1,6 @@
 package com.waterlogistics.dispatch.queue;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.waterlogistics.contract.order.OrderView;
 import com.waterlogistics.contract.rest.WaitReason;
@@ -21,6 +22,7 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.EnumSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -57,27 +59,36 @@ public class TaskQueueService {
     private final DispatchGateService dispatchGateService;
     private final DroneMapper droneMapper;
     private final ApplicationEventPublisher eventPublisher;
+    /** 货到巢关（11-05 序号 2）；老构造器为 null 时跳过（仅影响早期单测） */
+    private final CargoNestGate cargoNestGate;
     private final Map<String, AtomicLong> fallbackVersions = new ConcurrentHashMap<>();
 
     public TaskQueueService(OrderTaskMapper orderTaskMapper, TaskLogMapper taskLogMapper,
             DispatchGateService dispatchGateService) {
-        this(orderTaskMapper, taskLogMapper, dispatchGateService, null, event -> { });
+        this(orderTaskMapper, taskLogMapper, dispatchGateService, null, event -> { }, null);
     }
 
     public TaskQueueService(OrderTaskMapper orderTaskMapper, TaskLogMapper taskLogMapper,
             DispatchGateService dispatchGateService, ApplicationEventPublisher eventPublisher) {
-        this(orderTaskMapper, taskLogMapper, dispatchGateService, null, eventPublisher);
+        this(orderTaskMapper, taskLogMapper, dispatchGateService, null, eventPublisher, null);
+    }
+
+    public TaskQueueService(OrderTaskMapper orderTaskMapper, TaskLogMapper taskLogMapper,
+            DispatchGateService dispatchGateService, DroneMapper droneMapper,
+            ApplicationEventPublisher eventPublisher) {
+        this(orderTaskMapper, taskLogMapper, dispatchGateService, droneMapper, eventPublisher, null);
     }
 
     @Autowired
     public TaskQueueService(OrderTaskMapper orderTaskMapper, TaskLogMapper taskLogMapper,
             DispatchGateService dispatchGateService, DroneMapper droneMapper,
-            ApplicationEventPublisher eventPublisher) {
+            ApplicationEventPublisher eventPublisher, CargoNestGate cargoNestGate) {
         this.orderTaskMapper = orderTaskMapper;
         this.taskLogMapper = taskLogMapper;
         this.dispatchGateService = dispatchGateService;
         this.droneMapper = droneMapper;
         this.eventPublisher = eventPublisher;
+        this.cargoNestGate = cargoNestGate;
     }
 
     /**
@@ -89,6 +100,28 @@ public class TaskQueueService {
     public void accept(OrderTaskEntity order) {
         requireStatus(order, OrderStatus.PENDING_ACCEPT);
         transition(order, OrderStatus.PENDING_ACCEPT, OrderStatus.WAIT_DISPATCH, "受理", null);
+    }
+
+    /**
+     * 批量取单入口（11-05 序号 2，张睿哲）：按待调度优先级取队首候选订单。
+     *
+     * <p>取单顺序由数据库完成：
+     * {@code ORDER BY FIELD(priority,'EMERGENCY','URGENT','NORMAL'), expected_time, create_time}
+     * —— 应急 > 加急 > 常规；同优先级按期望时间（旧的在前），再按建单时间（旧的在前）。
+     * 注意 MySQL 升序下 NULL 排最前：expected_time 为空的订单在同优先级内最先被取到。</p>
+     *
+     * <p>本方法只读不改状态；调用方取到后自行走 {@link #startDispatch} 链路。</p>
+     *
+     * @param limit 单次最多取多少笔，范围 [1, 500]
+     */
+    public List<OrderTaskEntity> selectNext(int limit) {
+        if (limit < 1 || limit > 500) {
+            throw new IllegalArgumentException("selectNext limit 须在 [1,500] 内: " + limit);
+        }
+        return orderTaskMapper.selectList(new LambdaQueryWrapper<OrderTaskEntity>()
+                .eq(OrderTaskEntity::getStatus, OrderStatus.WAIT_DISPATCH.getValue())
+                .last("ORDER BY FIELD(priority,'EMERGENCY','URGENT','NORMAL'), expected_time, create_time LIMIT "
+                        + limit));
     }
 
     /**
@@ -110,7 +143,44 @@ public class TaskQueueService {
             return;
         }
 
+        // 货到巢关（11-05 序号 2）：派单前锁巢时隙；货未到转 WAIT_CARGO，锁不到转 WAIT_RESOURCE。
+        // 延后后由 CargoGateWaker 轮询放行/超时，orchestrate 见「已受理待唤醒」即结束本轮。
+        if (cargoNestGate != null) {
+            CargoNestGate.Decision gate = cargoNestGate.evaluate(orderId, order.getCargoNestId());
+            if (gate == CargoNestGate.Decision.WAIT_CARGO) {
+                transition(order, OrderStatus.WAIT_DISPATCH, OrderStatus.ACCEPTED_WAIT_WAKE,
+                        "货到巢关-待货", WaitReason.WAIT_CARGO);
+                return;
+            }
+            if (gate == CargoNestGate.Decision.WAIT_RESOURCE) {
+                transition(order, OrderStatus.WAIT_DISPATCH, OrderStatus.ACCEPTED_WAIT_WAKE,
+                        "货到巢关-锁巢失败", WaitReason.WAIT_RESOURCE);
+                return;
+            }
+        }
+
         transition(order, OrderStatus.WAIT_DISPATCH, OrderStatus.DISPATCHING, "组批调度", null);
+    }
+
+    /**
+     * 锁超时处置（11-05 序号 2 · 货到巢关）：「已受理待唤醒 + WAIT_CARGO」→
+     * 「已受理待唤醒 + WAIT_RESOURCE」，并释放本单持有的巢时隙锁。
+     *
+     * <p>由 {@link CargoGateWaker} 在锁龄超过 {@code sys_param.cargoLockTimeoutSec}
+     * 或锁已失踪时调用。状态没变（均为已受理待唤醒），变的是 wait_reason；
+     * 条件更新影响行数≠1 时抛状态冲突（与 transition 同口径），事件照常发布，
+     * 供告警链路消费（宋冰鑫序号 2 写 alert 行）。</p>
+     */
+    @Transactional
+    public void markResourceWaiting(String orderId) {
+        OrderTaskEntity order = orderTaskMapper.selectById(orderId);
+        requireStatus(order, OrderStatus.ACCEPTED_WAIT_WAKE);
+        // 锁超时即锁失效，先释锁再置位；门关未启用（老链路）时无锁可释，releaseLockQuietly 内部兜底
+        if (cargoNestGate != null) {
+            cargoNestGate.releaseLockQuietly(orderId);
+        }
+        transition(order, OrderStatus.ACCEPTED_WAIT_WAKE, OrderStatus.ACCEPTED_WAIT_WAKE,
+                "锁超时-转资源等待", WaitReason.WAIT_RESOURCE);
     }
 
     /**

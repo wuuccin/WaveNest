@@ -72,8 +72,13 @@ public class OccupancySlotService {
     /**
      * 登记占位时隙。若同一对象在 {@code [t1, t2)} 已有有效占位则抛冲突异常。
      *
-     * <p><b>并发口径</b>：本方法在单进程内串行化；跨进程的归巢占位请走
-     * {@link #tryReserve(String, TimeWindow)}（对机巢行加锁）。本方法保留给非机巢对象类型。
+     * <p><b>并发口径（HIGH.33 · 11-05）</b>：原先只有 JVM {@code synchronized}，
+     * 多实例部署时「查重 → 插入」存在跨进程窗口。现改为 MySQL 会话级命名锁
+     * （{@code GET_LOCK('wavenest:occupy:<objectType>:<objectId>', 5s)}）把查重与插入
+     * 串行化到数据库层——与 {@code TaskQueueService.transition} 的「条件更新 + 影响行数」
+     * 同为「不加索引、不改表结构」前提下的跨实例互斥范式。锁随事务在同一连接上持有，
+     * finally 中显式 {@code RELEASE_LOCK}（连接归还连接池前必须解开）。
+     * 归巢占位的按巢串行入口仍是 {@link #tryReserve(String, TimeWindow)}（机巢行锁）。</p>
      *
      * @param objectType 对象类型（机占用/起飞时段/会面窗口/归巢时隙/迫停占用）
      * @param objectId   关联对象 Id
@@ -81,16 +86,38 @@ public class OccupancySlotService {
      * @param t2         占用结束（半开）
      * @param type       类型：常规驻留/应急迫停/迫降
      * @return 新登记的 slotId（完整 UUID）
+     * @throws IllegalStateException 命名锁 5 秒内未拿到（并发冲突）或时窗重叠
      */
     @Transactional
-    public synchronized String occupy(String objectType, String objectId,
+    public String occupy(String objectType, String objectId,
                          LocalDateTime t1, LocalDateTime t2, String type) {
         validateSlot(objectType, objectId, t1, t2, type);
-        if (countOverlapping(objectType, objectId, t1, t2) > 0) {
+        String lockName = occupyLockName(objectType, objectId);
+        Integer acquired = occupancySlotMapper.getLock(lockName, 5);
+        if (acquired == null || acquired != 1) {
             throw new IllegalStateException(
-                "对象 " + objectType + "/" + objectId + " 在 [" + t1 + ", " + t2 + ") 已有有效占位");
+                    "占位命名锁 5s 内未拿到：" + lockName + "（并发冲突，请重试）");
         }
-        return insertSlot(objectType, objectId, t1, t2, type, null);
+        try {
+            if (countOverlapping(objectType, objectId, t1, t2) > 0) {
+                throw new IllegalStateException(
+                    "对象 " + objectType + "/" + objectId + " 在 [" + t1 + ", " + t2 + ") 已有有效占位");
+            }
+            return insertSlot(objectType, objectId, t1, t2, type, null);
+        } finally {
+            occupancySlotMapper.releaseLock(lockName);
+        }
+    }
+
+    /**
+     * MySQL 命名锁上限 64 字符：超长时保留前缀并拼对象标识散列，保证同类同对象锁名稳定一致。
+     */
+    static String occupyLockName(String objectType, String objectId) {
+        String raw = "wavenest:occupy:" + objectType + ":" + objectId;
+        if (raw.length() <= 64) {
+            return raw;
+        }
+        return raw.substring(0, 50) + ":" + Integer.toHexString(raw.hashCode());
     }
 
     /**
@@ -221,6 +248,25 @@ public class OccupancySlotService {
                 .eq(OccupancySlotEntity::getObjectType, objectType)
                 .eq(OccupancySlotEntity::getObjectId, objectId)
                 .eq(OccupancySlotEntity::getStatus, STATUS_ACTIVE));
+    }
+
+    /**
+     * 按订单查其持有的<b>有效</b>占位（11-05 序号 2 · 货到巢关锁幂等）。
+     *
+     * <p>货到巢关在派单前锁巢时隙，订单等货期间锁一直持有；唤醒重派时
+     * 凭本方法复用已有锁，不重复 tryReserve（否则会把本单自己的锁计入容量）。</p>
+     *
+     * @param orderId 关联订单；为空时返回空
+     */
+    public Optional<OccupancySlotEntity> findActiveSlotByOrder(String orderId) {
+        if (orderId == null || orderId.isBlank()) {
+            return Optional.empty();
+        }
+        return Optional.ofNullable(occupancySlotMapper.selectOne(
+                new LambdaQueryWrapper<OccupancySlotEntity>()
+                        .eq(OccupancySlotEntity::getOrderId, orderId)
+                        .eq(OccupancySlotEntity::getStatus, STATUS_ACTIVE)
+                        .last("LIMIT 1")));
     }
 
     /**

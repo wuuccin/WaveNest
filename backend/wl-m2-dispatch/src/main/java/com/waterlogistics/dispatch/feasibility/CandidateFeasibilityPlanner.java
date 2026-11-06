@@ -270,8 +270,16 @@ public class CandidateFeasibilityPlanner {
         // 与 buildInput 的守卫重复且会漂移——单一事实源是 CandidateInput.payloadKg()）
         double payloadKg = input.payloadKg();
 
+        // 11-05 序号 2（张睿哲）：延误惩罚一级比较键。死线取订单期望时间（可空→退回纯距离序），
+        // 权重走 sys_param.delayPenaltyWeight（012_cargo_gate_params.sql 登记，默认 1.0）。
+        Long deadlineMs = order.getExpectedTime() == null ? null
+                : order.getExpectedTime().atZone(java.time.ZoneId.of("Asia/Shanghai"))
+                        .toInstant().toEpochMilli();
+        double delayPenaltyWeight = sysParamLoader.getDouble("delayPenaltyWeight", 1.0);
+
         FeasibleCandidatePicker.Selection selection = FeasibleCandidatePicker.pick(
-                combos, worstWindMs, payloadKg, judgeParams(input));
+                combos, worstWindMs, payloadKg, judgeParams(input),
+                deadlineMs, delayPenaltyWeight, nowMs);
         return new Evaluated(selection, combos, worstWindMs, input);
     }
 
