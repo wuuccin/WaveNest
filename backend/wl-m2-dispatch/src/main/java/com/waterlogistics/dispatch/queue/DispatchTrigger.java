@@ -1,5 +1,6 @@
 package com.waterlogistics.dispatch.queue;
 
+import com.waterlogistics.contract.state.GoodsStatus;
 import com.waterlogistics.contract.state.OrderStatus;
 import com.waterlogistics.contract.ws.ShipTrajPoint;
 import com.waterlogistics.dispatch.order.OrderSubmittedEvent;
@@ -51,10 +52,10 @@ public class DispatchTrigger {
     private static final int BATCH_SIZE = 20;
 
     /**
-     * 货物初始状态（{@code 23` §6 货物状态机首态）：拣选打包中，未通过就绪检查。
-     * 与 {@code 001_init.sql} §5.3 的列默认值一致。
+     * 未指定货巢订单的货物初态（D-01）：货不需要到巢，建行即算就绪。
+     * 指定货巢仍写「未就绪」，由运营侧 cargo-ready 推进。
+     * 取值见 {@code 1106-remediation-contract.md} §1.1。
      */
-    private static final String GOODS_STATUS_NOT_READY = "未就绪";
 
     private final OrderTaskMapper orderTaskMapper;
     private final GoodsMapper goodsMapper;
@@ -194,31 +195,31 @@ public class DispatchTrigger {
     }
 
     /**
-     * 建货物行（11-06 序号 1 · 货物档案落库）。
+     * 建货物行（11-06 序号 1 · 货物档案落库；11-07 按 D-01 补无货巢语义）。
      *
-     * <p>与订单同事务建「未就绪」行，货物就绪与否交给运营录入（{@code 37} §2 状态维护方划分：
-     * 未就绪 → 已就绪 的写入方是运营侧）。此前全仓无生产代码写 {@code goods}，
-     * 导致带货巢订单永远读不到货物行——货到巢关判未就绪、订单卡在等货待唤醒。
+     * <p><b>D-01</b>：未指定货巢时写「已就绪」且 {@code location} 留空——货物不经过
+     * 货到巢关，{@code FlightPhaseAdvancer} 切「去程中」时的 {@code load} 才有合法前态。
+     * 指定货巢时写「未就绪」，仍由运营侧 cargo-ready 推进，带货巢路径行为不变。
      *
      * <p>{@code goods_id} 取 {@code G-{orderId}-1}：一单一货行，标识可由订单号直接推出，
      * 不另引入随机段，避免重投事件造出第二条货物行。
-     *
-     * <p>{@code location} 只在指定了货巢时有值；未指定货巢留空——空值表示「货还没到某个巢」，
-     * 不是「货在别处」，与接单侧「空 location 不算不在指定巢」的口径一致。
      *
      * @param event 订单受理事件，提供订单号、货型、重量、货巢
      */
     private void insertGoodsRow(OrderSubmittedEvent event) {
         if (goodsMapper == null) {
-            // 兼容构造器路径（既有单测）：货物档案缺失不阻断订单落库
+            // 兼容构造器路径（既有纯单测）：本构造器不覆盖货物链，见构造器 javadoc
             return;
         }
+        boolean hasCargoNest = event.cargoNestId() != null && !event.cargoNestId().isBlank();
         GoodsEntity goods = new GoodsEntity();
         goods.setGoodsId("G-" + event.orderId() + "-1");
         goods.setOrderId(event.orderId());
         goods.setWeight(event.goodsWeightDecimal());
         goods.setType(event.goodsType());
-        goods.setStatus(GOODS_STATUS_NOT_READY);
+        goods.setStatus(hasCargoNest
+                ? GoodsStatus.NOT_READY.getValue()
+                : GoodsStatus.READY.getValue());
         goods.setLocation(event.cargoNestId());
         goodsMapper.insert(goods);
     }

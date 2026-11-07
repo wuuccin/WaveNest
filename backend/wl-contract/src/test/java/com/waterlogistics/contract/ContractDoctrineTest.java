@@ -32,15 +32,18 @@ class ContractDoctrineTest {
     /**
      * 《22》§1.2 的 12 个主题：raw.* 五条、data.* 五条、alert.event、task.plan；
      * ＋《86》附 G-01 新增的 {@code rendezvous.deviation}（功能 19 数据回流，非告警通道）；
-     * ＋投放回执 {@code data.uav.delivery} ＝ 14 个。
+     * ＋投放回执 {@code data.uav.delivery}；
+     * ＋落巢回收确认 {@code data.uav.recycle}（11-07 弥补计划 D-09／D-16）＝ 15 个。
      */
     @Test
-    void topics_shouldBeFourteenAndAuthoritative() {
-        assertEquals(14, TopicName.TOPICS.size(), "主题数量必须为 12＋2（rendezvous.deviation、data.uav.delivery）");
+    void topics_shouldBeFifteenAndAuthoritative() {
+        assertEquals(15, TopicName.TOPICS.size(),
+                "主题数量必须为 12＋3（rendezvous.deviation、data.uav.delivery、data.uav.recycle）");
         assertEquals(List.of(
                         "raw.ais", "raw.uav.telemetry", "raw.weather", "raw.hydro", "raw.notice",
                         "data.ais", "data.uav.telemetry", "data.weather", "data.hydro", "data.notice",
-                        "alert.event", "task.plan", "rendezvous.deviation", "data.uav.delivery"),
+                        "alert.event", "task.plan", "rendezvous.deviation", "data.uav.delivery",
+                        "data.uav.recycle"),
                 TopicName.TOPICS);
     }
 

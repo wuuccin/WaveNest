@@ -145,9 +145,14 @@ public class RescheduleService {
      *   <li><b>失联灭失</b>：货物随之灭失 → 订单走「异常终止」，同样不重入队。
      * </ul>
      *
-     * <p><b>落地动作委托 {@link TaskQueueService#requeue}</b>（张睿哲归口，序 4）：
-     * 清原机、状态回待调度、写 {@code task_log} 事件流、追加 {@code order_state} 时间线节点。
-     * 本方法只做<b>前置条件裁决</b>，不碰 Mapper、不落库（《23》§8「落库归 M6」）。
+ * <p><b>落地动作委托 {@link TaskQueueService#requeue}</b>（张睿哲归口，序 4）：
+ * 清原机、状态回待调度、写 {@code task_log} 事件流、追加 {@code order_state} 时间线节点。
+ * 本方法只做<b>前置条件裁决</b>，不碰 Mapper。
+ *
+ * <p><b>D-03（11-07 弥补）</b>：本方法<b>不再写「已回收」</b>。回收确认由
+ * {@code data.uav.recycle} 事件的消费端独立写入，本方法按库里最新货物状态校验该确认
+ * 确实存在；校验通过后才能重入队。「落巢」与「回收确认」因此是两个独立事实，
+ * 不再由一次重派调用顺带伪造。
      *
      * @param cmd 重入队入参（含原机落点、落巢与回收确认位）
      * @throws IllegalStateException 落点为野外迫降／灭失，或尚未落巢、尚未回收时——
@@ -159,10 +164,15 @@ public class RescheduleService {
         // HIGH.32：DTO 只做「快失败」提示，落地前按库里最新状态在<b>同一事务</b>内重校验，
         // 再交给 requeue 的条件更新入口（WHERE status=当前），杜绝检查后状态被并发推进
         requireNotInFlight(cmd.orderId());
-        if (goodsLifecycleService != null) {
-            // 野外迫降由 requireRequeueable 拒绝；仅落巢且回收确认后才写已回收。
-            goodsLifecycleService.recycle(cmd.orderId(), cmd.goodsId(), cmd.droneId(),
-                    cmd.landingPointId());
+        // D-03（11-07 弥补）：本方法不再承担「已装机 → 已回收」的写点。
+        // 回收确认是独立 MQ 事件入口（data.uav.recycle → GoodsRecycleHandler）的职责；
+        // 这里只按库里最新货物状态校验回收确实发生过，缺少回收确认一律拒绝重派。
+        // 纯单测包内构造器不注入 GoodsLifecycleService 时跳过，不覆盖货物链。
+        if (goodsLifecycleService != null
+                && !goodsLifecycleService.isRecycled(cmd.orderId(), cmd.goodsId())) {
+            throw new IllegalStateException("订单 " + cmd.orderId() + " 的货物 " + cmd.goodsId()
+                    + " 尚无回收确认（库内不是「已回收」），不得重入队："
+                    + "回收确认由 data.uav.recycle 事件独立写入，重派只校验不代写");
         }
         taskQueueService.requeue(cmd.orderId());
     }

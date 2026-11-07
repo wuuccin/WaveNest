@@ -5,7 +5,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.waterlogistics.contract.mq.AisMessage;
 import com.waterlogistics.contract.state.OrderStatus;
 import com.waterlogistics.dispatch.order.OrderAdmissionService;
-import com.waterlogistics.dispatch.order.CargoReadyService;
 import com.waterlogistics.dispatch.order.OrderSubmitRequest;
 import com.waterlogistics.dispatch.order.OrderSubmitResponse;
 import com.waterlogistics.dispatch.prediction.PredictionService;
@@ -47,8 +46,6 @@ class OrderEtaDeadlineIntegrationTest {
     @Autowired
     private OrderAdmissionService admissionService;
     @Autowired
-    private CargoReadyService cargoReadyService;
-    @Autowired
     private PredictionService predictionService;
     @Autowired
     private OrderTaskMapper orderTaskMapper;
@@ -89,7 +86,7 @@ class OrderEtaDeadlineIntegrationTest {
         OrderSubmitResponse resp = admissionService.submit(new OrderSubmitRequest(
                 MMSI, 5.5, "医疗物资", null, "URGENT"));
         assertThat(resp.accepted()).isTrue();
-        assertThat(cargoReadyService.markReady(resp.orderId()).accepted()).isTrue();
+        // D-01：未指定货巢的订单建行即「已就绪」，主链不得依赖手工 markReady 放行
 
         // 把会面时刻回拨到已过时刻，让飞行阶段推进器一次补记完整飞行
         OrderTaskEntity row = orderTaskMapper.selectById(resp.orderId());
@@ -99,13 +96,19 @@ class OrderEtaDeadlineIntegrationTest {
 
         flightPhaseAdvancer.tick();
 
-        OrderTaskEntity finished = orderTaskMapper.selectById(resp.orderId());
-        assertThat(finished.getStatus()).isEqualTo(OrderStatus.FINISHED.getValue());
+        OrderTaskEntity returning = orderTaskMapper.selectById(resp.orderId());
+        // D-14：无真实投放回执，订单停在「返航中」等人工确认，不得由时钟推进到「已完成」。
+        // eta_ts 在末段交接阶段已落为本周期实际送达时刻，与订单终态无关。
+        assertThat(returning.getStatus()).isEqualTo(OrderStatus.RETURNING.getValue());
+        flightPhaseAdvancer.tick();
+        assertThat(orderTaskMapper.selectById(resp.orderId()).getStatus())
+                .as("无回执订单不得进入已完成")
+                .isEqualTo(OrderStatus.RETURNING.getValue());
 
         int handoverSec = sysParamLoader.getInt("tHandoverMinSec", 120);
         // 会面时刻以库内读回的值为准：datetime 列无小数秒，写进去的毫秒会被取整
-        long meetInDb = finished.getMeetTime().atZone(ZONE).toInstant().toEpochMilli();
-        long etaMs = finished.getEtaTs().atZone(ZONE).toInstant().toEpochMilli();
+        long meetInDb = returning.getMeetTime().atZone(ZONE).toInstant().toEpochMilli();
+        long etaMs = returning.getEtaTs().atZone(ZONE).toInstant().toEpochMilli();
         assertThat(etaMs)
                 .as("末值＝实际送达：库内会面 %d + 交接 %d s", meetInDb, handoverSec)
                 .isEqualTo(meetInDb + handoverSec * 1000L);

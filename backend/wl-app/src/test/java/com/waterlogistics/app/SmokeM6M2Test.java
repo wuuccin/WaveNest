@@ -9,7 +9,6 @@ import com.waterlogistics.contract.state.OrderStatus;
 import com.waterlogistics.contract.state.GoodsStatus;
 import com.waterlogistics.dispatch.gate.DispatchGateService;
 import com.waterlogistics.dispatch.order.OrderAdmissionService;
-import com.waterlogistics.dispatch.order.CargoReadyService;
 import com.waterlogistics.dispatch.order.OrderSubmitRequest;
 import com.waterlogistics.dispatch.order.OrderSubmitResponse;
 import com.waterlogistics.dispatch.prediction.PredictionService;
@@ -69,8 +68,6 @@ class SmokeM6M2Test {
     @Autowired
     private OrderAdmissionService admissionService;
     @Autowired
-    private CargoReadyService cargoReadyService;
-    @Autowired
     private PredictionService predictionService;
     @Autowired
     private FlightPhaseAdvancer flightPhaseAdvancer;
@@ -121,7 +118,9 @@ class SmokeM6M2Test {
                 System.currentTimeMillis() + 3_600_000L, "URGENT"));
         assertThat(resp.accepted()).isTrue();
         String orderId = resp.orderId();
-        assertThat(cargoReadyService.markReady(orderId).accepted()).isTrue();
+        // D-01：未指定货巢的订单建行即「已就绪」，主链不得依赖手工 markReady 放行
+        assertThat(goodsMapper.selectById("G-" + orderId + "-1").getStatus())
+                .isEqualTo(GoodsStatus.READY.getValue());
 
         // 自然触发后订单应已到「已派发」，四字段均有值（C0 完成判据）
         OrderTaskEntity after = orderTaskMapper.selectById(orderId);
@@ -149,6 +148,30 @@ class SmokeM6M2Test {
                 Instant.ofEpochMilli(System.currentTimeMillis() - 3_600_000L),
                 ZoneId.of("Asia/Shanghai")));
         orderTaskMapper.updateById(after);
+        flightPhaseAdvancer.tick();
+
+        // D-02／D-14：时间兜底只推进到「返航中」，不写货物「已交付」；
+        // 无真实投放回执时订单停在「返航中」等人工确认，不得由时钟推进到「已完成」。
+        assertThat(orderTaskMapper.selectById(orderId).getStatus())
+                .isEqualTo(OrderStatus.RETURNING.getValue());
+        assertThat(goodsMapper.selectById("G-" + orderId + "-1").getStatus())
+                .isEqualTo(GoodsStatus.LOADED.getValue());
+        flightPhaseAdvancer.tick();
+        assertThat(orderTaskMapper.selectById(orderId).getStatus())
+                .as("再推一拍仍无回执，不得进入已完成")
+                .isEqualTo(OrderStatus.RETURNING.getValue());
+
+        // 后到回执：补落幂等交付凭证（货物「已交付」＋ task_log），下一拍才允许进「已完成」。
+        taskQueueService.markHandoverDone(orderId);
+        assertThat(goodsMapper.selectById("G-" + orderId + "-1").getStatus())
+                .isEqualTo(GoodsStatus.DELIVERED.getValue());
+        taskQueueService.markHandoverDone(orderId);
+        assertThat(taskLogMapper.selectList(
+                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<TaskLogEntity>()
+                        .eq(TaskLogEntity::getOrderId, orderId)
+                        .eq(TaskLogEntity::getOpType, TaskQueueService.OP_TYPE_DELIVERY_RECEIPT)))
+                .as("重复回执幂等，交付凭证只写一次")
+                .hasSize(1);
         flightPhaseAdvancer.tick();
 
         List<TaskLogEntity> flightLogs = taskLogMapper.selectList(
@@ -189,8 +212,9 @@ class SmokeM6M2Test {
         OrderTaskEntity forRedispatch = orderTaskMapper.selectById(orderId);
         forRedispatch.setStatus(OrderStatus.DISPATCHED.getValue());
         orderTaskMapper.updateById(forRedispatch);
-        // 旧用例模拟第二个派发周期：第一周期已交付，真实业务不能把同一货物再装机。
-        // 本段只验证周期缓存边界，因此显式重置测试货物夹具。
+        // 第二个派发周期：第一周期已凭真实回执交付，真实业务不能把同一货物再装机。
+        // 本段只验证周期缓存边界，因此显式重置测试货物夹具；
+        // 重置后交付凭证失效，第二周期同样必须凭本周期的真实回执才能进「已完成」。
         GoodsEntity goodsForSecondCycle = goodsMapper.selectById("G-" + orderId + "-1");
         goodsForSecondCycle.setStatus(GoodsStatus.READY.getValue());
         goodsForSecondCycle.setDroneId(null);
@@ -209,6 +233,12 @@ class SmokeM6M2Test {
         redispatchedOrder.setMeetLon(meetLon);
         redispatchedOrder.setMeetLat(meetLat);
         orderTaskMapper.updateById(redispatchedOrder);
+        flightPhaseAdvancer.tick();
+        // D-14 对每个派发周期分别生效：第二周期无本周期回执仍停在「返航中」，
+        // 补真实回执后再推一拍才进「已完成」（交付凭证按货物当前状态判幂等）。
+        assertThat(orderTaskMapper.selectById(orderId).getStatus())
+                .isEqualTo(OrderStatus.RETURNING.getValue());
+        taskQueueService.markHandoverDone(orderId);
         flightPhaseAdvancer.tick();
 
         List<TaskLogEntity> secondFlightLogs = taskLogMapper.selectList(

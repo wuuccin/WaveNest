@@ -136,8 +136,12 @@ public class FlightPhaseAdvancer {
     private final OccupancySlotService occupancySlotService;
     private final NestLookup nestLookup;
 
-    @Autowired(required = false)
+    /** 货物状态写入必须由容器注入：纯单测包内构造器不覆盖货物链（D-15 收掉可空依赖豁免）。 */
+    @Autowired
     private GoodsLifecycleService goodsLifecycleService;
+
+    /** 无回执订单停在「返航中」的告警去重键，避免每拍刷同一条日志。 */
+    private final Set<String> awaitingReceiptWarned = ConcurrentHashMap.newKeySet();
 
     /** orderId → 版本兜底计数器（task_log 自增主键不可用时用）。 */
     private final Map<String, AtomicLong> fallbackVersions = new ConcurrentHashMap<>();
@@ -518,6 +522,16 @@ public class FlightPhaseAdvancer {
         if (rank(to) != rank(from) + 1) {
             throw new IllegalStateException("飞行阶段流转不连续：" + from.getValue() + " → " + to.getValue());
         }
+        // D-14：无真实投放回执时，订单停在「返航中」等人工确认，不得由时钟推进到「已完成」。
+        // 交付凭证只由真实回执写入（TaskQueueService.recordDeliveryReceipt），时间兜底不写。
+        // 纯单测包内构造器不覆盖货物链（goodsLifecycleService 为 null），行为保持原样。
+        if (to == OrderStatus.FINISHED && goodsLifecycleService != null
+                && !goodsLifecycleService.isDelivered(order.getOrderId())) {
+            if (awaitingReceiptWarned.add(order.getOrderId())) {
+                log.info("无投放回执，订单停在返航中等人工确认：orderId={}", order.getOrderId());
+            }
+            return false;
+        }
         Long previousEtaTs = order.getEtaTs() == null ? null : toEpochMs(order.getEtaTs());
         // 末段及之后写的是「实际送达」，是本周期唯一确定的值，必须如实覆盖——
         // 若也取较大者，一旦下单下界偏晚（下界是保守估计，可能晚于真实送达），
@@ -542,11 +556,10 @@ public class FlightPhaseAdvancer {
                 return;
             }
 
+            // D-02：时间兜底只推进订单状态，不写货物「已交付」。
+            // 交付是真实投放回执的独立落点，见 TaskQueueService.recordDeliveryReceipt。
             if (to == OrderStatus.OUTBOUND && goodsLifecycleService != null) {
                 goodsLifecycleService.load(order.getOrderId(), order.getDroneId());
-            }
-            if (to == OrderStatus.RETURNING && goodsLifecycleService != null) {
-                goodsLifecycleService.deliver(order.getOrderId(), order.getDroneId());
             }
 
             TaskLogEntity entry = new TaskLogEntity();
@@ -577,6 +590,9 @@ public class FlightPhaseAdvancer {
         if (written[0]) {
             order.setStatus(to.getValue());
             order.setEtaTs(etaDb);
+            if (to == OrderStatus.FINISHED) {
+                awaitingReceiptWarned.remove(order.getOrderId());
+            }
             log.info("飞行阶段推进：orderId={} {} → {} op={} ts={} etaTs={}",
                     order.getOrderId(), from.getValue(), to.getValue(), opType, tsMs,
                     effectiveEtaTs);

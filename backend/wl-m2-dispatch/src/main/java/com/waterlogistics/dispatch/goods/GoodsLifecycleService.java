@@ -1,5 +1,6 @@
 package com.waterlogistics.dispatch.goods;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.waterlogistics.contract.state.GoodsStatus;
 import com.waterlogistics.storage.entity.GoodsEntity;
@@ -55,6 +56,41 @@ public class GoodsLifecycleService {
                 .set(GoodsEntity::getDroneId, null)
                 .set(GoodsEntity::getLocation, nestId));
         requireOne(rows, orderId, "已装机→已回收");
+    }
+
+    /**
+     * 是否已有真实交付凭证（货物状态为「已交付」）。
+     *
+     * <p><b>D-02／D-14</b>：交付凭证只能由真实投放回执写入，时间兜底不写。
+     * 队列侧用它做回执幂等判定，飞行阶段推进器用它决定「返航中 → 已完成」能否发生。
+     */
+    public boolean isDelivered(String orderId) {
+        Long count = goodsMapper.selectCount(new LambdaQueryWrapper<GoodsEntity>()
+                .eq(GoodsEntity::getOrderId, orderId)
+                .eq(GoodsEntity::getStatus, GoodsStatus.DELIVERED.getValue()));
+        return count != null && count > 0;
+    }
+
+    /** 落巢回收确认时的前态校验：货物须仍为「已装机」，重复确认不得二次写入。 */
+    public boolean isLoaded(String orderId, String goodsId, String droneId) {
+        return countStatus(orderId, goodsId, droneId, GoodsStatus.LOADED) > 0;
+    }
+
+    /** 是否已确认回收（重复确认判定）。 */
+    public boolean isRecycled(String orderId, String goodsId) {
+        return countStatus(orderId, goodsId, null, GoodsStatus.RECYCLED) > 0;
+    }
+
+    private long countStatus(String orderId, String goodsId, String droneId, GoodsStatus status) {
+        LambdaQueryWrapper<GoodsEntity> query = new LambdaQueryWrapper<GoodsEntity>()
+                .eq(GoodsEntity::getOrderId, orderId)
+                .eq(GoodsEntity::getGoodsId, goodsId)
+                .eq(GoodsEntity::getStatus, status.getValue());
+        if (droneId != null) {
+            query.eq(GoodsEntity::getDroneId, droneId);
+        }
+        Long count = goodsMapper.selectCount(query);
+        return count == null ? 0L : count;
     }
 
     private static void requireOne(int rows, String orderId, String transition) {
