@@ -86,6 +86,18 @@ class ClosedLoopPrecisionTest {
     // 六个相互隔离的固定种子组，每组 40 轮；总轮数超过 NEES 最小采信量。
     private static final int SEED_GROUPS = 6;
     private static final int RUNS_PER_GROUP = 40;
+
+    /** 基线起点区间，m：落在航道末段附近，与既有五条判据历史口径一致，不得改动。 */
+    private static final double START_S_MIN_DEFAULT = 5000.0;
+    private static final double START_S_MAX_DEFAULT = 6000.0;
+
+    /**
+     * 「限速可观测」起点区间，m：船从限速段（4000 m）之前起步，才会在有效期内真正跨过
+     * 4000 m 的限速边界。原区间 5000–6000 起步即在末段，预测在时域内触到航道终点而饱和，
+     * 限速与否的最后一点完全相同（实测差值 0.0 m），故 11-07 的限速口径改用本区间。
+     */
+    private static final double START_S_LIMIT_MIN = 1000.0;
+    private static final double START_S_LIMIT_MAX = 3000.0;
     private static final int RUNS = SEED_GROUPS * RUNS_PER_GROUP;
 
     private static WaterwayGeometry buildWaterway() {
@@ -135,11 +147,79 @@ class ClosedLoopPrecisionTest {
     /** 蒙特卡洛只跑一次，五条判据共用同一份数据（固定随机种子，结果可复现）。 */
     private static Dataset cachedDataset;
 
+    /** 生产分段限速口径的数据集（11-07 序号 2），与基线数据集分开缓存。 */
+    private static Dataset cachedProductionLimitDataset;
+
+    /** 限速可观测区间上、注入 {@code unbounded()} 的对照组数据集。 */
+    private static Dataset cachedLimitWindowBaseline;
+
     private static Dataset dataset() {
         if (cachedDataset == null) {
-            cachedDataset = simulate();
+            cachedDataset = simulate(MultiStepPredictor.SpeedLimitLookup.unbounded(),
+                    START_S_MIN_DEFAULT, START_S_MAX_DEFAULT);
         }
         return cachedDataset;
+    }
+
+    /**
+     * 生产分段限速口径的数据集（11-07 序号 2 · 卢肄文）。
+     *
+     * <p><b>为什么要单独跑一份</b>：基线与既有五条判据都在「全航段不限速」下取数，而生产
+     * {@code application.yml} 的 {@code segment-speed-limits} 是生效的（末段 4000–5778.9 m 压到
+     * 2.5 m/s）。限速改变的是预测沿程速度剖面，进而改变 {@code σ_along} 的增长与标签真值，
+     * 覆盖率／归一化比／c 因子都可能与基线不同。文档里要求「不得用解析值代替跑批值」，
+     * 故这里真跑 240 轮，而不是拿基线的数字换个标签。
+     *
+     * <p><b>起点区间为什么必须从 5000–6000 改到 1000–3000</b>：原起点落在航道末段附近，
+     * 预测在时域内先触到航道终点而饱和，两种限速口径的最后一点都停在 {@code totalLengthM}，
+     * 差异被饱和吃掉（实测差值为 0.0 m，连小数位都相同）。把起点挪到限速段之前，
+     * 船才会在有效期内真正跨过 4000 m 的限速边界——这是「限速可观测」的前提，
+     * 不改就无法验证限速是否真的作用在预测上。
+     */
+    private static Dataset productionLimitDataset() {
+        if (cachedProductionLimitDataset == null) {
+            cachedProductionLimitDataset = simulate(productionSpeedLimitLookup(),
+                    START_S_LIMIT_MIN, START_S_LIMIT_MAX);
+        }
+        return cachedProductionLimitDataset;
+    }
+
+    /** 与 {@link #productionLimitDataset()} 同起点区间、但注入 {@code unbounded()} 的对照组。 */
+    private static Dataset limitWindowBaselineDataset() {
+        if (cachedLimitWindowBaseline == null) {
+            cachedLimitWindowBaseline = simulate(MultiStepPredictor.SpeedLimitLookup.unbounded(),
+                    START_S_LIMIT_MIN, START_S_LIMIT_MAX);
+        }
+        return cachedLimitWindowBaseline;
+    }
+
+    /**
+     * 生产在用的分段限速串，逐字取 {@code backend/wl-app/src/main/resources/application.yml}：
+     * {@code 0,2000,4.5;2000,4000,4.5;4000,5778.9,2.5}。
+     *
+     * <p>末段上限 5778.9 对应中心线台账 v2 全长 5778.9088 m（不得超过它，否则装配期告警）。
+     * 本类不读 yml，是为了让 {@code :wl-algo:test} 不依赖 wl-app 的资源目录；一致性由
+     * {@code SegmentSpeedLimitConfigTest} 守住（它直接读 yml 并断言同一个串）。
+     */
+    static MultiStepPredictor.SpeedLimitLookup productionSpeedLimitLookup() {
+        // 切换点必须显式给：子步要在限速变化处被切断，否则一个子步会跨过 4000 m
+        // 沿用 4.5 m/s 的限速（解析积分要求子步内 v_lim 为常量）
+        double[] switchPoints = {2000.0, 4000.0, 5778.9};
+        return new MultiStepPredictor.SpeedLimitLookup() {
+            @Override
+            public double speedLimitMs(double s) {
+                // 前两段均为 4.5 m/s（高于实测 sog 4.12，不成为瓶颈），末段 2.5 m/s 才真正压速
+                if (s < 4000.0) {
+                    return 4.5;
+                }
+                return s < 5778.9 ? 2.5 : Double.MAX_VALUE;
+            }
+
+            @Override
+            public double[] switchPointsM() {
+                return switchPoints.clone();
+            }
+        };
     }
 
     /**
@@ -166,7 +246,8 @@ class ClosedLoopPrecisionTest {
                 0.10, 0.03, 50.0, 180.0, 40.0, 60L, 1800L);
     }
 
-    private static Dataset simulate() {
+    private static Dataset simulate(MultiStepPredictor.SpeedLimitLookup speedLimit,
+            double startSMin, double startSMax) {
         MultiStepPredictor.Params predictParams = productionParams();
         int pointCount = predictParams.pointCount();
         double[] tauSec = new double[pointCount];
@@ -195,7 +276,7 @@ class ClosedLoopPrecisionTest {
             double phiE = Math.exp(-DT_SEC / TRUE_TAU_E_SEC);
             double noiseE = Math.sqrt(1.0 - phiE * phiE) * TRUE_SIGMA_E_M;
 
-            double s = 5000.0 + 1000.0 * random.nextDouble();
+            double s = startSMin + (startSMax - startSMin) * random.nextDouble();
             double e = TRUE_SIGMA_E_M * random.nextGaussian();
             double v = vMean + TRUE_SIGMA_V_MS * random.nextGaussian();
 
@@ -246,7 +327,7 @@ class ClosedLoopPrecisionTest {
                     alongFilter.varianceS(), alongFilter.covarianceSV(), alongFilter.varianceV(),
                     MultiStepPredictor.LateralForecast.from(lateralFilter,
                             lateralFilter.varianceE(), TRUE_SIGMA_E_M, TRUE_TAU_E_SEC),
-                    GEO, MultiStepPredictor.SpeedLimitLookup.unbounded());
+                    GEO, speedLimit);
 
             List<MultiStepPredictor.Sample> samples =
                     MultiStepPredictor.predict(input, predictParams);
@@ -414,6 +495,131 @@ class ClosedLoopPrecisionTest {
                 "样本数不足 200，c 的 95% 区间过宽");
         assertTrue(result.confidenceWidth() <= NeesCalibrator.MAX_CONFIDENCE_WIDTH,
                 "标定因子 95% 半宽超过 0.15");
+    }
+
+    // ───────────── 生产限速口径（11-07 序号 2 · 卢肄文） ─────────────
+
+    /**
+     * 生产分段限速下重跑同一套 240 轮，给覆盖率、归一化比、c 因子与有效期。
+     *
+     * <p>与基线的唯一差别是注入的 {@link MultiStepPredictor.SpeedLimitLookup}：基线为
+     * {@code unbounded()}，这里为生产配置串。参数、种子、真值过程、观测噪声全部不动，
+     * 因此两套数字的差异只能归因于「末段 4000–5778.9 m 压到 2.5 m/s」。
+     *
+     * <p><b>为什么必须真跑</b>：限速改变沿程速度剖面，{@code σ_along(τ)} 的增长形状与标签真值
+     * 都会变；用基线的数字冒充「生产口径」在文档里能过，但在验收问一句「哪次跑批出来的」就穿。
+     */
+    @Test
+    @DisplayName("11-07 生产限速 240 轮：覆盖率、归一化比、c 因子与有效期（真跑批）")
+    void productionLimitBatch_shouldMeetGuardrails() {
+        Dataset dataset = productionLimitDataset();
+        int limit = dataset.validityPoints();
+
+        printTable(dataset, limit);
+
+        // ① 2σ 覆盖率（有效期内）
+        int alongInside = 0;
+        int crossInside = 0;
+        int total = 0;
+        for (int i = 1; i <= limit; i++) {
+            for (int run = 0; run < RUNS; run++) {
+                if (Math.abs(dataset.errAlongM()[run][i]) <= 2.0 * dataset.sigmaAlongM()[run][i]) {
+                    alongInside++;
+                }
+                if (Math.abs(dataset.errCrossM()[run][i]) <= 2.0 * dataset.sigmaCrossM()[run][i]) {
+                    crossInside++;
+                }
+                total++;
+            }
+        }
+        double alongCoverage = (double) alongInside / total;
+        double crossCoverage = (double) crossInside / total;
+
+        // ② 平均归一化比
+        double alongRatioSum = 0.0;
+        double crossRatioSum = 0.0;
+        int countedCross = 0;
+        for (int i = 1; i <= limit; i++) {
+            alongRatioSum += ratioAlong(dataset, i);
+            if (dataset.tauSec()[i] <= 600.0) {
+                crossRatioSum += ratioCross(dataset, i);
+                countedCross++;
+            }
+        }
+        double alongRatio = alongRatioSum / Math.max(1, limit);
+        double crossRatio = crossRatioSum / Math.max(1, countedCross);
+
+        // ③ 标定因子 c（有效期末点，每轮一个样本）
+        NeesCalibrator calibrator = new NeesCalibrator();
+        for (int run = 0; run < RUNS; run++) {
+            calibrator.add(dataset.errAlongM()[run][limit], dataset.errCrossM()[run][limit],
+                    dataset.sigmaAlongM()[run][limit], dataset.sigmaCrossM()[run][limit]);
+        }
+        NeesCalibrator.Result result = calibrator.result();
+
+        System.out.printf(Locale.ROOT,
+                "%n[生产限速] %d 轮（%d 组种子）：有效期 %d 点 / %.0f s%n"
+                        + "[生产限速] 2σ 覆盖率 纵向 = %.2f%%、横向 = %.2f%%（样本 %d）%n"
+                        + "[生产限速] 归一化比 纵向 = %.3f、横向 = %.3f（τ≤600 s）%n"
+                        + "[生产限速] NEES 样本 %d、m = %.3f、c = %.3f、95%% CI = [%.3f, %.3f]%n",
+                RUNS, SEED_GROUPS, limit, dataset.tauSec()[limit],
+                alongCoverage * 100.0, crossCoverage * 100.0, total,
+                alongRatio, crossRatio,
+                result.sampleCount(), result.meanNees(), result.calibrationFactor(),
+                result.calibrationFactor() - result.confidenceWidth(),
+                result.calibrationFactor() + result.confidenceWidth());
+
+        // 护栏与基线同一套，不放宽：生产限速不该让带宽变得过保守或过乐观
+        assertTrue(alongCoverage >= 0.90 && alongCoverage <= 0.99,
+                "生产限速下纵向 2σ 覆盖率 " + alongCoverage + " 不在 [90%, 99%]");
+        assertTrue(crossCoverage >= 0.95,
+                "生产限速下横向 2σ 覆盖率 " + crossCoverage + " 低于 95%：带宽乐观，是危险方向");
+        assertTrue(alongRatio >= 0.6 && alongRatio <= 1.2,
+                "生产限速下纵向归一化比 " + alongRatio + " 不在 [0.6, 1.2]");
+        assertTrue(crossRatio >= 0.6 && crossRatio <= 1.2,
+                "生产限速下横向归一化比 " + crossRatio + " 不在 [0.6, 1.2]");
+        assertTrue(result.calibrationFactor() > 0.3 && result.calibrationFactor() < 2.0,
+                "生产限速下 c = " + result.calibrationFactor() + " 落在 (0.3, 2.0) 之外");
+        assertEquals(RUNS, result.sampleCount(), "每轮一个有效期末点样本");
+    }
+
+    /**
+     * 证明「注入真的接上了」：生产限速必须让长时距的纵向预测明显落后于不限速口径。
+     *
+     * <p><b>为什么需要这条</b>：限速可观测区间上，覆盖率／归一化比／c 因子可能与对照组非常接近，
+     * 若只断言护栏而不断言「限速确实改变了预测轨迹」，一个把 lookup 漏传的实现同样会全绿，
+     * 等于用假绿换结论。本用例以同一起点区间、同一批种子做配对比较，唯一差别是注入的 lookup。
+     *
+     * <p>限速生效后，从 4000 m 起速度从约 3 m/s 降到 2.5 m/s，长时距的预测里程应少
+     * 数百米（{@code (1/2.5 − 1/4.0) × 1778.9 ≈ 267 m} 的量级），故 {@code s_est − s_true}
+     * 必为显著负值。
+     */
+    @Test
+    @DisplayName("11-07 生产限速确实作用于预测：同起点区间下纵向预测明显落后于不限速口径")
+    void productionLimit_shouldActuallyBendTheAlongTrackProfile() {
+        Dataset baseline = limitWindowBaselineDataset();
+        Dataset limited = productionLimitDataset();
+        int last = baseline.tauSec().length - 1;
+
+        double baselineErr = meanErrAlong(baseline, last);
+        double limitedErr = meanErrAlong(limited, last);
+
+        System.out.printf(Locale.ROOT,
+                "[生产限速] τ=%.0f s 平均纵向误差 不限速 = %.1f m、生产限速 = %.1f m、差 = %.1f m%n",
+                baseline.tauSec()[last], baselineErr, limitedErr, limitedErr - baselineErr);
+
+        assertTrue(limitedErr - baselineErr < -50.0,
+                "生产限速在 τ=" + baseline.tauSec()[last] + " s 的纵向误差应比不限速口径至少低 50 m，"
+                        + "实测 不限速=" + baselineErr + " m、限速=" + limitedErr + " m；"
+                        + "若两者相同，说明限速 lookup 没被真正注入到预测里");
+    }
+
+    private static double meanErrAlong(Dataset dataset, int index) {
+        double sum = 0.0;
+        for (int run = 0; run < RUNS; run++) {
+            sum += dataset.errAlongM()[run][index];
+        }
+        return sum / RUNS;
     }
 
     // ───────────── 统计与打印 ─────────────

@@ -139,4 +139,115 @@ class PrecisePredictionEngineBendSigmaTest {
         assertEquals(expected, sigmaCrossAt(outcome, TAU_COMPARE_SEC), 0.1,
                 "自建参考线没有江道曲率语义，不得据此抬升横向带宽（否则正常航行船会被无端加宽）");
     }
+
+    // ───────────────── 台账 v2 十三点（11-07 序号 2 · 判据 19.43 m / 720 s） ─────────────────
+
+    /**
+     * 中心线台账 v2 的十三个顶点，逐点取自 {@code deploy/sql/014_centerline_v2.sql}。
+     *
+     * <p>全长 {@code 5778.9088 m}；唯一实折点在 {@code s = 2009.9314 m}（转角 11.32°）。
+     */
+    private static final double[][] V2_POINTS = {
+        {115.852, 28.646}, {115.853739, 28.650224}, {115.855479, 28.654448},
+        {115.857218, 28.658673}, {115.859, 28.663}, {115.861586, 28.666749},
+        {115.864236, 28.670593}, {115.866887, 28.674436}, {115.869537, 28.678279},
+        {115.872188, 28.682123}, {115.874838, 28.685966}, {115.877489, 28.689809},
+        {115.879, 28.692}
+    };
+
+    /** 唯一实折点的弧长，m。 */
+    private static final double V2_BEND_S = 2009.9314;
+
+    /** 折点之外的直线取样点，m（用于对照 validitySec）。 */
+    private static final double V2_STRAIGHT_S = 4500.0;
+
+    private static WaterwayGeometry v2Centerline() {
+        List<WaterwayGeometry.Vertex> vertices = new java.util.ArrayList<>();
+        for (double[] p : V2_POINTS) {
+            vertices.add(new WaterwayGeometry.Vertex(p[0], p[1]));
+        }
+        return new WaterwayGeometry(vertices);
+    }
+
+    /**
+     * 船恰好位于中心线 {@code s} 处、航向取该处走向的一帧观测。
+     *
+     * <p>位置与航向都从几何本身取，避免手写坐标与折线不同源而让 {@code s} 漂移——
+     * 本用例要比较的是同一里程上的 σ，里程差会直接污染结论。
+     */
+    private static AisMessage observationAt(WaterwayGeometry centerline, double s) {
+        WaterwayGeometry.Vertex point = centerline.pointAt(s);
+        return new AisMessage("413000001", "测试船", point.lon(), point.lat(), 7.78,
+                centerline.courseDegAt(s), T0_MS);
+    }
+
+    private static PrecisePredictionEngine.Outcome predictAt(WaterwayGeometry centerline, double s) {
+        PrecisePredictionEngine engine = new PrecisePredictionEngine(
+                SETTINGS, PrecisePredictionEngine.Params.defaults(), centerline);
+        return engine.predict(observationAt(centerline, s)).orElseThrow();
+    }
+
+    @Test
+    @DisplayName("台账 v2 十三点：弯道 σ_cross 在 τ=720 s 越过 40 m，直线要到 840 s")
+    void v2Bend_shouldCrossCrossTrackToleranceAt720() {
+        WaterwayGeometry centerline = v2Centerline();
+
+        // 先钉住输入口径：全长与 014 的 s_m 末行一致，否则下面的 s 取样点不对应真实折点
+        assertEquals(5778.9088, centerline.totalLengthM(), 0.001,
+                "十三点全长须与台账 s_m 末行一致");
+
+        PrecisePredictionEngine.Outcome atBend = predictAt(centerline, V2_BEND_S);
+        PrecisePredictionEngine.Outcome atStraight = predictAt(centerline, V2_STRAIGHT_S);
+
+        assertEquals(19.43, CenterlineBendRef.sigmaE(centerline, V2_BEND_S), 0.01,
+                "折点处 σ_e 应为 19.43 m（√(15² + 12.34²)）");
+        assertEquals(15.00, CenterlineBendRef.sigmaE(centerline, V2_STRAIGHT_S), 1e-3,
+                "直线段 σ_e 停在观测口径 15.00 m");
+
+        // 横向越限时距：弯道 720 s 首次 >40 m，直线到 840 s 才越限
+        assertEquals(41.03, sigmaCrossAt(atBend, 720), 0.05,
+                "弯道 σ_cross 在 τ=720 s 为 41.03 m，越过 wTolM=40 m");
+        assertEquals(36.60, sigmaCrossAt(atStraight, 720), 0.05,
+                "同里程的直线段在 τ=720 s 只有 36.60 m，尚未越限");
+        assertEquals(40.20, sigmaCrossAt(atStraight, 840), 0.05,
+                "直线段在 τ=840 s 才到 40.20 m");
+
+        // 700 s 前后两侧都还没截断，弯道恒大于直线：几何项是唯一差异来源
+        assertTrue(sigmaCrossAt(atBend, TAU_COMPARE_SEC)
+                        > sigmaCrossAt(atStraight, TAU_COMPARE_SEC) + 4.0,
+                "弯道 σ_cross 应比直线大出几何项的量级");
+    }
+
+    @Test
+    @DisplayName("台账 v2 十三点：validitySec 由纵向先撞线，弯直同为 360 s")
+    void v2Validity_isBoundByAlongTrackNotCurvature() {
+        WaterwayGeometry centerline = v2Centerline();
+        PrecisePredictionEngine.Outcome atBend = predictAt(centerline, V2_BEND_S);
+        PrecisePredictionEngine.Outcome atStraight = predictAt(centerline, V2_STRAIGHT_S);
+
+        // validitySec = min{τ : σ_along > lTolM(180 m) 或 σ_cross > wTolM(40 m)}
+        // σ_along 在 τ=300 为 166.36 m、τ=360 已越过 180 m，早于任何横向越限，
+        // 故两处都停 360 s——曲率影响的是「横向越限时距」，不是 validitySec 本身。
+        assertEquals(360L, atBend.validitySec(),
+                "弯道 validitySec 仍为 360 s：纵向 σ_along 在 360 s 先越过 lTolM=180 m");
+        assertEquals(360L, atStraight.validitySec(),
+                "直线段同样 360 s；若此值随曲率变化，说明 validity 的取小口径被改坏了");
+
+        assertEquals(166.36, alongAt(atBend, 300), 0.05,
+                "τ=300 的 σ_along=166.36 m 尚未越限，说明 360 s 是纵向撞线时刻");
+    }
+
+    /** 取 {@code τ} 处的 σ_along。 */
+    private static double alongAt(PrecisePredictionEngine.Outcome outcome, int tauSec) {
+        int index = tauSec / (int) SETTINGS.stepSec();
+        return outcome.points().get(index).sigmaAlongM();
+    }
+
+    /** 只为断言 σ_e 而设的薄包装，避免测试直接依赖 algo 包内部实现细节。 */
+    private static final class CenterlineBendRef {
+        static double sigmaE(WaterwayGeometry geometry, double s) {
+            return com.waterlogistics.algo.estimation.CenterlineBend
+                    .sigmaEPredictionM(SETTINGS.sigma0CrossM(), 50.0, geometry, s);
+        }
+    }
 }

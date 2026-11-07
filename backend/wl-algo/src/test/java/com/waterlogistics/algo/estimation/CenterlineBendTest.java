@@ -138,4 +138,80 @@ class CenterlineBendTest {
         assertEquals(0.0, CenterlineBend.curvatureRadPerM(null, 1000.0), 0.0);
         assertEquals(15.0, CenterlineBend.sigmaEPredictionM(15.0, 50.0, null, 1000.0), 1e-12);
     }
+
+    // ───────────────── 台账 v2 十三点（11-07 序号 2 · 判据 19.43 m） ─────────────────
+
+    /**
+     * 中心线台账 v2 的十三个顶点，逐点取自 {@code deploy/sql/014_centerline_v2.sql}
+     * （{@code chart_id = GANJIANG}、{@code version = 2}）。
+     *
+     * <p>十三点由三个权威锚点（朝阳大桥 → 南昌大桥 → 八一大桥）按 ≤500 m 等弧长加密而来，
+     * 与 {@code application.yml} 的 {@code wavenest.m2.prediction.centerline} 同一组坐标。
+     * 台账侧 {@code s_m} 的末行为 {@code 5778.9088}，本类用同一套
+     * {@link WaterwayGeometry#METERS_PER_DEG_LAT} 复算，逐点零差（见下方断言）。
+     */
+    private static final double[][] V2_POINTS = {
+        {115.852, 28.646}, {115.853739, 28.650224}, {115.855479, 28.654448},
+        {115.857218, 28.658673}, {115.859, 28.663}, {115.861586, 28.666749},
+        {115.864236, 28.670593}, {115.866887, 28.674436}, {115.869537, 28.678279},
+        {115.872188, 28.682123}, {115.874838, 28.685966}, {115.877489, 28.689809},
+        {115.879, 28.692}
+    };
+
+    /** 台账 v2 的 {@code s_m}，与 {@code 014} 逐行一致，用于核对复算口径。 */
+    private static final double[] V2_S_M = {
+        0.0000, 499.4026, 998.8360, 1498.3386, 2009.9314, 2497.2093, 2996.7528,
+        3496.2468, 3995.6853, 4495.2646, 4994.6933, 5494.1676, 5778.9088
+    };
+
+    /** 唯一实折点（第四段末、第五段首）的弧长，m。 */
+    private static final double V2_BEND_S = 2009.9314;
+
+    private static WaterwayGeometry v2Centerline() {
+        List<WaterwayGeometry.Vertex> vertices = new ArrayList<>();
+        for (double[] p : V2_POINTS) {
+            vertices.add(new WaterwayGeometry.Vertex(p[0], p[1]));
+        }
+        return new WaterwayGeometry(vertices);
+    }
+
+    @Test
+    @DisplayName("台账 v2 十三点：全长与逐点 s_m 与 014 一致（复算口径同源）")
+    void v2Centerline_shouldReproduceLedgerSM() {
+        WaterwayGeometry geometry = v2Centerline();
+
+        assertEquals(13, geometry.vertexCount(), "十三点");
+        assertEquals(V2_S_M[V2_S_M.length - 1], geometry.totalLengthM(), 0.001,
+                "全长须与 014 的 s_m 末行 5778.9088 一致；不一致说明复算口径（每段 latRef 取两端均值）"
+                        + "与灌库脚本不同源，后续曲率与限速段边界都会错位");
+    }
+
+    @Test
+    @DisplayName("台账 v2 唯一折点：κ=3.95e-4、弦高 12.34 m、σ_e 由 15.00 抬到 19.43 m")
+    void v2Bend_shouldInflateSigmaTo1943() {
+        WaterwayGeometry geometry = v2Centerline();
+
+        // 折点处：窗口 500 m 跨过 11.32° 的转角
+        assertEquals(3.9499e-4, CenterlineBend.curvatureRadPerM(geometry, V2_BEND_S), 1e-8,
+                "等效曲率应为 Δψ/Λ（11.32° 落在 500 m 窗内），对应转弯半径约 2532 m");
+        assertEquals(12.34, CenterlineBend.sagittaM(geometry, V2_BEND_S), 0.01,
+                "弦高 h=Λ²κ/8；这是「用折线代替圆弧」丢掉的确定性几何量");
+
+        // 判据值：19.43 m（√(15² + 12.34²)）
+        assertEquals(19.43, CenterlineBend.sigmaEPredictionM(15.0, 50.0, geometry, V2_BEND_S), 0.01,
+                "弯道处 σ_e 应为 19.43 m：观测口径 15 m 与几何弦高 12.34 m 按独立量平方和合成");
+    }
+
+    @Test
+    @DisplayName("台账 v2 直线段：σ_e 严格停在 15.00 m，不给正常航行加料")
+    void v2StraightSections_shouldKeepSigmaAtObservationFloor() {
+        WaterwayGeometry geometry = v2Centerline();
+
+        // 折点之外的两个采样点，曲率应小到不改变 σ_e（保证旧用例逐点不变）
+        // 容差 1e-3：加密点个别顶点有 0.002° 级别的残余转角，σ_e 只差 1e-5 量级
+        for (double s : new double[] {1000.0, 4500.0}) {
+            assertEquals(15.0, CenterlineBend.sigmaEPredictionM(15.0, 50.0, geometry, s), 1e-3,
+                    "s=" + s + " 不在折点附近，σ_e 必须等于观测口径——这是「回归不失败」的前提");
+        }
+    }
 }
