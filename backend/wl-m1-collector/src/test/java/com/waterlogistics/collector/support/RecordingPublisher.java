@@ -2,6 +2,7 @@ package com.waterlogistics.collector.support;
 
 import com.waterlogistics.collector.publisher.MqDataPublisher;
 import com.waterlogistics.contract.mq.AisMessage;
+import com.waterlogistics.contract.mq.GoodsRecycleConfirmation;
 import com.waterlogistics.contract.mq.UavTelemetry;
 import com.waterlogistics.contract.mq.WeatherData;
 
@@ -18,6 +19,7 @@ public class RecordingPublisher extends MqDataPublisher {
     private final List<AisMessage> ais = new ArrayList<>();
     private final List<UavTelemetry> telemetry = new ArrayList<>();
     private final List<WeatherData> weather = new ArrayList<>();
+    private final List<GoodsRecycleConfirmation> recycles = new ArrayList<>();
 
     public RecordingPublisher() {
         super(null);
@@ -38,6 +40,11 @@ public class RecordingPublisher extends MqDataPublisher {
         weather.add(msg);
     }
 
+    @Override
+    public void publishGoodsRecycleConfirmation(GoodsRecycleConfirmation msg) {
+        recycles.add(msg);
+    }
+
     public List<AisMessage> ais() {
         return ais;
     }
@@ -50,9 +57,14 @@ public class RecordingPublisher extends MqDataPublisher {
         return weather;
     }
 
+    public List<GoodsRecycleConfirmation> recycles() {
+        return recycles;
+    }
+
     public void clear() {
         ais.clear();
         telemetry.clear();
         weather.clear();
+        recycles.clear();
     }
 }

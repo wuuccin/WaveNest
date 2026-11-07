@@ -310,6 +310,9 @@ public class PredictionConfig {
         WaterwayGeometry fromSpec = parseCenterline(centerlineSpec);
         if (fromSpec == null) {
             log.info("中心线台账与配置串均未提供，精算参考线沿用实测窗口建线的退化口径");
+        } else if (ledger != null && CenterlineLedger.MODE_BASELINE.equals(ledger.mode())) {
+            log.info("中心线台账按显式降级档跳过，参考线使用内置基线（配置串解析的 {} 点折线）",
+                    fromSpec.vertexCount());
         }
         return fromSpec;
     }

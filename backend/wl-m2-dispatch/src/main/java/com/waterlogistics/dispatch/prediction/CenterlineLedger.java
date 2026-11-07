@@ -4,11 +4,14 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.waterlogistics.algo.estimation.WaterwayGeometry;
 import com.waterlogistics.storage.entity.CenterlinePointEntity;
 import com.waterlogistics.storage.repository.CenterlinePointMapper;
+import jakarta.annotation.PostConstruct;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -31,12 +34,24 @@ import org.springframework.stereotype.Component;
  *       最近点 ＋ 前方一段，不含尾端直线延伸；投影用平面近似（赣江段尺度下误差可忽略）。</li>
  * </ul>
  *
- * <h3>失败语义</h3>
- * <p>台账是参考线的「有则更好」来源，不是预测成立的前提：表不存在、台账号无行、
- * 顶点不足两个、里程自检不过、查询抛错——一律记 warn 并返回 {@code null}，
- * 由 {@link PredictionConfig} 回落到配置串，再回落实测窗口建线的退化口径。
- * <b>只告警一次</b>：台账缺失是装配期状态，会持续存在于每一拍，逐拍 warn 会刷满日志
- * （与 {@code PredictionService.preciseEngineMissingWarned} 同一考虑）。
+ * <h3>失败语义与启动依赖（11-07 弥补 D-08／D-17）</h3>
+ * <p>{@link #load()} 本身仍是「有则更好」的读取：表不存在、台账号无行、顶点不足两个、
+ * 里程自检不过、查询抛错——一律记 warn 并返回 {@code null}，由 {@link PredictionConfig}
+ * 回落到配置串，再回落实测窗口建线的退化口径。<b>只告警一次</b>：台账缺失是装配期状态，
+ * 会持续存在于每一拍，逐拍 warn 会刷满日志。
+ *
+ * <p><b>但「静默降级」不再被允许发生在启动期而不留痕</b>：{@link #enforceStartupDependency()}
+ * 在 Bean 初始化时读一次台账，按 {@code wavenest.m2.prediction.centerline-ledger-mode} 分档：
+ * <ul>
+ *   <li>{@code required}（缺省，生产唯一许可档）：载入失败直接抛
+ *       {@link IllegalStateException}，异常文案给出可直接执行的灌库命令，
+ *       应用启动失败——硬判据 6 的「运行时闭环」因此有失败信号；</li>
+ *   <li>{@code baseline}（<b>显式</b>降级，仅测试与本地联调）：打 WARN 并改用
+ *       {@code wavenest.m2.prediction.centerline} 配置串作内置基线，不阻断启动。</li>
+ * </ul>
+ * 降级档必须显式写出，不能靠「库里恰好没表」隐式触发；非法取值按安全侧回落 {@code required}。
+ * 纯单测用两参构造器直接 {@code new} 本类，不经过容器、不触发 {@code @PostConstruct}，
+ * 启动检查对纯单测路径无影响。
  *
  * <p>读取发生在<b>装配期一次</b>（引擎构造时传入，运行期不再查表）：中心线在演示期不变，
  * 逐拍查表只会拖慢预测链路；换版本走重启，语义与「换曲线是运维事件」一致。
@@ -52,24 +67,91 @@ public class CenterlineLedger {
     /** 缺省台账号（013_centerline.sql 灌的赣江定稿航段）。 */
     static final String DEFAULT_CHART_ID = "GANJIANG";
 
+    /** 启动依赖档：强依赖，载入失败即启动失败（缺省、生产唯一许可档）。 */
+    static final String MODE_REQUIRED = "required";
+
+    /** 启动依赖档：显式降级到内置基线并打 WARN，仅测试与本地联调。 */
+    static final String MODE_BASELINE = "baseline";
+
+    /** 启动依赖档属性键。 */
+    static final String KEY_LEDGER_MODE = "wavenest.m2.prediction.centerline-ledger-mode";
+
+    /** 缺表时异常文案里的可直接执行灌库命令。 */
+    static final String HYDRATE_COMMAND =
+            "docker compose -f deploy/docker-compose.yml exec -T mysql "
+                    + "mysql -uroot -pwavenest wavenest < deploy/sql/014_centerline_v2.sql";
+
     private final CenterlinePointMapper mapper;
 
     private final String chartId;
+
+    private final String mode;
 
     private volatile boolean failureWarned;
 
     /** 装配期读一次后的缓存：台账在演示期不变，运行期复用同一几何对象。 */
     private volatile WaterwayGeometry cached;
 
+    @Autowired
     public CenterlineLedger(CenterlinePointMapper mapper,
-            @Value("${wavenest.m2.prediction.centerline-chart:GANJIANG}") String chartId) {
+            @Value("${wavenest.m2.prediction.centerline-chart:GANJIANG}") String chartId,
+            @Value("${wavenest.m2.prediction.centerline-ledger-mode:required}") String mode) {
         this.mapper = mapper;
         this.chartId = chartId == null || chartId.isBlank() ? DEFAULT_CHART_ID : chartId.trim();
+        String normalized = mode == null ? MODE_REQUIRED : mode.trim().toLowerCase(Locale.ROOT);
+        if (!MODE_REQUIRED.equals(normalized) && !MODE_BASELINE.equals(normalized)) {
+            log.warn("中心线台账启动依赖档取值非法（{}），已按安全侧回落 {}；合法取值：{}／{}",
+                    mode, MODE_REQUIRED, MODE_REQUIRED, MODE_BASELINE);
+            normalized = MODE_REQUIRED;
+        }
+        this.mode = normalized;
+    }
+
+    /**
+     * 纯单测兼容构造器：默认强依赖档，且不经容器、不触发启动检查。
+     *
+     * <p>本构造器不覆盖启动依赖语义；启动期行为由容器路径的
+     * {@link #enforceStartupDependency()} 负责。
+     */
+    public CenterlineLedger(CenterlinePointMapper mapper, String chartId) {
+        this(mapper, chartId, MODE_REQUIRED);
     }
 
     /** 本读取器服务的台账号。 */
     public String chartId() {
         return chartId;
+    }
+
+    /** 当前生效的启动依赖档（{@code required} 或 {@code baseline}）。 */
+    public String mode() {
+        return mode;
+    }
+
+    /**
+     * 启动期强依赖检查（D-08／D-17）。
+     *
+     * <p>容器装配时执行一次：台账载入成功即放行；载入失败按档位处置。
+     * 纯单测用两参构造器直接实例化，不经过本方法。
+     */
+    @PostConstruct
+    void enforceStartupDependency() {
+        if (load() != null) {
+            return;
+        }
+        if (MODE_BASELINE.equals(mode)) {
+            log.warn("中心线台账不可用，已按 {} = {} 显式降级启动：参考线改用 "
+                            + "wavenest.m2.prediction.centerline 内置基线（配置串为空时退化为逐船自建）。"
+                            + "本档仅供测试与本地联调，生产环境不得放宽。chart={}",
+                    KEY_LEDGER_MODE, MODE_BASELINE, chartId);
+            return;
+        }
+        throw new IllegalStateException(
+                "中心线台账强依赖未满足：chart=" + chartId
+                        + " 未能从 centerline_point 载入可用折线（表缺失、无行、顶点不足或里程自检不过）。"
+                        + "请先灌库：" + HYDRATE_COMMAND
+                        + "（空数据卷首次启动会自动执行 deploy/sql 下全部脚本）。"
+                        + "仅测试与本地联调可显式降级："
+                        + "-D" + KEY_LEDGER_MODE + "=" + MODE_BASELINE);
     }
 
     /**

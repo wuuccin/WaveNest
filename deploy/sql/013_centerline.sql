@@ -1,5 +1,11 @@
 -- =====================================================================
--- 航道中心线台账（11-06 序号 2 · 杨添爻）
+-- 航道中心线台账 v1：3 锚点历史基线（11-06 序号 2 · 杨添爻）
+--
+-- ★ 版本状态（11-07 弥补计划 D-07／D-12／D-19）：本脚本灌的 version = 1 三行
+--   只是历史基线，不再是运行对象。运行对象已由 014_centerline_v2.sql 的
+--   version = 2 十三点折线取代（与 application.yml 的 centerline 配置串同源），
+--   读取器 CenterlineLedger 取同一 chart_id 下的最大 version。
+--   本文件保留原 INSERT 不改写，仅供空数据卷初始化留痕；已有卷另行灌 014。
 --
 -- 背景：精算预测的参考线此前只有两条来源——配置串
 --   wavenest.m2.prediction.centerline（lon,lat;...）与「本船最近实测轨迹 ＋ 尾端直线延伸」
@@ -19,14 +25,21 @@
 --
 -- 定稿依据（2026-10-28 图上放样，106-演示基准值台账「已定」，坐标勿改）：
 --   朝阳 115.852/28.646 → 南昌 115.859/28.663 → 八一 115.879/28.692
---   折线全长 5785.5 m；NEST-01（115.848/28.642）垂距 592 m、沿程 0.00 km；
+--   折线全长 5778.9088 m（按 014 同一口径重算：METERS_PER_DEG_LAT × cos(段两端纬度均值)）；
+--   旧注释写的 5785.5 m 是另一种几何口径，与本表 s_m 列不同源，已作废。
+--   NEST-01（115.848/28.642）垂距 592 m、沿程 0.00 km；
 --   NEST-02（115.867/28.698）垂距 1349 m、沿程 5.75 km；
---   船起点（115.8630/28.6680，11-06 清单口径）垂距 46 m、沿程 2.69 km；
 --   两巢直线距离 6.50 km。
 --
--- 执行方式：空数据卷由 compose 初始化自动执行；
--- 已有卷手工执行（管道方式，防 Windows 重定向编码问题）：
---   Get-Content -Encoding UTF8 -Raw 013_centerline.sql | docker exec -i wavenest-mysql mysql --default-character-set=utf8mb4 -uroot -p<pwd> wavenest
+-- 船起点口径（与 version 无涉，勿按本段旧值改坐标）：本段旧注的
+--   115.8630/28.6680 垂距 46 m、沿程 2.69 km 是 11-06 清单前的旧起点；
+--   定稿起点为 115.8611/28.6660，按 v2 十三点折线复核沿程 2401.370 m（2.40 km）、
+--   垂距 2.558 m，见 106-演示基准值台账 §3。中心线三个锚点坐标不改。
+--
+-- 执行方式：空数据卷由 compose 初始化自动执行；已有卷须另灌 014_centerline_v2.sql。
+--   docker compose -f deploy/docker-compose.yml exec -T mysql mysql -uroot -pwavenest wavenest < deploy/sql/014_centerline_v2.sql
+-- Windows PowerShell 亦可走管道（防重定向编码问题）：
+--   Get-Content -Encoding UTF8 -Raw deploy/sql/014_centerline_v2.sql | docker exec -i wavenest-mysql mysql --default-character-set=utf8mb4 -uroot -pwavenest wavenest
 -- =====================================================================
 
 SET NAMES utf8mb4;

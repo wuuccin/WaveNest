@@ -103,10 +103,15 @@ public class CargoNestGate {
     /**
      * 货物是否已到巢就绪：存在该订单的 goods 行，且 {@code status='已就绪'}
      * 且 {@code location} 等于货巢（与 AdmissionInputAssembler 的 goodsReady 口径一致）。
+     *
+     * <p><b>D-01</b>：空货巢分支返回 true——未指定货巢的订单不经过货到巢关
+     * （{@link #evaluate} 已短路），其货物在建行时即置「已就绪」，此处照实反映。
+     * 调用点 {@code CargoGateWaker} 拿到的结论与门关一致，不会出现「门关放行、
+     * 唤醒器仍判未就绪」的双口径。
      */
     public boolean isCargoReady(String orderId, String cargoNestId) {
         if (cargoNestId == null || cargoNestId.isBlank()) {
-            return false;
+            return true;
         }
         List<GoodsEntity> goods = goodsMapper.selectList(new LambdaQueryWrapper<GoodsEntity>()
                 .eq(GoodsEntity::getOrderId, orderId)

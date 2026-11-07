@@ -76,6 +76,13 @@ wavenest:
         max-lon: 115.921
         min-lat: 28.660
         max-lat: 28.767
+      # 11-07 弥补 D-17：中心线台账启动依赖档。required＝缺省（生产唯一许可档），
+      # 应用启动期检查 centerline_point，缺表／无行／顶点不足／里程自检不过直接启动失败，
+      # 异常文案给可直接执行的灌库命令；baseline＝显式降级，打 WARN 并改用下面的
+      # centerline 配置串作内置基线，仅测试与本地联调可用，生产环境不得放宽。
+      # 测试用 application-sim.yml（test resources）显式写 baseline；本地联调在
+      # application-local.yml 或 -D 参数里显式写 baseline，不得靠"库里恰好没表"隐式降级。
+      centerline-ledger-mode: required
       # 阶段二 2 真航道中心线：朝阳大桥 → 南昌大桥 → 八一大桥，三个权威锚点按 ≤500 m 加密至 13 点。
       # 锚点坐标取《73》§3.1 的三座桥示意坐标；相邻锚点之间按等弧长线性插值。
       # 留空则回落到「本船实测窗口建参考线」的退化口径。

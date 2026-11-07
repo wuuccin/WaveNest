@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.waterlogistics.contract.order.OrderView;
 import com.waterlogistics.contract.rest.WaitReason;
+import com.waterlogistics.contract.state.GoodsStatus;
 import com.waterlogistics.contract.state.OrderStatus;
 import com.waterlogistics.dispatch.gate.DispatchGateService;
 import com.waterlogistics.dispatch.goods.GoodsLifecycleService;
@@ -51,6 +52,9 @@ public class TaskQueueService {
      * 已完成／终止态／飞行中（去程中／末段交接中／返航中）一律拒绝——飞行中回退会把
      * 正在执行的无人机直接置「空闲」，破坏 23 §7 无人机状态机。
      */
+    /** 真实投放回执的交付凭证操作类型（D-02；写进 task_log 供审计与幂等核查）。 */
+    public static final String OP_TYPE_DELIVERY_RECEIPT = "投放回执-交付确认";
+
     private static final Set<OrderStatus> REQUEUEABLE = EnumSet.of(
             OrderStatus.DISPATCHED, OrderStatus.DISPATCHING,
             OrderStatus.WAIT_DISPATCH, OrderStatus.ACCEPTED_WAIT_WAKE);
@@ -284,8 +288,11 @@ public class TaskQueueService {
     /**
      * 投放回执确认：末段交接中 → 返航中（脱离返航）。
      *
-     * <p><b>幂等</b>：时间兜底可能已把订单推进到返航中或已完成，此时直接返回，
-     * 不重复写日志。只有仍停在末段交接中的订单才允许推进。
+     * <p><b>D-02／D-14（11-07 弥补）</b>：真实投放回执是唯一交付凭证。
+     * 时间兜底把订单推到「返航中」后到达的回执<b>不得静默丢弃</b>——同样补记交付凭证，
+     * 由下一拍 {@code FlightPhaseAdvancer} 凭该凭证推进「已完成」。
+     *
+     * <p>幂等：货物已是「已交付」时只记一条 info，不重复写货物行与 {@code task_log}。
      *
      * @throws IllegalStateException 订单不存在，或状态不属于末段交接中、返航中、已完成
      */
@@ -296,14 +303,47 @@ public class TaskQueueService {
             throw new IllegalStateException("订单不存在：" + orderId);
         }
         OrderStatus current = OrderStatus.fromValue(order.getStatus());
-        if (current == OrderStatus.RETURNING || current == OrderStatus.FINISHED) {
+        if (current == OrderStatus.FINISHED) {
+            // 已完成：交付凭证必然已存在，重复回执幂等返回
             return;
         }
-        if (current != OrderStatus.HANDOVER) {
+        if (current != OrderStatus.HANDOVER && current != OrderStatus.RETURNING) {
             throw new IllegalStateException("订单 " + orderId + " 当前状态 " + current.getValue()
                     + " 不允许标记交接完成");
         }
-        transition(order, OrderStatus.HANDOVER, OrderStatus.RETURNING, "投放回执-交接完成", null);
+        recordDeliveryReceipt(order);
+        if (current == OrderStatus.HANDOVER) {
+            transition(order, OrderStatus.HANDOVER, OrderStatus.RETURNING, "投放回执-交接完成", null);
+        }
+        // 时间兜底先到（当前已在返航中）：只补凭证，不改订单态，等下一拍推进
+    }
+
+    /**
+     * 落交付凭证：货物写「已交付」＋ {@code task_log} 留痕，二者同事务。
+     *
+     * <p>货物状态本身就是幂等键：重复回执发现已是「已交付」即返回，不二次写入。
+     * 纯单测包内构造器不注入 {@code goodsLifecycleService} 时跳过，不覆盖货物链。
+     */
+    private void recordDeliveryReceipt(OrderTaskEntity order) {
+        if (goodsLifecycleService == null) {
+            return;
+        }
+        if (goodsLifecycleService.isDelivered(order.getOrderId())) {
+            log.info("投放回执重复，交付凭证已存在：orderId={}", order.getOrderId());
+            return;
+        }
+        goodsLifecycleService.deliver(order.getOrderId(), order.getDroneId());
+        TaskLogEntity entry = new TaskLogEntity();
+        entry.setOrderId(order.getOrderId());
+        entry.setOpType(OP_TYPE_DELIVERY_RECEIPT);
+        // from/to 记货物状态而不是订单状态：交付凭证是货物链事件，写成「返航中→返航中」
+        // 会被按订单状态扫飞行阶段的查询误当成一次阶段迁移，也会让状态跳数断言失真。
+        entry.setFromStatus(GoodsStatus.LOADED.getValue());
+        entry.setToStatus(GoodsStatus.DELIVERED.getValue());
+        entry.setTs(LocalDateTime.ofInstant(Instant.ofEpochMilli(System.currentTimeMillis()), DB_ZONE));
+        taskLogMapper.insert(entry);
+        log.info("真实投放回执已落交付凭证：orderId={} status={}",
+                order.getOrderId(), order.getStatus());
     }
 
     /**
@@ -332,10 +372,6 @@ public class TaskQueueService {
         if (updated != 1) {
             throw new IllegalStateException("订单 " + order.getOrderId()
                     + " 状态冲突：从 " + from.getValue() + " 流转到 " + to.getValue() + " 失败");
-        }
-        if (from == OrderStatus.HANDOVER && to == OrderStatus.RETURNING
-                && goodsLifecycleService != null) {
-            goodsLifecycleService.deliver(order.getOrderId(), order.getDroneId());
         }
         order.setStatus(to.getValue());
         order.setWaitReason(waitReasonCode);

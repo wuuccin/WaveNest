@@ -1,0 +1,8 @@
+# 11-07 弥补 D-17：wl-app 装配测试的显式降级档。
+# application.yml 激活 sim profile，本文件按 profile 叠加并覆盖同名键，
+# 让 7 个 @SpringBootTest 无需逐个改注解即可显式声明"不依赖 centerline_point 表"。
+# 生产与本地联调的默认档仍是 required（强依赖，缺表启动失败），生产环境不得放宽。
+wavenest:
+  m2:
+    prediction:
+      centerline-ledger-mode: baseline
