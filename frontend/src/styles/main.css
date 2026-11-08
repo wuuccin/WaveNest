@@ -114,7 +114,7 @@ h1, h2, p { margin: 0; }
 .metric-strip strong { display: block; margin: 6px 0 3px; color: var(--ink); font-size: 25px; line-height: 1; font-variant-numeric: tabular-nums; }
 .metric-strip strong.value-alert { color: var(--red); }
 
-.dashboard-layout { display: grid; grid-template-columns: minmax(0, 1fr) 368px; gap: 18px; align-items: start; }
+.dashboard-layout { display: grid; grid-template-columns: minmax(0, 1fr) 368px; gap: 18px; align-items: stretch; }
 .map-panel, .mission-panel, .table-panel, .gate-panel, .intervene-panel, .form-panel, .crew-status-panel, .replay-panel, .event-panel, .timeline-panel { border: 1px solid var(--line); border-radius: 8px; background: var(--paper); box-shadow: var(--shadow); }
 .map-panel { min-width: 0; overflow: hidden; }
 .panel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; padding: 17px 19px; }
@@ -129,6 +129,13 @@ h1, h2, p { margin: 0; }
 .legend-dot.drone { background: var(--blue); }
 .legend-target { width: 11px; height: 11px; display: inline-block; border: 2px solid var(--orange); border-radius: 50%; }
 .map-view { min-width: 0; }
+/* 任务总览页：左列地图面板撑满栅格行高，地图容器按剩余空间伸缩。
+   栅格行高取两列较高者（右侧任务栏 963px），左列若不撑满，其下方会留出大片空白
+   （2026-11-08 实测 1920×1080 视口留白 577px，页面被撑到 1521px）。
+   地图面板改为纵向弹性容器，地图容器 flex:1 填满剩余高度，留白随之消失。 */
+.dashboard-layout .map-panel { display: flex; flex-direction: column; }
+.dashboard-layout .map-view { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
+.dashboard-layout .map-shell { flex: 1 1 auto; height: auto; min-height: 420px; }
 .map-change-summary { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 13px; padding: 13px 18px; border-top: 1px solid #e7dbcb; background: #fff8ea; }
 .map-change-summary > div { display: grid; gap: 3px; }
 .map-change-summary span { color: #8b6639; font-size: 11px; font-weight: 750; }
@@ -610,7 +617,7 @@ footer { display: flex; justify-content: space-between; gap: 12px; padding: 15px
   .metric-strip span, .metric-strip small { font-size: 10px; }
   .dashboard-layout { gap: 10px; }
   .dashboard-layout .map-guide { gap: 5px 10px; padding: 6px 10px; font-size: 10px; }
-  .dashboard-layout .map-shell { height: clamp(165px, 20vh, 220px); }
+  .dashboard-layout .map-shell { min-height: 320px; }
   .dashboard-layout .map-summary > div { padding: 7px 10px; }
   .dashboard-layout .mission-panel .panel-head { padding: 10px 12px; }
   .dashboard-layout .mission-facts { margin-top: 7px; }
@@ -690,7 +697,7 @@ footer { display: flex; justify-content: space-between; gap: 12px; padding: 15px
   .workflow-card em { padding-top: 2px; }
   .metric-strip > div { padding: 4px 10px; }
   .metric-strip strong { font-size: 16px; }
-  .dashboard-layout .map-shell { height: 165px; }
+  .dashboard-layout .map-shell { min-height: 260px; }
   .demo-panel { grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 8px; }
   .demo-tools { grid-column: auto; padding-top: 0; border-top: 0; }
   .demo-tools summary { white-space: nowrap; font-size: 10px; }
