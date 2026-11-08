@@ -176,7 +176,8 @@ class CargoGateIntegrationTest {
         assertThat(activeSlotOf(orderId)).as("等货期间应持有巢时隙锁").isNotNull();
 
         // cargo-ready 到达（卢肄文序号 1 端点的 service 入口）→ 轮询放行
-        cargoReadyService.markReady(orderId);
+        // 登记必须带货物实际到达的巢编号：后端要与订单记的货巢比对，一致才放行
+        cargoReadyService.markReady(orderId, NEST);
         cargoGateWaker.tick();
 
         OrderTaskEntity released = orderTaskMapper.selectById(orderId);

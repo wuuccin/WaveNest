@@ -12,10 +12,12 @@ import com.waterlogistics.dispatch.alert.AlertDrivenDispatcher;
 import com.waterlogistics.dispatch.alert.HomecomingDecisionEvent;
 import com.waterlogistics.dispatch.alert.WeatherClearWaker;
 import com.waterlogistics.dispatch.gate.DispatchGateService;
+import com.waterlogistics.dispatch.order.CargoReadyService;
 import com.waterlogistics.dispatch.order.OrderAdmissionService;
 import com.waterlogistics.dispatch.order.OrderSubmitRequest;
 import com.waterlogistics.dispatch.order.OrderSubmitResponse;
 import com.waterlogistics.dispatch.prediction.PredictionService;
+import com.waterlogistics.dispatch.queue.CargoGateWaker;
 import com.waterlogistics.storage.entity.OrderTaskEntity;
 import com.waterlogistics.storage.entity.TaskLogEntity;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
@@ -43,14 +45,25 @@ import org.springframework.transaction.annotation.Transactional;
  * <p><b>隔离口径</b>：{@code DecisionCapture} 与消费器的 eventId 去重集是<b>上下文级单例</b>，
  * 事务只回滚 DB 不回滚内存态——广播断言一律按本用例的 eventId 过滤，不锁全量列表。
  */
-@SpringBootTest(properties =
+@SpringBootTest(properties = {
         // T1-5 起机巢在南昌航段、仿真器仍在旧域（杨添爻 T1-4 切换前），
         // 仿真 AIS 流会覆盖本测试手喂的船位快照导致候选全灭——关掉仿真流，测试独占喂数
-        "wavenest.sim.enabled=false")
+        "wavenest.sim.enabled=false",
+        // 货到巢关的后台轮询会与断言抢同一批订单（还会去 FOR UPDATE 抢机巢行锁），
+        // 本类自己按需驱动放行，故关掉后台轮询
+        "wavenest.m2.cargo-gate-poll-enabled=false"})
 @Transactional
 class AlertDrivenRescheduleTest {
 
-    private static final String SHIP = "123456789";
+    /**
+     * 测试专用船号。
+     *
+     * <p>不取演示船号 123456789：演示应用在跑时，它的仿真器每秒钟把该船号的 AIS 发到
+     * 消息队列，本测试手喂的船位快照会被覆盖，判定链读到的船位与测试预期不一致，
+     * 表现为「下单被判闸门熔断延后」「求解时快照已过期」这类与本用例无关的失败。
+     * 换成本用例独占的船号后，消息队列里演示应用的 AIS 影响不到本测试。
+     */
+    private static final String SHIP = "900000002";
     private static final String DRONE = "UAV-01";
     private static final long NOW = System.currentTimeMillis();
 
@@ -70,6 +83,25 @@ class AlertDrivenRescheduleTest {
     private TaskLogMapper taskLogMapper;
     @Autowired
     private DecisionCapture capture;
+    @Autowired
+    private CargoReadyService cargoReadyService;
+    @Autowired
+    private CargoGateWaker cargoGateWaker;
+
+    /**
+     * 登记货物到巢并由货到巢关轮询放行派机。
+     *
+     * <p>下单时刻系统会选定货巢，货物随之建成「未就绪」，派单前必须登记到巢才能放行；
+     * 系统未选定货巢时订单本就不经门关，直接跳过。
+     */
+    private void releaseCargoGate(String orderId) {
+        OrderTaskEntity order = orderTaskMapper.selectById(orderId);
+        if (order == null || order.getCargoNestId() == null || order.getCargoNestId().isBlank()) {
+            return;
+        }
+        cargoReadyService.markReady(orderId, order.getCargoNestId());
+        cargoGateWaker.tick();
+    }
 
     /** 收集返航复核广播（F1 的「广播」出口，进程内事件） */
     @TestConfiguration
@@ -107,6 +139,8 @@ class AlertDrivenRescheduleTest {
                 SHIP, 5.5, CARGOS[(int) (orderSeq.getAndIncrement() % CARGOS.length)],
                 System.currentTimeMillis() + 3_600_000L, "URGENT"));
         assertThat(resp.accepted()).isTrue();
+        // 系统下单时刻选定货巢 → 货物建行为「未就绪」→ 登记到巢并由轮询放行后才派发
+        releaseCargoGate(resp.orderId());
         OrderTaskEntity order = orderTaskMapper.selectById(resp.orderId());
         assertThat(order.getStatus()).isEqualTo(OrderStatus.DISPATCHED.getValue());
         assertThat(order.getMeetLon()).isNotNull();
@@ -235,6 +269,11 @@ class AlertDrivenRescheduleTest {
         OrderSubmitResponse resp = admissionService.submit(new OrderSubmitRequest(
                 SHIP, 5.5, "医疗物资", System.currentTimeMillis() + 3_600_000L, "URGENT"));
         assertThat(resp.accepted()).isTrue();
+        // 延后单从未过门关、没有持锁：先登记货物到巢，解除熔断后由气象唤醒器直接续编排到「已派发」
+        OrderTaskEntity deferredRow = orderTaskMapper.selectById(resp.orderId());
+        if (deferredRow.getCargoNestId() != null && !deferredRow.getCargoNestId().isBlank()) {
+            cargoReadyService.markReady(resp.orderId(), deferredRow.getCargoNestId());
+        }
         assertThat(orderTaskMapper.selectById(resp.orderId()).getStatus())
                 .isEqualTo(OrderStatus.ACCEPTED_WAIT_WAKE.getValue());
 

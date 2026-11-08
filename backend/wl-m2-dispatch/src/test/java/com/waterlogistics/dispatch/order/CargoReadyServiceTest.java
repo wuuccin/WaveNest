@@ -7,7 +7,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.waterlogistics.contract.state.GoodsStatus;
 import com.waterlogistics.storage.entity.GoodsEntity;
+import com.waterlogistics.storage.entity.OrderTaskEntity;
 import com.waterlogistics.storage.repository.GoodsMapper;
+import com.waterlogistics.storage.repository.OrderTaskMapper;
 import java.lang.reflect.Proxy;
 import java.util.ArrayList;
 import java.util.List;
@@ -29,10 +31,19 @@ class CargoReadyServiceTest {
 
     private static final String ORDER_ID = "ORD-1";
 
+    /** 订单记的货巢。 */
+    private static final String ORDER_NEST_ID = "NEST-01";
+
     private final List<GoodsEntity> table = new ArrayList<>();
 
     /** {@code updateById} 被调用的次数——幂等的直接证据。 */
     private int updateCalls;
+
+    /** 订单表内存行的货巢；为空表示订单没货巢。 */
+    private String orderNestId = ORDER_NEST_ID;
+
+    /** 订单是否存在。 */
+    private boolean orderExists = true;
 
     private CargoReadyService service;
 
@@ -40,7 +51,33 @@ class CargoReadyServiceTest {
     void setUp() {
         table.clear();
         updateCalls = 0;
-        service = new CargoReadyService(inMemoryMapper());
+        orderNestId = ORDER_NEST_ID;
+        orderExists = true;
+        service = new CargoReadyService(inMemoryMapper(), inMemoryOrderMapper());
+    }
+
+    /**
+     * 订单表桩：{@code selectOne} 返回一行带货巢的订单。
+     */
+    private OrderTaskMapper inMemoryOrderMapper() {
+        return (OrderTaskMapper) Proxy.newProxyInstance(
+                OrderTaskMapper.class.getClassLoader(), new Class<?>[]{OrderTaskMapper.class},
+                (proxy, method, args) -> {
+                    if ("selectOne".equals(method.getName())) {
+                        if (!orderExists) {
+                            return null;
+                        }
+                        OrderTaskEntity order = new OrderTaskEntity();
+                        order.setOrderId(ORDER_ID);
+                        order.setCargoNestId(orderNestId);
+                        return order;
+                    }
+                    Class<?> rt = method.getReturnType();
+                    if (rt == int.class) {
+                        return 0;
+                    }
+                    return rt == boolean.class ? false : null;
+                });
     }
 
     private GoodsMapper inMemoryMapper() {
@@ -82,7 +119,7 @@ class CargoReadyServiceTest {
     void notReady_shouldBecomeReady() {
         seed("G-1", GoodsStatus.NOT_READY.getValue());
 
-        CargoReadyResponse response = service.markReady(ORDER_ID);
+        CargoReadyResponse response = service.markReady(ORDER_ID, ORDER_NEST_ID);
 
         assertTrue(response.accepted());
         assertTrue(response.changed());
@@ -98,9 +135,9 @@ class CargoReadyServiceTest {
     void repeatedCall_shouldBeNoOp() {
         seed("G-1", GoodsStatus.NOT_READY.getValue());
 
-        CargoReadyResponse first = service.markReady(ORDER_ID);
+        CargoReadyResponse first = service.markReady(ORDER_ID, ORDER_NEST_ID);
         int callsAfterFirst = updateCalls;
-        CargoReadyResponse second = service.markReady(ORDER_ID);
+        CargoReadyResponse second = service.markReady(ORDER_ID, ORDER_NEST_ID);
 
         assertTrue(first.changed());
         assertFalse(second.changed(), "第二次必须是「没改」");
@@ -116,14 +153,14 @@ class CargoReadyServiceTest {
     void orderIdWhitespace_shouldBeTolerated() {
         seed("G-1", GoodsStatus.NOT_READY.getValue());
 
-        assertTrue(service.markReady("  " + ORDER_ID + " ").changed());
-        assertFalse(service.markReady(ORDER_ID).changed(), "归一后是同一笔订单");
+        assertTrue(service.markReady("  " + ORDER_ID + " ", ORDER_NEST_ID).changed());
+        assertFalse(service.markReady(ORDER_ID, ORDER_NEST_ID).changed(), "归一后是同一笔订单");
     }
 
     @Test
     @DisplayName("查无货物记录 → 拒绝，且不凭空建行")
     void missingGoods_shouldBeRejected() {
-        CargoReadyResponse response = service.markReady(ORDER_ID);
+        CargoReadyResponse response = service.markReady(ORDER_ID, ORDER_NEST_ID);
 
         assertFalse(response.accepted());
         assertEquals(CargoReadyResponse.Reason.GOODS_NOT_FOUND.name(), response.reasonCode());
@@ -135,9 +172,9 @@ class CargoReadyServiceTest {
     @DisplayName("订单号缺失/空白 → ORDER_ID_MISSING（不是「查无货物」）")
     void blankOrderId_shouldBeRejected() {
         assertEquals(CargoReadyResponse.Reason.ORDER_ID_MISSING.name(),
-                service.markReady(null).reasonCode());
+                service.markReady(null, ORDER_NEST_ID).reasonCode());
         assertEquals(CargoReadyResponse.Reason.ORDER_ID_MISSING.name(),
-                service.markReady("   ").reasonCode());
+                service.markReady("   ", ORDER_NEST_ID).reasonCode());
     }
 
     @Test
@@ -145,7 +182,7 @@ class CargoReadyServiceTest {
     void loadedGoods_shouldNotRollBack() {
         seed("G-1", GoodsStatus.LOADED.getValue());
 
-        CargoReadyResponse response = service.markReady(ORDER_ID);
+        CargoReadyResponse response = service.markReady(ORDER_ID, ORDER_NEST_ID);
 
         assertFalse(response.accepted());
         assertEquals(CargoReadyResponse.Reason.GOODS_STATE_FROZEN.name(), response.reasonCode());
@@ -160,12 +197,82 @@ class CargoReadyServiceTest {
         seed("G-2", GoodsStatus.NOT_READY.getValue());
         seed("G-3", GoodsStatus.DELIVERED.getValue());
 
-        CargoReadyResponse response = service.markReady(ORDER_ID);
+        CargoReadyResponse response = service.markReady(ORDER_ID, ORDER_NEST_ID);
 
         assertTrue(response.changed());
         assertEquals(2, response.updatedRows());
         assertEquals(GoodsStatus.READY.getValue(), table.get(0).getStatus());
         assertEquals(GoodsStatus.READY.getValue(), table.get(1).getStatus());
         assertEquals(GoodsStatus.DELIVERED.getValue(), table.get(2).getStatus());
+    }
+
+    // ───────────── 货巢核对 ─────────────
+
+    @Test
+    @DisplayName("★ 请求体缺货巢编号 → CARGO_NEST_REQUIRED，且不写库")
+    void missingCargoNest_shouldBeRejected() {
+        seed("G-1", GoodsStatus.NOT_READY.getValue());
+
+        CargoReadyResponse response = service.markReady(ORDER_ID, "   ");
+
+        assertFalse(response.accepted());
+        assertEquals(CargoReadyResponse.Reason.CARGO_NEST_REQUIRED.name(), response.reasonCode());
+        assertEquals(0, updateCalls, "缺巢编号不得动库");
+        assertEquals(GoodsStatus.NOT_READY.getValue(), table.get(0).getStatus());
+    }
+
+    @Test
+    @DisplayName("★ 订单没有货巢 → CARGO_NEST_MISSING_ON_ORDER，没有比对基准不放行")
+    void orderWithoutCargoNest_shouldBeRejected() {
+        orderNestId = null;
+        seed("G-1", GoodsStatus.NOT_READY.getValue());
+
+        CargoReadyResponse response = service.markReady(ORDER_ID, ORDER_NEST_ID);
+
+        assertFalse(response.accepted());
+        assertEquals(CargoReadyResponse.Reason.CARGO_NEST_MISSING_ON_ORDER.name(),
+                response.reasonCode());
+        assertEquals(0, updateCalls);
+    }
+
+    @Test
+    @DisplayName("★ 货巢不一致 → CARGO_NEST_MISMATCH，货物状态与位置都不动")
+    void mismatchedCargoNest_shouldBeRejected() {
+        seed("G-1", GoodsStatus.NOT_READY.getValue());
+
+        CargoReadyResponse response = service.markReady(ORDER_ID, "NEST-99");
+
+        assertFalse(response.accepted());
+        assertEquals(CargoReadyResponse.Reason.CARGO_NEST_MISMATCH.name(),
+                response.reasonCode());
+        assertEquals(0, updateCalls, "巢不一致不得动库");
+        assertEquals(GoodsStatus.NOT_READY.getValue(), table.get(0).getStatus());
+    }
+
+    @Test
+    @DisplayName("订单不存在 → ORDER_NOT_FOUND")
+    void missingOrder_shouldBeRejected() {
+        orderExists = false;
+        seed("G-1", GoodsStatus.NOT_READY.getValue());
+
+        CargoReadyResponse response = service.markReady(ORDER_ID, ORDER_NEST_ID);
+
+        assertFalse(response.accepted());
+        assertEquals(CargoReadyResponse.Reason.ORDER_NOT_FOUND.name(), response.reasonCode());
+        assertEquals(0, updateCalls);
+    }
+
+    @Test
+    @DisplayName("★ 巢一致时写入货物实际到达的巢")
+    void matchingCargoNest_shouldWriteLocation() {
+        seed("G-1", GoodsStatus.NOT_READY.getValue());
+
+        CargoReadyResponse response = service.markReady(ORDER_ID, ORDER_NEST_ID);
+
+        assertTrue(response.accepted());
+        assertTrue(response.changed());
+        assertEquals(ORDER_NEST_ID, table.get(0).getLocation(),
+                "登记后货物位置必须是实际到达的巢");
+        assertEquals(GoodsStatus.READY.getValue(), table.get(0).getStatus());
     }
 }

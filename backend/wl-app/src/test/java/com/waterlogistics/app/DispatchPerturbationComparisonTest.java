@@ -6,11 +6,14 @@ import com.waterlogistics.algo.meeting.GeoApprox;
 import com.waterlogistics.algo.meeting.model.B_RendezvousSolution;
 import com.waterlogistics.contract.mq.AisMessage;
 import com.waterlogistics.contract.state.OrderStatus;
+import com.waterlogistics.dispatch.order.CargoReadyService;
 import com.waterlogistics.dispatch.order.OrderAdmissionService;
 import com.waterlogistics.dispatch.order.OrderSubmitRequest;
 import com.waterlogistics.dispatch.order.OrderSubmitResponse;
 import com.waterlogistics.dispatch.prediction.PredictionService;
+import com.waterlogistics.dispatch.queue.CargoGateWaker;
 import com.waterlogistics.dispatch.rendezvous.RendezvousPort;
+import com.waterlogistics.dispatch.resource.OccupancySlotService;
 import com.waterlogistics.rendezvous.facade.RendezvousFacade;
 import com.waterlogistics.rendezvous.port.TrajectorySnapshotPort;
 import com.waterlogistics.rendezvous.solver.RendezvousCommand;
@@ -36,7 +39,9 @@ import org.springframework.transaction.annotation.Transactional;
  * rendezvous, dispatch and persisted order state. Metrics use the same synthetic
  * post-dispatch truth model in both arms; energy is a distance proxy, not telemetry.
  */
-@SpringBootTest(properties = {"wavenest.m2.flight-advance-enabled=false", "wavenest.sim.enabled=false"})
+@SpringBootTest(properties = {"wavenest.m2.flight-advance-enabled=false", "wavenest.sim.enabled=false",
+        // 货到巢关的后台轮询会与断言抢同一批订单，本类自己按需驱动放行
+        "wavenest.m2.cargo-gate-poll-enabled=false"})
 @Transactional
 class DispatchPerturbationComparisonTest {
     private static final ZoneId DB_ZONE = ZoneId.of("Asia/Shanghai");
@@ -54,6 +59,9 @@ class DispatchPerturbationComparisonTest {
     @Autowired private DroneMapper droneMapper;
     @Autowired private NestMapper nestMapper;
     @Autowired private SwitchingPort switchingPort;
+    @Autowired private CargoReadyService cargoReadyService;
+    @Autowired private CargoGateWaker cargoGateWaker;
+    @Autowired private OccupancySlotService occupancySlotService;
 
     @Test
     void compareTwelveDispatchedPairs() {
@@ -83,6 +91,15 @@ class DispatchPerturbationComparisonTest {
         assertThat(response.accepted()).isTrue();
         OrderTaskEntity order = orderTaskMapper.selectById(response.orderId());
         assertThat(order).isNotNull();
+        // 系统下单时刻选定货巢 → 货物建行为「未就绪」→ 登记到巢并由轮询放行后才派发。
+        // 本类在同一事务内连下 24 单，而巢时隙锁只在订单终态释放，须逐单释放，
+        // 否则第 5 单起锁不到巢时隙转「等资源」，而等资源不会被门关轮询自动重试。
+        if (order.getCargoNestId() != null && !order.getCargoNestId().isBlank()) {
+            cargoReadyService.markReady(response.orderId(), order.getCargoNestId());
+            cargoGateWaker.tick();
+            occupancySlotService.releaseByOrder(response.orderId());
+            order = orderTaskMapper.selectById(response.orderId());
+        }
         assertThat(order.getStatus()).isEqualTo(OrderStatus.DISPATCHED.getValue());
         assertThat(order.getDroneId()).isNotBlank();
         assertThat(order.getMeetLon()).isNotNull();

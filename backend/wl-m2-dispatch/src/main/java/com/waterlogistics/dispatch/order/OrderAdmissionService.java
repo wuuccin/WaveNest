@@ -1,8 +1,10 @@
 package com.waterlogistics.dispatch.order;
 
+import com.waterlogistics.algo.cargo.CargoNestChoice;
 import com.waterlogistics.contract.order.OrderView;
 import com.waterlogistics.contract.rest.WaitReason;
 import com.waterlogistics.contract.state.OrderStatus;
+import com.waterlogistics.dispatch.candidate.CargoNestDecisionService;
 import com.waterlogistics.dispatch.record.TaskLogRecorder;
 import com.waterlogistics.dispatch.taskstate.FlightPhaseChangedEvent;
 import com.waterlogistics.storage.entity.OrderTaskEntity;
@@ -20,6 +22,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
@@ -88,6 +91,13 @@ public class OrderAdmissionService {
     /** 既有订单（重复单判定的数据源）：以 {@code order_task} 落库为准，不另设内存登记。 */
     private final OrderTaskMapper orderTaskMapper;
 
+    /**
+     * 货巢决策服务：下单时刻由系统选定货物所在的机巢。
+     *
+     * <p>为 null 时不选巢（兼容构造器路径），下单行为与改造前完全一致。
+     */
+    private final CargoNestDecisionService cargoNestDecisionService;
+
     /** 已受理订单，key = orderId。 */
     private final Map<String, OrderView> orders = new ConcurrentHashMap<>();
 
@@ -101,16 +111,37 @@ public class OrderAdmissionService {
 
     private final AtomicLong sequence = new AtomicLong();
 
+    @Autowired
     public OrderAdmissionService(TaskLogRecorder taskLogRecorder,
             ApplicationEventPublisher eventPublisher,
             AdmissionInputAssembler inputAssembler,
             AdmissionWakeScheduler wakeScheduler,
-            OrderTaskMapper orderTaskMapper) {
+            OrderTaskMapper orderTaskMapper,
+            CargoNestDecisionService cargoNestDecisionService) {
         this.taskLogRecorder = taskLogRecorder;
         this.eventPublisher = eventPublisher;
         this.inputAssembler = inputAssembler;
         this.wakeScheduler = wakeScheduler;
         this.orderTaskMapper = orderTaskMapper;
+        this.cargoNestDecisionService = cargoNestDecisionService;
+    }
+
+    /**
+     * 兼容构造器：不带货巢决策服务。
+     *
+     * <p>保留给既有单测与旧调用点。没有决策服务时系统不选巢，货巢为空，
+     * 订单走「无货巢」旧口径，行为与改造前逐字一致。
+     *
+     * <p>本构造器<b>不参与</b> Spring 装配：类上有两个构造器时，容器无法判断该用哪个，
+     * 只能报错「找不到默认构造器」，因此生产注入固定走上面那个标注了
+     * {@code @Autowired} 的构造器。
+     */
+    public OrderAdmissionService(TaskLogRecorder taskLogRecorder,
+            ApplicationEventPublisher eventPublisher,
+            AdmissionInputAssembler inputAssembler,
+            AdmissionWakeScheduler wakeScheduler,
+            OrderTaskMapper orderTaskMapper) {
+        this(taskLogRecorder, eventPublisher, inputAssembler, wakeScheduler, orderTaskMapper, null);
     }
 
     /**
@@ -136,9 +167,13 @@ public class OrderAdmissionService {
         OrderPriority priority = OrderPriority.fromCode(request.priority());
 
         String orderId = nextOrderId(nowMs);
+        // 货巢来源优先级：客户端显式指定 > 系统在下单时刻决策 > 无货巢（退回旧口径）。
+        String cargoNestId = request.hasCargoNest()
+                ? request.cargoNestId()
+                : decideCargoNest(orderId, mmsi, request.goodsWeight(), nowMs);
         AdmissionPipeline.OrderRequest pipelineRequest = new AdmissionPipeline.OrderRequest(
                 orderId, mmsi, request.goodsType(), request.goodsWeight(),
-                request.expectedTimeMs(), priority.name(), null, request.cargoNestId());
+                request.expectedTimeMs(), priority.name(), null, cargoNestId);
 
         AdmissionPipeline.Input input = inputAssembler.assemble(
                 pipelineRequest, nowMs, snapshotPriorOrders());
@@ -156,6 +191,35 @@ public class OrderAdmissionService {
         };
     }
 
+    /**
+     * 货巢决策：下单时刻由系统选定一个能装货、也停得下机的机巢。
+     *
+     * <p><b>为什么选不出时仍让下单成立</b>：选巢依赖船位快照与机巢台账，
+     * 缺数据时若直接拒绝下单，等于把台账问题变成业务阻断。因此退回旧口径
+     * （订单不经货到巢关），并在订单轨迹上留痕，让「未指定货巢」这件事可见可诊断。
+     * 落选原因见决策服务与调度日志。
+     *
+     * @param orderId       订单号（用于订单轨迹留痕）
+     * @param mmsi          目标船 MMSI
+     * @param goodsWeightKg 本单货物载重，kg
+     * @param nowMs         当前时刻，Unix 毫秒
+     * @return 选中的货巢编号；未命中时为 null
+     */
+    private String decideCargoNest(String orderId, String mmsi, Double goodsWeightKg, long nowMs) {
+        if (cargoNestDecisionService == null) {
+            return null;
+        }
+        CargoNestChoice choice = cargoNestDecisionService.decide(mmsi, goodsWeightKg);
+        if (!choice.hit()) {
+            taskLogRecorder.record(orderId, "货巢未选定", null,
+                    OrderStatus.PENDING_ACCEPT.getValue(), nowMs);
+            return null;
+        }
+        taskLogRecorder.record(orderId, "货巢选定", null,
+                OrderStatus.PENDING_ACCEPT.getValue(), nowMs);
+        return choice.nestId();
+    }
+
     /** 受理并调度：建单「待受理」，交给 DispatchTrigger 落库并驱动调度主链。 */
     private OrderSubmitResponse acceptAndSchedule(OrderSubmitRequest request,
             AdmissionPipeline.OrderRequest pipelineRequest, OrderPriority priority,
@@ -169,7 +233,8 @@ public class OrderAdmissionService {
                 null,
                 null,
                 null,
-                decision.etaTsMs());
+                decision.etaTsMs(),
+                pipelineRequest.cargoNestId());
 
         orders.put(orderId, view);
         taskLogRecorder.record(orderId, "订单接入", null, OrderStatus.PENDING_ACCEPT.getValue(), nowMs);
@@ -211,7 +276,8 @@ public class OrderAdmissionService {
                 wakeEtaTs,
                 null,
                 null,
-                decision.etaTsMs());
+                decision.etaTsMs(),
+                pipelineRequest.cargoNestId());
 
         orders.put(orderId, view);
         // opType 沿用 B3 既有口径：闸门类延后记「闸门熔断-延后」，其余延后记「接单延后」，

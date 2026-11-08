@@ -18,6 +18,8 @@ async function request(path, options = {}) {
 }
 export const api = {
   orders: () => request('/api/orders'), createOrder: (body, options = {}) => request('/api/orders', { ...options, method: 'POST', body: JSON.stringify(body) }), drones: () => request('/api/drones'), nests: () => request('/api/nests'), airspace: () => request('/api/airspace'),
+  // 货物到巢登记：必须带货物实际到达的巢编号，后端与订单货巢比对一致后才放行
+  cargoReady: (orderId, cargoNestId) => request(`/api/orders/${encodeURIComponent(orderId)}/cargo-ready`, { method: 'POST', body: JSON.stringify({ cargoNestId }) }),
   replay: taskId => request(`/api/replay/${encodeURIComponent(taskId)}`),
   intervene: body => request('/api/intervene', { method: 'POST', body: JSON.stringify(body) }),
   resetShip: (options = {}) => request('/sim/ship/reset', { ...options, method: 'POST' }),

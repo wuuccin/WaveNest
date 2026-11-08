@@ -18,9 +18,10 @@ package com.waterlogistics.dispatch.order;
  *
  * <h3>11-05 序号 1 的三处口径变化</h3>
  * <ol>
- *   <li><b>{@code cargoNestId} 可空</b>：空＝取离船最近的巢（由候选生成侧按船位挑），
+ *   <li><b>{@code cargoNestId} 可空</b>：空＝交由系统在下单时刻决策货巢，
  *       不是「默认第一个巢」。空与「填了不存在的巢」是两件事：后者在判定链里被拒，
- *       前者走就近策略。</li>
+ *       前者走系统选巢；系统也选不出时退回旧口径，订单不经货到巢关。
+ *       该字段<b>不再由船员端提交</b>，客户端显式指定只保留给运营与内部调用。</li>
  *   <li><b>{@code expectedTimeMs} 可空</b>：字段类型本来就是包装类型，此前缺省也会被
  *       判定链的 {@code isComplete()} 判成「信息不完整 → 转人工」。11-05 序号 2 起
  *       {@code deadline} 改由系统算，故「不填」是<b>正常输入</b>而非缺字段，
@@ -34,7 +35,7 @@ package com.waterlogistics.dispatch.order;
  * @param goodsType      物资类型（可空；长度 ≤ {@value #GOODS_TYPE_MAX_LENGTH}）
  * @param expectedTimeMs 期望送达时间，Unix 毫秒（可空且「不填」属正常；填了必须晚于当前时刻）
  * @param priority       优先级 {@code NORMAL/URGENT/EMERGENCY}（可空，缺省 NORMAL）
- * @param cargoNestId    货物所在巢（可空＝取离船最近的巢）
+ * @param cargoNestId    货物所在巢（可空＝由系统决策；船员端不提交，仅运营与内部调用）
  */
 public record OrderSubmitRequest(
         String shipMmsi,
@@ -90,7 +91,7 @@ public record OrderSubmitRequest(
         this(shipMmsi, goodsWeight, goodsType, expectedTimeMs, priority, null);
     }
 
-    /** 货巢是否由客户端指定（{@code false} ＝ 走「离船最近的巢」策略）。 */
+    /** 货巢是否由客户端显式指定（{@code false} ＝ 交由系统决策）。 */
     public boolean hasCargoNest() {
         return cargoNestId != null;
     }
