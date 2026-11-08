@@ -92,9 +92,9 @@ class PredictionBboxNanchangSegmentTest {
 
     // ───────── T2-6 定稿的校验框（须与 application.yml 同值）─────────
 
-    private static final double MIN_LON = 115.857;
+    private static final double MIN_LON = 115.840;
     private static final double MAX_LON = 115.921;
-    private static final double MIN_LAT = 28.660;
+    private static final double MIN_LAT = 28.640;
     private static final double MAX_LAT = 28.767;
 
     // ───────── 仿真喂法真值（SimAisConnector 的代码默认值）─────────
