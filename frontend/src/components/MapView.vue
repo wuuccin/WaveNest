@@ -18,6 +18,8 @@ const ship = useShipStore(), drone = useDroneStore(), order = useOrderStore(), a
 const selectedShip = computed(() => ship.byId[ship.selectedMmsi] || null)
 const selectedTrack = computed(() => ship.tracks[ship.selectedMmsi] || [])
 let map, staticGroup, comparisonGroup, shipGroup, meetingGroup, droneGroup, branchGroup, alertGroup, nestGroup, fleetGroup, debugReferenceGroup, predictionGroup, planTrackGroup
+/** 容器尺寸观察器：flex 布局下地图高度随栅格行高变化，不伴随窗口 resize 事件（2026-11-08） */
+let resizeObserver = null
 let lastOverlaidMmsi = ''
 // 规划航迹（阶段二 2）：独立图层组，清它不碰预测组——共用 group 时 clearLayers() 会误伤别人的线。
 let lastPlanOrderId = ''
@@ -332,6 +334,20 @@ onMounted(() => {
   map.on('resize', () => { map.invalidateSize(); fitServiceArea() })
   if (debugEnabled) map.on('click', pickMapPoint)
   update()
+  // 任务总览页的地图高度由 flex 决定（2026-11-08 布局修复）：容器尺寸变化不再伴随窗口
+  // resize 事件，Leaflet 收不到 'resize'，瓦片会按旧尺寸铺，右侧或下方留白。
+  // 用 ResizeObserver 盯容器实际尺寸，变化即 invalidateSize 并重算视野。
+  if (typeof ResizeObserver !== 'undefined') {
+    const shell = document.querySelector('.map-shell')
+    if (shell) {
+      resizeObserver = new ResizeObserver(() => {
+        if (!map) return
+        map.invalidateSize()
+        if (!planTrack.count) fitServiceArea()
+      })
+      resizeObserver.observe(shell)
+    }
+  }
   // 100ms 后的这拍本意是「布局稳定后再校一次视野」；但若规划航迹已把视野 fit 到走廊上，
   // 这里再 fitServiceArea 会把它覆盖回全景——表现就是「线画了但小得看不见」。
   // 有规划航迹时就让它说了算（重新触发一次 update，借 invalidateSize 后的正确尺寸重画）。
@@ -341,7 +357,7 @@ watch([() => selectedShip.value, () => selectedTrack.value, () => visibleDrone.v
   () => order.previousRendezvous, () => order.orders, () => props.comparison, () => props.branchRoute, () => props.droneId, () => props.orderId, () => nest.items,
   () => fleet.items, () => airspace.items, () => prediction.overlay,
   () => planTrack.byOrder, () => planTrack.highlightKind], update, { deep: true })
-onUnmounted(() => { clearTimeout(fallbackTimer); if (map && debugEnabled) map.off('click', pickMapPoint); cancelFit(); map?.remove(); map = null; activeBaseLayer = null; fallbackLayer = null; baseLayerControl = null; debugReferenceGroup = null; predictionGroup = null; planTrackGroup = null; lastOverlaidMmsi = ''; lastPlanOrderId = '' })
+onUnmounted(() => { clearTimeout(fallbackTimer); resizeObserver?.disconnect(); resizeObserver = null; if (map && debugEnabled) map.off('click', pickMapPoint); cancelFit(); map?.remove(); map = null; activeBaseLayer = null; fallbackLayer = null; baseLayerControl = null; debugReferenceGroup = null; predictionGroup = null; planTrackGroup = null; lastOverlaidMmsi = ''; lastPlanOrderId = '' })
 </script>
 
 <template>
