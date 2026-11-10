@@ -1,0 +1,34 @@
+# =====================================================================
+# 场景家族 1/6：normal_straight（正常直航）
+# 用途：Live E2E 调系统自验（吴可欣 1× 实时 30 min、s = 0）与本家族离线复跑的基准输入；
+#       也是 testdata/mock/replay/ 一套六类帧 replay 的数据源 run。
+# 航迹：中心线 v3 十三点（016）从 s = 0 全程跑到 6003.3510 m，
+#       限速三段 4.5／4.5／2.5 m/s，全程 1690.229 s，30 min 内有余量 109.771 s。
+# 会面闭环：本家族 30 min 全程必然跨三桥，承载会面闭环验证（执行计划 §2）。
+# 复跑：同 seed 复跑会撞 uk_pes_pair 与 consumedUpToTs，先清 pred_error_sample
+#       本 run 行或换 pred_version（契约 §9）；mode 可用 --mode 覆盖。
+# =====================================================================
+family: normal_straight
+seed: 1
+mode: live
+t0_ms: 1794268800000          # 2026-11-10T00:00:00Z，固定值保证复跑可对齐
+path_start_m: 0.0             # Live E2E 口径：s = 0 全程
+duration_sec: 1800            # 30 min 全程
+speed_limits_ms: "0,2000,4.5;2000,4000,4.5;4000,6003.4,2.5"   # 契约 §2 三段值
+speed_profile: normal
+tick_millis: 1000             # 固定 1 Hz，禁止压小
+truth_source: truth/normal_straight.csv   # 无噪真值（限速积分），由 run_scenarios.py 读取
+noise_deg: 0.00005            # SimAisConnector @Value 默认值，观测噪声幅度（度）
+mmsi: "123456789"             # Live E2E 口径（契约 §3）
+pred_version: 11090001        # 复跑须换新值
+param_sources:
+  sog_ms: design_assumption          # 4.12 m/s（8 节）＝ SimAisConnector 设定默认值，非赣江实测
+  speed_limits_ms: design_assumption # 三段值为「自证限速生效」的设定值，末段 2.5 m/s 不得写成桥区实际限速
+  speed_profile: design_assumption   # 家族口径自定
+  noise_deg: design_assumption       # SimAisConnector 默认值，无 AIS 误差模型出处
+  sigmaEM: design_assumption         # 002_sys_param 头注「初始建议值（登记口径）」15 m
+  tauESec: design_assumption         # 同上，120 s
+  alphaAlongMs: design_assumption    # 同上，0.10
+  tick_millis: design_assumption     # 固定 1 Hz 与零均值高斯噪声属理想化
+  path_start_m: design_assumption    # s = 0 为 Live E2E 口径设定值
+  中心线十三点: measured              # 016 头注：2026-11-09 天地图影像河心重取（WGS-84），影像放样可追溯
