@@ -1,8 +1,9 @@
-const origin = [115.8611, 28.6660]
+import { DEMO_DEFAULT_CARGO_TYPE } from '../api/cargoTypes'
+import { V3_START, V3_SHIP_POINTS } from '../api/mockSegment'
 const now = () => Date.now()
-const order = (status, version, phase = null) => ({ orderId: 'DEMO-01', orderStatus: status, eventTs: now(), stateVersion: version, waitReason: null, wakeEtaTs: null, emergencyLandingPoint: null, handoverPhase: phase })
-const ship = (shift = 0, turn = 0, sigmaAlong = 170, sigmaCross = 80) => ({ mmsi: '413000918', shipName: '江运 08', lon: origin[0] + shift, lat: origin[1] + shift,
-  points: [[origin[0] + shift,origin[1] + shift],[115.870 + shift,28.678 + shift],[115.879 + shift,28.692 + shift]].map(([lon,lat], index) => ({lon,lat,t:now()+index*150000,sigmaAlong:sigmaAlong+index*35,sigmaCross:sigmaCross+index*15})),
+const order = (status, version, phase = null) => ({ orderId: 'DEMO-01', orderStatus: status, eventTs: now(), stateVersion: version, waitReason: null, wakeEtaTs: null, emergencyLandingPoint: null, handoverPhase: phase, goodsType: DEMO_DEFAULT_CARGO_TYPE })
+const ship = (shift = 0, turn = 0, sigmaAlong = 170, sigmaCross = 80) => ({ mmsi: '413000918', shipName: '江运 08', lon: V3_START.lon + shift, lat: V3_START.lat + shift,
+  points: V3_SHIP_POINTS.map(({ lon, lat }, index) => ({lon:lon+shift,lat:lat+shift,t:now()+index*150000,sigmaAlong:sigmaAlong+index*35,sigmaCross:sigmaCross+index*15})),
   cov: {sigmaAlong, sigmaCross}, version: now(), t0: now(), courseDeg: 31.2 + turn, validitySec: 300, premise: '沿赣江航道匀速外推' })
 const drone = (lon, lat, battery, flightPhase, id='UAV-01') => ({ uavId: id, lon, lat, battery, flightPhase, eventTs: now(), segments: [
   {phase:'去程',points:[{lon:115.854,lat:28.647},{lon:115.862,lat:28.666}]},

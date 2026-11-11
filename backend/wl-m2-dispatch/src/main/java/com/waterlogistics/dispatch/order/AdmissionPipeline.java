@@ -7,6 +7,8 @@ import com.waterlogistics.algo.estimation.OrderEta;
 import com.waterlogistics.algo.estimation.ServiceSegmentGate;
 import com.waterlogistics.algo.estimation.WaterwayGeometry;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
@@ -14,9 +16,12 @@ import java.util.Set;
 /**
  * 接单受理判定流水线（M2 · 卢肄文 · 功能 1 · {@code 80-A组算法方案} §3.1.2）。
  *
- * <p>把 {@code 80} §3.1.2 的八步判定链完整落到可执行代码：信息完整性 → 幂等与重复 →
- * 数据有效性（MEDIUM.25：提到时效闸之前，坏数据上不算时间可行性）→ 时效性
- * （{@code etaMin}）→ 货物合法性 → 空间闸门（{@code tEnter}）→ 状态闸门 → 时间闸门。
+ * <p>把判定链完整落到可执行代码：信息完整性 → 可承运品类 → 幂等与重复 →
+ * 数据有效性（坏数据上不算时间可行性）→ 时效性（{@code etaMin}）→ 载重合法性
+ * → 空间闸门（{@code tEnter}）→ 状态闸门 → 时间闸门。
+ *
+ * <p>可承运品类校验排在船舶数据检查之前。判定链的每个延后出口都必须先通过
+ * 本检查，否则非法品类会随「已受理待唤醒」单落库，而唤醒器不重跑接单判定。
  *
  * <h3>★ 三处「先空着」的判定，以及为什么空着不等于放过</h3>
  * <p>有几步依赖<b>系统里还不存在的数据</b>，本类不臆造、也不用默认值糊过去，而是把对应输入声明为
@@ -79,7 +84,7 @@ public final class AdmissionPipeline {
         EXPIRED("已过截止时刻"),
         /** 时间上不可行 */
         TIME_INFEASIBLE("时间不可行"),
-        /** 货物类型不在白名单 */
+        /** 配送品类不受理 */
         CARGO_TYPE("货物类型不受理"),
         /** 超载 */
         OVERLOAD("超出载重上界"),
@@ -331,7 +336,10 @@ public final class AdmissionPipeline {
         }
 
         public Policy {
-            cargoWhitelist = cargoWhitelist == null ? Set.of() : Set.copyOf(cargoWhitelist);
+            // 保序：拒单提示与字典接口都按本集合的迭代顺序输出，Set.copyOf 会打乱顺序
+            cargoWhitelist = cargoWhitelist == null
+                    ? Set.of()
+                    : Collections.unmodifiableSet(new LinkedHashSet<>(cargoWhitelist));
             // 有限性一并卡（HIGH.15）：NaN 过所有比较运算，若不在这里拒，
             // payloadLimit 会算成 NaN，后续「载重 > NaN」恒 false，超载单被静默放行
             if (!Double.isFinite(maxPayloadAllTypesKg) || !(maxPayloadAllTypesKg > 0.0)) {
@@ -487,6 +495,15 @@ public final class AdmissionPipeline {
                     Double.NaN, null, "MMSI 非 9 位数字：" + request.mmsi());
         }
 
+        // 可承运品类校验前置：所有延后与受理出口都必须先通过本检查。
+        // 本检查若留在数据有效性之后，船舶数据缺失会先返回 DEFER，非法品类就会
+        // 随「已受理待唤醒」单落库，而唤醒器不重跑接单判定。
+        if (!policy.cargoWhitelist().contains(request.cargoType())) {
+            String options = CargoTypeCatalog.displayText(policy.cargoWhitelist());
+            return new Decision(Outcome.REJECT, Reason.CARGO_TYPE, 0L, WakeEvent.NONE, skipped,
+                    Double.NaN, null, "当前不支持配送该品类，请选择" + options);
+        }
+
         // 系统 deadline 在信息完整性之后即算出：后续每一处出口都要带上它，
         // 否则「延后待唤醒」「重复单」这些单子落库时 expected_time 是 NULL，
         // 而 deadline 是每笔订单都该有的硬边界（不依赖 etaMin，也不依赖船位是否新鲜）。
@@ -540,11 +557,7 @@ public final class AdmissionPipeline {
                             (deadlineMs - nowMs) / 1000.0, etaMin), deadlineMs, etaTsMs);
         }
 
-        // ⑤ 货物合法性
-        if (!policy.cargoWhitelist().contains(request.cargoType())) {
-            return new Decision(Outcome.REJECT, Reason.CARGO_TYPE, 0L, WakeEvent.NONE, skipped,
-                    etaMin, null, "货物类型不在白名单：" + request.cargoType(), deadlineMs, etaTsMs);
-        }
+        // 载重合法性：可承运品类校验已前置到信息完整性之后
         double payloadLimit = policy.maxPayloadAllTypesKg() * (1.0 - policy.maxPayloadMargin());
         // isFinite 双保险（HIGH.15）：载重 NaN 时「> payloadLimit」恒 false，不拦就会静默放行
         if (!Double.isFinite(request.goodsWeightKg()) || request.goodsWeightKg() > payloadLimit) {

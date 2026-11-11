@@ -2,6 +2,7 @@ package com.waterlogistics.dispatch.order;
 
 import com.waterlogistics.contract.order.OrderView;
 import com.waterlogistics.contract.rest.ApiPath;
+import com.waterlogistics.contract.rest.CargoTypeOptions;
 import com.waterlogistics.contract.rest.OrderListResponse;
 import com.waterlogistics.dispatch.gate.DispatchGateService;
 import java.util.List;
@@ -102,6 +103,19 @@ public class OrderController {
      */
     public OrderListResponse listOrders() {
         return listOrders(null, null);
+    }
+
+    /**
+     * 当前可承运配送品类字典。
+     *
+     * <p>本接口只返回接单判定实际使用的有效集合，不返回契约默认全集，避免前端
+     * 下拉出现能选却一定被拒的选项。列表顺序与拒单提示一致。
+     *
+     * @return 按固定顺序排列的可承运品类
+     */
+    @GetMapping(ApiPath.CARGO_TYPES)
+    public CargoTypeOptions cargoTypes() {
+        return new CargoTypeOptions(admissionService.cargoTypeOptions());
     }
 
     /**

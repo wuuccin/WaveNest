@@ -587,7 +587,7 @@ public class FlightPhaseAdvancer {
                 // 货巢必须带上：飞行阶段帧同样并入订单视图，不带会把建单时选定的货巢抹成空
                 eventPublisher.publishEvent(new FlightPhaseChangedEvent(new OrderView(
                         order.getOrderId(), to, tsMs, version, null, null, null, null,
-                        effectiveEtaTs, order.getCargoNestId())));
+                        effectiveEtaTs, order.getCargoNestId(), order.getGoodsType())));
             } catch (Exception e) {
                 // 审计已落库，推送失败只告警；下一拍不会重发同一阶段，避免重复刷屏
                 log.warn("飞行阶段广播失败（task_log 已落库）：orderId={} status={} err={}",

@@ -115,6 +115,8 @@ wavenest:
       segment-start-m: 0
       segment-end-m: 0            # 0＝取折线全长（服务航段＝整条演示航段）
       corridor-half-width-m: 50   # 走廊半宽：垂距超出即「不在段内」，与预测侧 lane-half-width-m 同源
+      # 当前允许配送的品类显式子集，取值必须属于契约默认全集；
+      # 显式留空或写入未知取值会在启动期失败，系统不静默过滤。
       cargo-whitelist: 医疗物资,应急药品,食品,生活物资
       max-payload-all-types-kg: 50.0
       max-payload-margin: 0.1     # 上界裕度：有效上界＝50×0.9＝45 kg
