@@ -78,3 +78,6 @@ application-local.properties
 /水上低空物流智能调度/
 /tmp/
 .codegraph/
+
+# ---------- 模拟数据全量产物（1109 批次，仅本地保存，不入库）----------
+testdata/mock/_generated/
