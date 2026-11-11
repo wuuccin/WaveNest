@@ -16,7 +16,6 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
-import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -124,6 +123,8 @@ public class AdmissionInputAssembler {
             @Value("${wavenest.m2.admission.segment-end-m:0}") double segmentEndS,
             // 与预测侧 lane-half-width-m 同源（50 m）
             @Value("${wavenest.m2.admission.corridor-half-width-m:50}") double corridorHalfWidthM,
+            // 当前允许配送的显式子集，缺省值须与 CargoType 默认全集保持一致。
+            // 未知取值与显式空集合会在启动期失败，本类不静默过滤。
             @Value("${wavenest.m2.admission.cargo-whitelist:医疗物资,应急药品,食品,生活物资}")
                     String cargoWhitelist,
             @Value("${wavenest.m2.admission.max-payload-all-types-kg:50.0}") double maxPayloadAllTypesKg,
@@ -331,6 +332,17 @@ public class AdmissionInputAssembler {
         return policy;
     }
 
+    /**
+     * 返回接单判定实际使用的当前可承运品类，按固定顺序排列。
+     *
+     * <p>字典查询接口读取本方法的结果，因此接口不会返回判定链不认识的取值。
+     *
+     * @return 当前生效的可承运品类
+     */
+    public List<String> cargoTypeOptions() {
+        return List.copyOf(policy.cargoWhitelist());
+    }
+
     private static AdmissionPipeline.NestPoint toNestPoint(NestEntity nest) {
         return new AdmissionPipeline.NestPoint(nest.getNestId(),
                 nest.getLon().doubleValue(), nest.getLat().doubleValue());
@@ -356,11 +368,14 @@ public class AdmissionInputAssembler {
         return new WaterwayGeometry(vertices);
     }
 
+    /**
+     * 解析当前可承运品类配置。
+     *
+     * <p>本方法委托 {@link CargoTypeCatalog#resolve}，接单判定、字典查询接口与
+     * 拒单提示因此共用同一份解析口径。未知取值与显式空集合在此终止启动。
+     */
     private static Set<String> parseWhitelist(String spec) {
-        return Arrays.stream(spec.split(","))
-                .map(String::trim)
-                .filter(part -> !part.isEmpty())
-                .collect(Collectors.toUnmodifiableSet());
+        return CargoTypeCatalog.resolve(spec);
     }
 
     /** 供日志输出装配摘要（机巢数与航段区间），排障用。 */

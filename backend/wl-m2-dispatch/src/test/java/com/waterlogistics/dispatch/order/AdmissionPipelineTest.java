@@ -248,6 +248,56 @@ class AdmissionPipelineTest {
     }
 
     @Test
+    @DisplayName("船舶数据缺失时，非法配送品类仍被拒绝，不再被延后受理")
+    void staleData_withIllegalCargoType_shouldRejectBeforeDefer() {
+        AdmissionPipeline.ShipObservation stale = new AdmissionPipeline.ShipObservation(
+                5000.0, NOW_MS - 200_000L, "INSUFFICIENT", true);
+        AdmissionPipeline.Input input = new AdmissionPipeline.Input(
+                new AdmissionPipeline.OrderRequest("ORD-1", "413800001", "BULK", 10.0,
+                        DEADLINE_MS, "NORMAL", "G-1"),
+                NOW_MS, stale, snapshotFrom(5000.0), nests(), segment(), Boolean.TRUE,
+                Boolean.FALSE, List.of(), Boolean.TRUE, policy());
+
+        AdmissionPipeline.Decision decision = AdmissionPipeline.admit(input);
+
+        assertEquals(AdmissionPipeline.Outcome.REJECT, decision.outcome());
+        assertEquals(AdmissionPipeline.Reason.CARGO_TYPE, decision.reason());
+    }
+
+    @Test
+    @DisplayName("采集链路断流时，非法配送品类仍被拒绝，不再被延后受理")
+    void connectorDown_withIllegalCargoType_shouldRejectBeforeDefer() {
+        AdmissionPipeline.Input input = new AdmissionPipeline.Input(
+                new AdmissionPipeline.OrderRequest("ORD-1", "413800001", "BULK", 10.0,
+                        DEADLINE_MS, "NORMAL", "G-1"),
+                NOW_MS, shipAt(5000.0, true), snapshotFrom(5000.0), nests(), segment(),
+                Boolean.FALSE, Boolean.FALSE, List.of(), Boolean.TRUE, policy());
+
+        AdmissionPipeline.Decision decision = AdmissionPipeline.admit(input);
+
+        assertEquals(AdmissionPipeline.Outcome.REJECT, decision.outcome());
+        assertEquals(AdmissionPipeline.Reason.CARGO_TYPE, decision.reason());
+    }
+
+    @Test
+    @DisplayName("拒单文案给出当前可选品类范围，不展示内部术语")
+    void cargoTypeReject_shouldListEffectiveOptions() {
+        AdmissionPipeline.Input input = new AdmissionPipeline.Input(
+                new AdmissionPipeline.OrderRequest("ORD-1", "413800001", "BULK", 10.0,
+                        DEADLINE_MS, "NORMAL", "G-1"),
+                NOW_MS, shipAt(5000.0, true), snapshotFrom(5000.0), nests(), segment(),
+                Boolean.TRUE, Boolean.FALSE, List.of(), Boolean.TRUE, policy());
+
+        String detail = AdmissionPipeline.admit(input).detail();
+
+        assertTrue(detail.contains("当前不支持配送该品类"));
+        assertFalse(detail.contains("白名单"));
+        for (String option : policy().cargoWhitelist()) {
+            assertTrue(detail.contains(option), "可选品类应来自当前生效集合：" + option);
+        }
+    }
+
+    @Test
     @DisplayName("⑤ 状态缺失或超 TTL → DEFER(DATA_STALE)，唤醒事件 DATA_RESTORED")
     void staleData_shouldDefer() {
         AdmissionPipeline.ShipObservation stale = new AdmissionPipeline.ShipObservation(

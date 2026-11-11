@@ -5,7 +5,7 @@ import com.waterlogistics.contract.rest.WaitReason;
 import com.waterlogistics.contract.state.OrderStatus;
 
 /**
- * 订单展示视图——REST 快照与 WS {@code order_state} 帧共用的同一份字段。
+ * 订单展示视图，REST 快照与 WS {@code order_state} 帧共用的同一份字段。
  *
  * <p>依据《22-接口契约》v1.2 §3.1，并在 §4 {@code order_state} 中同步。
  * 两处共用同一对象，避免出现「REST 一套字段、WS 另一套」的分歧。
@@ -27,6 +27,8 @@ import com.waterlogistics.contract.state.OrderStatus;
  * @param cargoNestId           货物所在巢；为 null 表示系统未选定货巢，订单不经货到巢关。
  *                              该值可能来自系统在下单时刻的决策，也可能来自运营显式指定，
  *                              下游只按「有没有货巢」处理，不区分来源
+ * @param goodsType             下单时选定的配送品类；历史订单缺值时为 null，
+ *                              展示层显示「未记录」，不得猜补默认品类
  */
 public record OrderView(
 
@@ -48,13 +50,16 @@ public record OrderView(
 
         Long etaTs,
 
-        String cargoNestId) {
+        String cargoNestId,
+
+        String goodsType) {
 
     /**
-     * 兼容旧构造点：预计送达时刻尚未算出时传 {@code null}。
+     * 兼容旧构造点：配送品类留空。
      *
-     * <p>为什么保留：订单视图在多处被构造（受理、队列推进、飞行阶段推进），
-     * 新增字段不应强迫这些调用点同时改；ETA 未算出的订单本来就该是 {@code null}。
+     * <p>为什么保留：订单视图在多处被构造，新增字段不应强迫这些调用点同时改。
+     * 历史订单没有配送品类字段，本构造器把该字段置为 {@code null}，
+     * 展示层据此显示「未记录」。
      *
      * @param orderId              订单标识
      * @param orderStatus          订单状态
@@ -64,20 +69,21 @@ public record OrderView(
      * @param wakeEtaTs            预计唤醒时刻，Unix 毫秒；无法估计时为 null
      * @param emergencyLandingPoint 失败时实际迫降坐标；缺失时为 null
      * @param handoverPhase        末段子阶段
+     * @param etaTs                预计送达时刻，Unix 毫秒；未算出时为 null
+     * @param cargoNestId          货物所在巢；未选定货巢时为 null
      */
     public OrderView(String orderId, OrderStatus orderStatus, long eventTs, long stateVersion,
             WaitReason waitReason, Long wakeEtaTs, GeoPoint emergencyLandingPoint,
-            String handoverPhase) {
+            String handoverPhase, Long etaTs, String cargoNestId) {
         this(orderId, orderStatus, eventTs, stateVersion, waitReason, wakeEtaTs,
-                emergencyLandingPoint, handoverPhase, null, null);
+                emergencyLandingPoint, handoverPhase, etaTs, cargoNestId, null);
     }
 
     /**
-     * 兼容旧构造点：货物所在巢留空。
+     * 兼容旧构造点：货物所在巢与配送品类留空。
      *
-     * <p>为什么保留：与上面同一理由——订单视图在多处被构造，新增字段不应强迫
-     * 这些调用点同时改。货巢为 {@code null} 时订单不经货到巢关，对这些构造点而言
-     * 与改造前行为一致。
+     * <p>为什么保留：与上面同一理由。货巢为 {@code null} 时订单不经货到巢关，
+     * 对这些构造点而言与改造前行为一致。
      *
      * @param orderId              订单标识
      * @param orderStatus          订单状态
@@ -93,6 +99,25 @@ public record OrderView(
             WaitReason waitReason, Long wakeEtaTs, GeoPoint emergencyLandingPoint,
             String handoverPhase, Long etaTs) {
         this(orderId, orderStatus, eventTs, stateVersion, waitReason, wakeEtaTs,
-                emergencyLandingPoint, handoverPhase, etaTs, null);
+                emergencyLandingPoint, handoverPhase, etaTs, null, null);
+    }
+
+    /**
+     * 兼容旧构造点：预计送达时刻、货物所在巢与配送品类留空。
+     *
+     * @param orderId              订单标识
+     * @param orderStatus          订单状态
+     * @param eventTs              最近一次状态变化时刻，Unix 毫秒
+     * @param stateVersion         订单态版本号
+     * @param waitReason           等待原因；非「已受理待唤醒」时为 null
+     * @param wakeEtaTs            预计唤醒时刻，Unix 毫秒；无法估计时为 null
+     * @param emergencyLandingPoint 失败时实际迫降坐标；缺失时为 null
+     * @param handoverPhase        末段子阶段
+     */
+    public OrderView(String orderId, OrderStatus orderStatus, long eventTs, long stateVersion,
+            WaitReason waitReason, Long wakeEtaTs, GeoPoint emergencyLandingPoint,
+            String handoverPhase) {
+        this(orderId, orderStatus, eventTs, stateVersion, waitReason, wakeEtaTs,
+                emergencyLandingPoint, handoverPhase, null, null, null);
     }
 }

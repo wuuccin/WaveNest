@@ -1,21 +1,27 @@
 /**
- * 赣江南昌段的点位常量——<b>离线样例与界面提示共用一份</b>。
+ * 赣江南昌段的点位常量，<b>离线样例与界面提示共用一份</b>。
  *
- * <p>与 {@code MapView.vue} 里的 {@code serviceArea}／桥参考点是同一片水域，
- * 但<b>不 import 组件内部变量</b>（组件里的常量不是模块接口，改天重构就断）。
- * 这里只放「样例要落在视野里」这一件事需要的数；真值仍以
- * 任务清单「坐标口径」与后端台账为准：
- * NEST-01 {@code 115.8480/28.6420}、NEST-02 {@code 115.8670/28.6980}、
- * 船起点 {@code 115.8630/28.6680}。
+ * <p>现行口径取影像河心中心线，与 {@code application.yml} 的 AIS path、
+ * centerline 以及三桥台账同源。船起点取沿程 2.40 km 处
+ * {@code 115.858005/28.662662}。
+ * <p>本模块是离线坐标的唯一来源，{@code mock.js} 与 {@code mockPrediction.js}
+ * 都从这里导入，避免同一批常量在多处硬编码后再次漂移。
+ * <p>本模块不 import 组件内部变量（组件里的常量不是模块接口，改天重构就断）。
  */
+export const V3_START = Object.freeze({ lon: 115.858005, lat: 28.662662 })
+export const V3_SHIP_POINTS = Object.freeze([
+  V3_START,
+  Object.freeze({ lon: 115.864577, lat: 28.681114 }),
+  Object.freeze({ lon: 115.872180, lat: 28.692014 })
+])
 export const NANCHANG_SEGMENT = {
-  /** 船起点（任务清单口径）——样例点列以此为中心 */
-  midpoint: { lon: 115.863, lat: 28.668 },
-  /** 三桥（任务清单口径），样例用来判断点列没跑出水域 */
+  /** 样例点列以此为中心 */
+  midpoint: V3_START,
+  /** 三桥台账中心，样例用来判断点列没跑出水域 */
   bridges: [
-    { id: 'BRIDGE-CHAOYANG', lon: 115.852, lat: 28.646 },
-    { id: 'BRIDGE-NANCHANG', lon: 115.859, lat: 28.663 },
-    { id: 'BRIDGE-BAYI', lon: 115.879, lat: 28.692 }
+    { id: 'BRIDGE-CHAOYANG', lon: 115.844393, lat: 28.645998 },
+    { id: 'BRIDGE-NANCHANG', lon: 115.857937, lat: 28.663776 },
+    { id: 'BRIDGE-BAYI', lon: 115.872180, lat: 28.692014 }
   ],
   /** 视野范围，与 MapView 的 serviceArea 同口径 */
   southwest: { lon: 115.844, lat: 28.638 },

@@ -145,6 +145,19 @@ public class OrderAdmissionService {
     }
 
     /**
+     * 返回当前生效的可承运配送品类，供字典查询接口回显。
+     *
+     * <p>无装配器时回落到契约默认全集，使只验接口回显的单测不必造装配器。
+     *
+     * @return 按固定顺序排列的可承运品类
+     */
+    public List<String> cargoTypeOptions() {
+        return inputAssembler == null
+                ? CargoTypeCatalog.defaults()
+                : inputAssembler.cargoTypeOptions();
+    }
+
+    /**
      * 接入一笔下单请求：基本校验 → 接单判定链 → 四分流。
      *
      * @param request 下单请求
@@ -234,7 +247,8 @@ public class OrderAdmissionService {
                 null,
                 null,
                 decision.etaTsMs(),
-                pipelineRequest.cargoNestId());
+                pipelineRequest.cargoNestId(),
+                request.goodsType());
 
         orders.put(orderId, view);
         taskLogRecorder.record(orderId, "订单接入", null, OrderStatus.PENDING_ACCEPT.getValue(), nowMs);
@@ -277,7 +291,8 @@ public class OrderAdmissionService {
                 null,
                 null,
                 decision.etaTsMs(),
-                pipelineRequest.cargoNestId());
+                pipelineRequest.cargoNestId(),
+                request.goodsType());
 
         orders.put(orderId, view);
         // opType 沿用 B3 既有口径：闸门类延后记「闸门熔断-延后」，其余延后记「接单延后」，

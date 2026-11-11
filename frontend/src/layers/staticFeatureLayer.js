@@ -1,5 +1,6 @@
 import L from 'leaflet'
 import { systemMapPoint, toMapLatLng } from '../map/coordinates'
+import { bridgeDisplayPoint } from '../map/bridgeDisplayPoints'
 
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, character => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
@@ -25,7 +26,8 @@ export function drawStaticFeatures(group, features) {
   }
 
   for (const bridge of bridges) {
-    const marker = L.marker(toMapLatLng(bridge.center), {
+    const displayCenter = bridgeDisplayPoint(bridge) || bridge.center
+    const marker = L.marker(toMapLatLng(displayCenter), {
       zIndexOffset: 450,
       icon: L.divIcon({
         className: 'bridge-pin',
@@ -34,7 +36,7 @@ export function drawStaticFeatures(group, features) {
       }),
       title: bridge.name || bridge.restrictionId
     })
-    marker.bindPopup(`<strong>${escapeHtml(bridge.name || bridge.restrictionId)}</strong><br>类型：${escapeHtml(bridge.type || '桥梁')}<br>净空高：${escapeHtml(bridge.clearanceHeightM ?? '未登记')} m<br>通航孔宽：${escapeHtml(bridge.spanWidthM ?? '未登记')} m<br><small>${escapeHtml(bridge.source || '后端空域台账')}</small>`)
+    marker.bindPopup(`<strong>${escapeHtml(bridge.name || bridge.restrictionId)}</strong><br>类型：${escapeHtml(bridge.type || '桥梁')}<br>净空高：${escapeHtml(bridge.clearanceHeightM ?? '未登记')} m<br>通航孔宽：${escapeHtml(bridge.spanWidthM ?? '未登记')} m<br><small>${escapeHtml(bridge.source || '后端空域台账')}</small><br><small>示意标按影像桥面标定，台账中心用于限高与航道</small>`)
     marker.addTo(group)
   }
 }

@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import MapView from './components/MapView.vue'
 import OrderTimeline from './components/OrderTimeline.vue'
 import EventStream from './components/EventStream.vue'
@@ -16,7 +16,6 @@ import { GUIDE_STAGES, buildLiveGuideSteps, buildOfflineGuideSteps, buildContinu
 import { buildReplaySteps, droneIdForOrder, normalizeReplayTasks } from './replay/model'
 import { api } from './api/client'
 import { useOrderStore, useShipStore, useDroneStore, useAlertStore, useEventStore, useNestStore, useFleetStore, useAirspaceStore, usePlanTrackStore } from './stores'
-import { usePredictionStore } from './stores/prediction'
 
 const route = ref(location.hash.slice(1) || 'dashboard')
 const sceneIndex = ref(0)
@@ -34,7 +33,7 @@ const selectedOrderId = ref('')
 const consoleFocus = ref('orders')
 const crewMapOpen = ref(false)
 const screenRecording = ref(false)
-const guide = reactive({ orderId: '', loading: false, ready: false, error: '', index: 0, waitSeconds: 0, branch: '' })
+const guide = reactive({ orderId: '', goodsType: '', loading: false, ready: false, error: '', index: 0, waitSeconds: 0, branch: '' })
 let guideToken = 0
 let screenRecorder
 let screenStream
@@ -42,11 +41,7 @@ let screenStream
 const realtime = createRealtime()
 const orders = useOrderStore()
 const ship = useShipStore()
-const prediction = usePredictionStore()
 const selectedShip = computed(() => ship.byId[ship.selectedMmsi] || null)
-watch(() => ship.selectedMmsi, mmsi => {
-  if (mmsi && prediction.selectedMmsi !== mmsi) void prediction.select(mmsi, source.value === 'mock' ? 'mock' : 'auto')
-})
 const drone = useDroneStore()
 const alerts = useAlertStore()
 const events = useEventStore()
@@ -303,7 +298,7 @@ function chooseGuideBranch(branch) {
   if (guide.index !== 2 || !['continue', 'return'].includes(branch)) return
   try {
     replaySteps.value = branch === 'continue'
-      ? buildContinueGuideSteps(returnGuideSteps.value, guide.orderId)
+      ? buildContinueGuideSteps(returnGuideSteps.value, guide.orderId, guide.goodsType)
       : returnGuideSteps.value
     guide.branch = branch
     showGuideStage(3)
@@ -321,9 +316,10 @@ function previousGuideStage() {
 async function onGuideOrderCreated(order) {
   if (!order?.orderId) { guide.error = '没有收到订单编号，请重新提交'; return }
   guide.orderId = order.orderId
+  guide.goodsType = order.goodsType || ''
   selectedOrderId.value = order.orderId
   if (source.value === 'mock') {
-    returnGuideSteps.value = buildOfflineGuideSteps(order.orderId)
+    returnGuideSteps.value = buildOfflineGuideSteps(order.orderId, guide.goodsType)
     replaySteps.value = returnGuideSteps.value
     guide.ready = true
     showGuideStage(0)

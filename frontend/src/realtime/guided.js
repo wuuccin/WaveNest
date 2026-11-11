@@ -68,7 +68,7 @@ export const CONTINUE_STAGES = [
 
 // The live backend currently records only a pre-scripted return branch. Keep the
 // alternative entirely local and label it as a scenario in the UI.
-export function buildContinueGuideSteps(baseSteps, orderId) {
+export function buildContinueGuideSteps(baseSteps, orderId, goodsType = '') {
   const opening = baseSteps.slice(0, 3).flatMap(step => step.frames)
   const latest = type => opening.filter(frame => frame[0] === type).at(-1)?.[1]
   const start = latest('drone_state')
@@ -89,7 +89,8 @@ export function buildContinueGuideSteps(baseSteps, orderId) {
   const eventTs = Date.now()
   const order = (status, offset) => ['order_state', { orderId, orderStatus: status,
     stateVersion: previousVersion + offset, eventTs: eventTs + offset * 1000,
-    waitReason: null, wakeEtaTs: null, emergencyLandingPoint: null, handoverPhase: null }]
+    waitReason: null, wakeEtaTs: null, emergencyLandingPoint: null, handoverPhase: null,
+    goodsType }]
   const drone = (point, battery, phase, segments, offset) => ['drone_state', {
     ...start, ...point, uavId: start.uavId || 'UAV-01', battery,
     flightPhase: phase, eventTs: eventTs + offset * 1000, ts: eventTs + offset * 1000, segments }]
@@ -127,10 +128,11 @@ export function buildLiveGuideSteps(rawFrames) {
   return GUIDE_STAGES.map((stage, index) => ({ title: stage.title, frames: frames.slice(starts[index], starts[index + 1] ?? frames.length).map(frame => [frame.type, frame.data]) }))
 }
 
-export function buildOfflineGuideSteps(orderId) {
+export function buildOfflineGuideSteps(orderId, goodsType = '') {
   const clone = ([type, data]) => [type, { ...data,
     ...(data.orderId === 'DEMO-01' ? { orderId } : {}),
-    ...(data.targetId === 'DEMO-01' ? { targetId: orderId } : {}) }]
+    ...(data.targetId === 'DEMO-01' ? { targetId: orderId } : {}),
+    ...(type === 'order_state' ? { goodsType: goodsType || data.goodsType || '' } : {}) }]
   const steps = [
     [...SCENES[0].frames, ...SCENES[1].frames],
     SCENES[2].frames, SCENES[3].frames, SCENES[4].frames, SCENES[5].frames,

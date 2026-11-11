@@ -1,4 +1,5 @@
 import { reactive } from 'vue'
+import { DEMO_DEFAULT_CARGO_TYPE } from '../api/cargoTypes'
 
 export const DEMO_STAGES = ['下单与预计会面', '首架无人机去程', '船舶变向，重评会面方案', '本例预设原机返航', '演示落巢回收并重入队', '演示重派并与船舶交接']
 
@@ -57,7 +58,7 @@ export function createDemoRunner({ api, subscribe, connected, timeoutMs = 30000 
     try {
       await api.resetShip({ signal })
       if (signal.aborted) return
-      const created = await api.createOrder({ shipMmsi: import.meta.env?.VITE_SIM_SHIP_MMSI || '123456789', goodsWeight: 2, goodsType: '应急药品', priority: 'NORMAL' }, { signal })
+      const created = await api.createOrder({ shipMmsi: import.meta.env?.VITE_SIM_SHIP_MMSI || '123456789', goodsWeight: 2, goodsType: DEMO_DEFAULT_CARGO_TYPE, priority: 'NORMAL' }, { signal })
       if (signal.aborted) return
       if (!created.accepted || !created.orderId) throw new Error(created.message || '后端未接收演示订单')
       state.orderId = created.orderId

@@ -31,7 +31,7 @@ try {
 
   await page.goto(`${baseUrl}/?debug=1#dashboard`, { waitUntil: 'domcontentloaded' })
   await page.getByLabel('开发取点工具').waitFor({ timeout: 10_000 })
-  assert.equal(await page.locator('.debug-bridge-pin').count(), 3, 'development map should show all three bridge references')
+  assert.equal(await page.locator('.debug-bridge-pin').count(), 0, 'development map must not show obsolete bridge references')
 
   const mapBox = await page.locator('#operations-map').boundingBox()
   await page.mouse.click(mapBox.x + 170, mapBox.y + 120)
@@ -45,7 +45,7 @@ try {
   assert.match(popup, /115\.858000, 28\.641000/, 'entity popup should show unshifted stored coordinates')
   if (errors.length) throw new Error(errors.join('; '))
 
-  console.log('Development map pick tool checks passed: system CRS, bridge references and entity coordinates')
+  console.log('Development map pick tool checks passed: system CRS, no obsolete bridge references and entity coordinates')
 } finally {
   await browser.close()
 }

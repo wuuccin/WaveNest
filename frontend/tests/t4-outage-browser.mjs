@@ -60,7 +60,7 @@ try {
     ? route.fulfill({ json: [{ droneId: 'UAV-OUTAGE', homeNestId: 'NEST-01', currentNestId: 'NEST-01', battery: 87 }] })
     : route.abort('connectionrefused'))
   await page.route('**/api/airspace', route => backendOnline
-    ? route.fulfill({ json: [{ restrictionId: 'BRIDGE-1', kind: 'bridge', name: '朝阳大桥', center: { lon: 115.852, lat: 28.646 } }] })
+    ? route.fulfill({ json: [{ restrictionId: 'BRIDGE-1', kind: 'bridge', name: '朝阳大桥', center: { lon: 115.844393, lat: 28.645998 } }] })
     : route.abort('connectionrefused'))
   await page.route('**/api/monitor/tasks', route => backendOnline
     ? route.fulfill({ json: { tasks: [] } })

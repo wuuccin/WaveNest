@@ -44,6 +44,10 @@ export function wakeText(order) {
   if (order.wakeEtaTs < Date.now()) return '等待调度更新'
   return new Date(order.wakeEtaTs).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })
 }
+export function cargoTypeText(order) {
+  if (!order || order.goodsType == null || order.goodsType === '') return '未记录'
+  return order.goodsType
+}
 export function etaText(order) {
   if (!order || order.etaTs == null) return '预计送达待更新'
   return new Date(order.etaTs).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })

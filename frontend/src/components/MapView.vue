@@ -17,7 +17,7 @@ const props = defineProps({ comparison: { type: Object, default: null }, branchR
 const ship = useShipStore(), drone = useDroneStore(), order = useOrderStore(), alert = useAlertStore(), nest = useNestStore(), fleet = useFleetStore(), airspace = useAirspaceStore(), prediction = usePredictionStore(), planTrack = usePlanTrackStore()
 const selectedShip = computed(() => ship.byId[ship.selectedMmsi] || null)
 const selectedTrack = computed(() => ship.tracks[ship.selectedMmsi] || [])
-let map, staticGroup, comparisonGroup, shipGroup, meetingGroup, droneGroup, branchGroup, alertGroup, nestGroup, fleetGroup, debugReferenceGroup, predictionGroup, planTrackGroup
+let map, staticGroup, comparisonGroup, shipGroup, meetingGroup, droneGroup, branchGroup, alertGroup, nestGroup, fleetGroup, predictionGroup, planTrackGroup
 /** 容器尺寸观察器：flex 布局下地图高度随栅格行高变化，不伴随窗口 resize 事件（2026-11-08） */
 let resizeObserver = null
 let lastOverlaidMmsi = ''
@@ -49,12 +49,6 @@ const serviceArea = {
   southwest: { lon: 115.844, lat: 28.638 },
   northeast: { lon: 115.889, lat: 28.702 }
 }
-const debugBridgeReferences = [
-  { id: 'BRIDGE-CHAOYANG', name: '朝阳大桥库内参考点', lon: 115.852, lat: 28.646 },
-  { id: 'BRIDGE-NANCHANG', name: '南昌大桥库内参考点', lon: 115.859, lat: 28.663 },
-  { id: 'BRIDGE-BAYI', name: '八一大桥库内参考点', lon: 115.879, lat: 28.692 }
-]
-
 function safeMapPoint(point) {
   const systemPoint = systemMapPoint(point)
   return systemPoint && valid(systemPoint) ? systemPoint : null
@@ -74,23 +68,6 @@ async function copyPickedPoint() {
     copyStatus.value = '已复制'
   } catch {
     copyStatus.value = '复制失败，请手动选择'
-  }
-}
-
-function drawDebugReferences() {
-  if (!debugEnabled || !debugReferenceGroup) return
-  debugReferenceGroup.clearLayers()
-  for (const bridge of debugBridgeReferences) {
-    const marker = L.marker(toMapLatLng(bridge), {
-      zIndexOffset: 700,
-      interactive: false,
-      icon: L.divIcon({
-        className: 'debug-bridge-pin',
-        html: `<span>＋</span><b>${escapeHtml(bridge.name)}</b>`,
-        iconSize: [26, 26], iconAnchor: [13, 13]
-      })
-    })
-    marker.addTo(debugReferenceGroup)
   }
 }
 
@@ -327,9 +304,7 @@ onMounted(() => {
   planTrackGroup = L.layerGroup().addTo(map)
   nestGroup = L.layerGroup().addTo(map)
   fleetGroup = L.layerGroup().addTo(map)
-  debugReferenceGroup = L.layerGroup().addTo(map)
   installBaseLayerControl()
-  drawDebugReferences()
   fitServiceArea()
   map.on('resize', () => { map.invalidateSize(); fitServiceArea() })
   if (debugEnabled) map.on('click', pickMapPoint)
@@ -357,7 +332,7 @@ watch([() => selectedShip.value, () => selectedTrack.value, () => visibleDrone.v
   () => order.previousRendezvous, () => order.orders, () => props.comparison, () => props.branchRoute, () => props.droneId, () => props.orderId, () => nest.items,
   () => fleet.items, () => airspace.items, () => prediction.overlay,
   () => planTrack.byOrder, () => planTrack.highlightKind], update, { deep: true })
-onUnmounted(() => { clearTimeout(fallbackTimer); resizeObserver?.disconnect(); resizeObserver = null; if (map && debugEnabled) map.off('click', pickMapPoint); cancelFit(); map?.remove(); map = null; activeBaseLayer = null; fallbackLayer = null; baseLayerControl = null; debugReferenceGroup = null; predictionGroup = null; planTrackGroup = null; lastOverlaidMmsi = ''; lastPlanOrderId = '' })
+onUnmounted(() => { clearTimeout(fallbackTimer); resizeObserver?.disconnect(); resizeObserver = null; if (map && debugEnabled) map.off('click', pickMapPoint); cancelFit(); map?.remove(); map = null; activeBaseLayer = null; fallbackLayer = null; baseLayerControl = null; predictionGroup = null; planTrackGroup = null; lastOverlaidMmsi = ''; lastPlanOrderId = '' })
 </script>
 
 <template>
@@ -375,7 +350,8 @@ onUnmounted(() => { clearTimeout(fallbackTimer); resizeObserver?.disconnect(); r
       <span><i class="map-symbol map-symbol-meeting">◎</i> 当前会面点</span>
       <span><i class="map-line map-line-actual"></i> 船舶实测轨迹</span>
       <span><i class="map-line map-line-ship"></i> 船舶预测轨迹</span>
-      <span><i class="map-symbol map-symbol-ellipse">◯</i> 预测置信椭圆</span>
+      <span><i class="map-symbol map-symbol-ellipse">◯</i> 常驻船舶层椭圆</span>
+      <span v-if="prediction.overlay"><i class="map-symbol map-symbol-ellipse-overlay">◯</i> 预测看台层椭圆</span>
       <span><i class="map-line map-line-drone"></i> 无人机去程</span>
       <span><i class="map-line map-line-handover"></i> 末段交接</span>
       <span><i class="map-line map-line-return"></i> 无人机返航</span>
@@ -392,11 +368,12 @@ onUnmounted(() => { clearTimeout(fallbackTimer); resizeObserver?.disconnect(); r
       <span v-if="planTrack.count"><i class="map-line map-line-plan-outbound"></i> 计划去程</span>
       <span v-if="planTrack.count"><i class="map-line map-line-plan-terminal"></i> 计划末段交接</span>
       <span v-if="planTrack.count"><i class="map-line map-line-plan-return"></i> 计划返程</span>
+      <span class="map-guide-note">船舶预测轨迹按台账中心线与航向外推绘制，相邻台账点弦线与外推段都没有岸线、江心洲水面矢量约束。</span>
     </div>
     <div class="map-shell">
       <div id="operations-map"></div>
       <div class="map-caption"><span class="live-dot"></span>{{ hasComparison ? '会面点更新前后对照' : `赣江南昌段 · ${tileCaption}` }}</div>
-      <div class="map-scale">系统与底图：CGCS2000 / WGS-84</div>
+      <div class="map-scale">系统与底图：CGCS2000 / WGS-84<br>桥梁示意标按影像桥面标定，道路名称来自天地图注记瓦片</div>
       <div v-if="connectionError" class="map-connection-state" role="status"><strong>实时服务暂时断开</strong><span>地图界面仍可操作，实时业务要素已清空；服务恢复后会自动重连。</span></div>
       <section v-if="debugEnabled" class="map-pick-tool" aria-label="开发取点工具" @click.stop @dblclick.stop @mousedown.stop>
         <strong>开发取点 · 系统坐标</strong>

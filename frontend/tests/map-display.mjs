@@ -31,9 +31,9 @@ try {
     { droneId: 'UAV-01', homeNestId: 'NEST-NANCHANG-1', currentNestId: 'NEST-NANCHANG-1', status: '空闲', battery: 90 }
   ]))
   await page.route('**/api/airspace', route => staticReply(route, [
-    { restrictionId: 'BRIDGE-CHAOYANG', name: '朝阳大桥', kind: 'bridge', type: '限高', center: { lon: 115.852, lat: 28.646 }, clearanceHeightM: 12, spanWidthM: 80 },
-    { restrictionId: 'BRIDGE-NANCHANG', name: '南昌大桥', kind: 'bridge', type: '限高', center: { lon: 115.859, lat: 28.663 }, clearanceHeightM: 10, spanWidthM: 60 },
-    { restrictionId: 'BRIDGE-BAYI', name: '八一大桥', kind: 'bridge', type: '限高', center: { lon: 115.879, lat: 28.692 }, clearanceHeightM: 14, spanWidthM: 100 }
+    { restrictionId: 'BRIDGE-CHAOYANG', name: '朝阳大桥', kind: 'bridge', type: '限高', center: { lon: 115.844393, lat: 28.645998 }, clearanceHeightM: 12, spanWidthM: 80 },
+    { restrictionId: 'BRIDGE-NANCHANG', name: '南昌大桥', kind: 'bridge', type: '限高', center: { lon: 115.857937, lat: 28.663776 }, clearanceHeightM: 10, spanWidthM: 60 },
+    { restrictionId: 'BRIDGE-BAYI', name: '八一大桥', kind: 'bridge', type: '限高', center: { lon: 115.872180, lat: 28.692014 }, clearanceHeightM: 14, spanWidthM: 100 }
   ]))
 
   await page.goto(`${baseUrl}/#dashboard`, { waitUntil: 'domcontentloaded' })
@@ -43,6 +43,13 @@ try {
   if (await page.locator('.fleet-pin').count() !== 1) throw new Error('backend fleet was not grouped at its current nest')
   if (await page.locator('.bridge-pin').count() !== 3) throw new Error('three backend bridge records were not rendered')
   await page.getByRole('combobox', { name: '地图底图' }).waitFor()
+  const scaleText = await page.locator('.map-scale').innerText()
+  if (!scaleText.includes('影像桥面') || !scaleText.includes('天地图注记瓦片')) throw new Error('map scale must state the imagery bridge points and tile annotations')
+  const guideText = await page.locator('.map-guide').innerText()
+  if (!guideText.includes('台账中心线') || !guideText.includes('水面矢量约束')) throw new Error('map guide must state the missing shoreline constraints for prediction tracks')
+  await page.locator('.bridge-pin').first().click({ force: true })
+  const bridgePopup = await page.locator('.leaflet-popup-content').first().innerText()
+  if (!bridgePopup.includes('影像桥面') || !bridgePopup.includes('台账中心')) throw new Error('bridge popup must state the imagery point and the ledger centre')
   backendOnline = false
   await page.waitForTimeout(5500)
   if (await page.locator('.nest-pin, .fleet-pin, .bridge-pin').count()) throw new Error('static business features remained after the backend became unreachable')

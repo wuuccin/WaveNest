@@ -179,6 +179,12 @@ class OrderControllerTest {
                 "拼错状态若回全量，会让人误以为过滤生效了");
     }
 
+    @Test
+    @DisplayName("配送品类字典接口返回当前生效集合，不返回默认全集之外的项")
+    void cargoTypes_shouldReturnEffectiveCatalog() {
+        assertEquals(CargoTypeCatalog.defaults(), controller.cargoTypes().cargoTypes());
+    }
+
     /** 往内存视图里塞一条订单（走生产同一条 {@code onOrderStateChanged} 入口）。 */
     private void seed(String orderId, OrderStatus status) {
         admissionService.onOrderStateChanged(new OrderStateChangedEvent(new OrderView(
