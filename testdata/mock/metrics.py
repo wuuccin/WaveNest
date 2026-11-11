@@ -121,6 +121,11 @@ def calculate_metrics(
         groups[row_class][segment].append((along, cross, sigma_along, sigma_cross))
         tau_grid.add(int(tau))
 
+    if not tau_grid:
+        raise ValueError("at least one paired prediction sample is required")
+    if rows_pred_error_sample == 0:
+        raise ValueError("database row count cannot be zero when paired samples exist")
+
     by_class: dict[str, dict[str, Any]] = {}
     for name, segments in groups.items():
         normal = segments["normal_prediction"]
@@ -130,6 +135,8 @@ def calculate_metrics(
             "bbox_fallback": {"samples": len(fallback), **_summarize(fallback)},
         }
     current_normal = by_class[evidence_class]["normal_prediction"]
+    if current_normal["samples"] == 0:
+        raise ValueError("the selected evidence class has no normal prediction samples")
     result = {name: current_normal[name] for name in METRIC_NAMES}
     result.update(
         meet_error_m=_distance_m(predicted_meet_lon_lat, truth_meet_lon_lat),
