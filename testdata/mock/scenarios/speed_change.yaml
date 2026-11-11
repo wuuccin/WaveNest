@@ -1,0 +1,33 @@
+# =====================================================================
+# 场景家族 3/6：speed_change（变速／超速航段）
+# 用途：20 min 离线子段，speed_profile = overspeed，限速三段取独立设定值
+#       （5.5／3.5／3.0 m/s），船速跨段变化更陡，考察限速积分器在
+#       变速真值下的 s(t) 一致性与预测误差。
+# 真值口径：按本文件 speed_limits_ms 独立积分（契约 §2「超速家族用独立 speed_profile」），
+#       不得用 4.12 恒定当真值。三段设定值均为自造，来源档 design_assumption。
+# 复跑：同 seed 复跑会撞唯一键，先清表或换 pred_version（契约 §9）。
+# =====================================================================
+family: speed_change
+seed: 3
+mode: offline
+t0_ms: 1794268800000
+path_start_m: 1000.0
+duration_sec: 1200
+speed_limits_ms: "0,2000,5.5;2000,4000,3.5;4000,6003.4,3.0"   # overspeed 独立设定值（非 §2 三段值）
+speed_profile: overspeed
+tick_millis: 1000
+truth_source: truth/speed_change.csv
+noise_deg: 0.00005
+mmsi: "T3"
+pred_version: 11090003
+param_sources:
+  sog_ms: design_assumption
+  speed_limits_ms: design_assumption # 独立三段值为变速家族自造设定值
+  speed_profile: design_assumption
+  noise_deg: design_assumption
+  sigmaEM: design_assumption
+  tauESec: design_assumption
+  alphaAlongMs: design_assumption
+  tick_millis: design_assumption
+  path_start_m: design_assumption
+  中心线十三点: measured
