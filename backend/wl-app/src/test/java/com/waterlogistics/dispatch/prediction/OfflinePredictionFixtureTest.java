@@ -2,16 +2,26 @@ package com.waterlogistics.dispatch.prediction;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.waterlogistics.app.WaveNestApplication;
 import com.waterlogistics.storage.entity.PredErrorSampleEntity;
 import com.waterlogistics.storage.repository.PredErrorSampleMapper;
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -43,6 +53,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
  * FIXTURE_KEEP_SAMPLES  默认不设      设 1 则单跑后不删行（排查用）
  * FIXTURE_SEED_FROM     默认不设      批量模式起点 seed，设了才跑批量用例
  * FIXTURE_SEED_TO       默认不设      批量模式终点 seed（含）
+ * FIXTURE_T0_MS         默认 1794268800000  观测起始时刻，须与场景 t0_ms 同源（契约 §6.2）
  * </pre>
  *
  * <p>复跑命令（本机 Docker 把 MySQL 映射在 3307）：
@@ -83,9 +94,10 @@ class OfflinePredictionFixtureTest {
         long predVersion = longEnv("FIXTURE_PRED_VERSION", 1L);
         double pathStartM = doubleEnv("FIXTURE_PATH_START_M", OfflinePredictionFixture.SUBSET_START_M);
         int durationSec = intEnv("FIXTURE_DURATION_SEC", OfflinePredictionFixture.SUBSET_DURATION_SEC);
+        long t0Ms = longEnv("FIXTURE_T0_MS", OfflinePredictionFixture.DEFAULT_T0_MS);
 
         OfflinePredictionFixture.Spec spec = new OfflinePredictionFixture.Spec(
-                seed, "T" + seed, predVersion, 1_760_000_000_000L, pathStartM, durationSec);
+                seed, "T" + seed, predVersion, t0Ms, pathStartM, durationSec);
 
         Map<String, String> sysParamBefore = snapshotSysParam();
         LambdaQueryWrapper<PredErrorSampleEntity> mine =
@@ -152,8 +164,8 @@ class OfflinePredictionFixtureTest {
 
             // ── 5. 自检摘要：交给编排器与验收人看 ──
             System.out.printf("[FIXTURE] seed=%d mmsi=%s pred_version=%d path_start=%.1f m "
-                            + "duration=%d s%n",
-                    seed, spec.mmsi(), predVersion, pathStartM, durationSec);
+                            + "duration=%d s t0_ms=%d%n",
+                    seed, spec.mmsi(), predVersion, pathStartM, durationSec, t0Ms);
             System.out.printf("[FIXTURE] truth_end_s=%.4f m  samples=%d  rows=%d  duplicated=%d  off_grid=%d%n",
                     result.endS(), result.samples(), result.rows(), result.duplicated(),
                     result.offGridSamples());
@@ -198,7 +210,7 @@ class OfflinePredictionFixtureTest {
         long predVersion = longEnv("FIXTURE_PRED_VERSION", 1L);
         double pathStartM = doubleEnv("FIXTURE_PATH_START_M", OfflinePredictionFixture.SUBSET_START_M);
         int durationSec = intEnv("FIXTURE_DURATION_SEC", OfflinePredictionFixture.SUBSET_DURATION_SEC);
-        long t0Ms = 1_760_000_000_000L;
+        long t0Ms = longEnv("FIXTURE_T0_MS", OfflinePredictionFixture.DEFAULT_T0_MS);
 
         Map<String, String> sysParamBefore = snapshotSysParam();
         List<Integer> failedSeeds = new ArrayList<>();
@@ -237,8 +249,9 @@ class OfflinePredictionFixtureTest {
         }
 
         long elapsedMs = System.currentTimeMillis() - startedAt;
-        System.out.printf("[BATCH-SUMMARY] range=%d..%d seeds=%d rows=%d failed=%s elapsed=%d ms%n",
-                from, to, to - from + 1, totalRows, failedSeeds, elapsedMs);
+        System.out.printf("[BATCH-SUMMARY] range=%d..%d seeds=%d rows=%d failed=%s "
+                        + "t0_ms=%d elapsed=%d ms%n",
+                from, to, to - from + 1, totalRows, failedSeeds, t0Ms, elapsedMs);
 
         Map<String, String> sysParamAfter = snapshotSysParam();
         assertEquals(sysParamBefore, sysParamAfter,
@@ -279,6 +292,78 @@ class OfflinePredictionFixtureTest {
                 series.get((int) Math.ceil(667.0));
         assertEquals(2.5, afterSwitch.sogMs(), 1e-9,
                 "跨过 4000 m 后真值航速必须降到 2.5 m/s");
+    }
+
+    /**
+     * 时基同源（契约 §6.2）：夹具默认时基必须与场景 {@code t0_ms} 逐字一致。
+     *
+     * <p>这条不是在验一个常量，而是在验「夹具与编排器看的是同一个时刻」：
+     * 场景文件改了 {@code t0_ms} 而夹具没跟，编排队列会按新时基取行、夹具按旧时基落行，
+     * 两边各自都「成功」，合起来 0 行。这种事只能靠跨文件断言拦住。
+     */
+    @Test
+    @DisplayName("时基同源：DEFAULT_T0_MS 等于场景 normal_straight.yaml 的 t0_ms")
+    void defaultT0_shouldMatchScenarioT0() {
+        assertEquals(Instant.parse("2026-11-10T00:00:00Z").toEpochMilli(),
+                OfflinePredictionFixture.DEFAULT_T0_MS,
+                "DEFAULT_T0_MS 应是 2026-11-10T00:00:00Z，实得 "
+                        + Instant.ofEpochMilli(OfflinePredictionFixture.DEFAULT_T0_MS));
+
+        // 旧时基必须被 Spec 挡掉，避免有人把它写回去而测试照绿
+        assertThrows(IllegalArgumentException.class,
+                () -> new OfflinePredictionFixture.Spec(1, "T1", 1L,
+                        OfflinePredictionFixture.FORBIDDEN_T0_MS,
+                        OfflinePredictionFixture.SUBSET_START_M,
+                        OfflinePredictionFixture.SUBSET_DURATION_SEC),
+                "Spec 应拒绝契约 §6.2 的禁用时基");
+
+        Path scenario = locateRepoFile("testdata/mock/scenarios/normal_straight.yaml");
+        Assumptions.assumeTrue(scenario != null,
+                "工作树内找不到 testdata/mock/scenarios/normal_straight.yaml，"
+                        + "跳过与场景文件的逐字比对（不判失败）");
+
+        long scenarioT0 = readT0Ms(scenario);
+        assertEquals(OfflinePredictionFixture.DEFAULT_T0_MS, scenarioT0,
+                "夹具时基 " + OfflinePredictionFixture.DEFAULT_T0_MS
+                        + " 与场景 " + scenario + " 的 t0_ms " + scenarioT0 + " 不同源（契约 §6.2）");
+    }
+
+    /**
+     * 从当前工作目录向上找仓库内文件。
+     *
+     * <p>{@code :wl-app:test} 的工作目录是模块目录，{@code testdata/mock} 在仓库根，
+     * 所以不能写死相对层级；找不到返回 {@code null}，由调用方按「跳过」处理。
+     */
+    private static Path locateRepoFile(String relative) {
+        Path dir = Paths.get(System.getProperty("user.dir")).toAbsolutePath();
+        for (int depth = 0; depth < 6 && dir != null; depth++) {
+            Path candidate = dir.resolve(relative);
+            if (Files.isRegularFile(candidate)) {
+                return candidate;
+            }
+            dir = dir.getParent();
+        }
+        return null;
+    }
+
+    /**
+     * 取场景 YAML 顶层的 {@code t0_ms}。
+     *
+     * <p>只认行首这一种写法，不引 YAML 依赖：场景文件由张睿哲的校验器把关字段表，
+     * 这里只需一个不会把注释里的数字也吃进去的取值。
+     */
+    private static long readT0Ms(Path scenario) {
+        try {
+            for (String line : Files.readAllLines(scenario, StandardCharsets.UTF_8)) {
+                Matcher matcher = Pattern.compile("^t0_ms:\\s*(\\d+)").matcher(line);
+                if (matcher.find()) {
+                    return Long.parseLong(matcher.group(1));
+                }
+            }
+        } catch (IOException ex) {
+            throw new UncheckedIOException("读取场景文件失败：" + scenario, ex);
+        }
+        throw new IllegalStateException("场景文件缺 t0_ms：" + scenario);
     }
 
     private Map<String, String> snapshotSysParam() {

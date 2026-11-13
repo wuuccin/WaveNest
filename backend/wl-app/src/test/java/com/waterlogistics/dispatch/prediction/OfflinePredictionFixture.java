@@ -124,6 +124,21 @@ public final class OfflinePredictionFixture {
     /** 契约 §2 的 20 min 子段时长，s。 */
     public static final int SUBSET_DURATION_SEC = 1200;
 
+    /**
+     * 观测序列的统一起始时刻，epoch ms（契约 §6.2「统一 `t0_ms`」）。
+     *
+     * <p>取值 {@code 1794268800000} = {@code 2026-11-10T00:00:00Z}，与
+     * {@code testdata/mock/scenarios/normal_straight.yaml:14} 的 {@code t0_ms} 逐字同源。
+     * 编排器按 {@code manifest.json.t0_ms} 对齐各 run，夹具落在别的时刻就会与场景错开。
+     *
+     * <p>原硬编码 {@code 2025-10-09T08:53:20Z}（见 {@link #FORBIDDEN_T0_MS}）已禁用：
+     * 与场景差约 397 天，{@code pred_error_sample.sample_ts} 全部落在场景时基之外，
+     * 编排器按 {@code t0_ms} 取行会取到 0 行，而夹具自己看是「已落库」。
+     *
+     * <p>调用方可用环境变量 {@code FIXTURE_T0_MS} 覆盖，默认即本常量。
+     */
+    public static final long DEFAULT_T0_MS = 1_794_268_800_000L;
+
     // ───────────────── 设计假设（契约 §13，全部 design_assumption） ─────────────────
 
     /** 纵向 σ 初值，m（{@code sigmaPosM} 缺省 20）。 */
@@ -187,16 +202,17 @@ public final class OfflinePredictionFixture {
      * @param seed       随机种子，决定观测噪声序列；同一 seed + 同一 {@code pred_version} 可完整复现
      * @param mmsi       船号，调用方必须用 {@code T} 前缀；本类不再加工
      * @param predVersion 快照版本号，写入 {@code pred_error_sample.pred_version}
-     * @param t0Ms       观测序列起始时刻（epoch ms），整段 run 的时间基准
+     * @param t0Ms       观测序列起始时刻（epoch ms），整段 run 的时间基准；取
+     *                   {@link #DEFAULT_T0_MS}，须与场景 {@code t0_ms} 同源（契约 §6.2）
      * @param pathStartM 起点弧长，m；20 min 子段取 {@value #SUBSET_START_M}
      * @param durationSec 时长，s
      */
     public record Spec(int seed, String mmsi, long predVersion, long t0Ms,
             double pathStartM, int durationSec) {
 
-        /** 契约 §2 的 20 min 子段默认输入。 */
+        /** 契约 §2 的 20 min 子段默认输入；时基取 {@link #DEFAULT_T0_MS}，与场景 {@code t0_ms} 同源。 */
         public static Spec subset(int seed) {
-            return new Spec(seed, "T" + seed, 1L, 1_760_000_000_000L,
+            return new Spec(seed, "T" + seed, 1L, DEFAULT_T0_MS,
                     SUBSET_START_M, SUBSET_DURATION_SEC);
         }
 
@@ -215,8 +231,21 @@ public final class OfflinePredictionFixture {
             if (durationSec <= 0) {
                 throw new IllegalArgumentException("duration_sec 必须为正：" + durationSec);
             }
+            if (t0Ms == FORBIDDEN_T0_MS) {
+                throw new IllegalArgumentException("t0Ms 不得为 " + FORBIDDEN_T0_MS
+                        + "（契约 §6.2 禁用值，与场景 t0_ms 差约 397 天，"
+                        + "编排器按 t0_ms 取行会取到 0 行），请用 DEFAULT_T0_MS");
+            }
         }
     }
+
+    /**
+     * 契约 §6.2 明文禁用的旧时基，对应时刻 {@code 2025-10-09T08:53:20Z}。
+     *
+     * <p>写成与 {@link #DEFAULT_T0_MS} 的差值而不是裸字面量，是为了让「禁用值」在本文件里
+     * 连字面都不出现：验收时 {@code grep} 该数值应零命中，只留这一处可读的报错依据。
+     */
+    public static final long FORBIDDEN_T0_MS = DEFAULT_T0_MS - 34_268_800_000L;
 
     /**
      * 单次 run 的结果。
