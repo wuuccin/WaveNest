@@ -6,7 +6,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.waterlogistics.algo.candidate.FeasibilityJudge.Verdict;
 import com.waterlogistics.contract.ws.CandidateView;
+import com.waterlogistics.contract.ws.OccupancySlotView;
 import com.waterlogistics.contract.ws.RendezvousFrame;
+import com.waterlogistics.contract.ws.StaggerResultView;
 import com.waterlogistics.dispatch.feasibility.CandidateFeasibilityPlanner.CandidateVerdict;
 import com.waterlogistics.dispatch.feasibility.CandidateFeasibilityPlanner.FeasibleSelection;
 import java.time.LocalDateTime;
@@ -92,6 +94,56 @@ class RendezvousFrameProjectorTest {
         // 判据 4：候选列表不可变（防御性拷贝，外部改不动）
         assertThrows(UnsupportedOperationException.class,
                 () -> frame.candidates().add(frame.candidates().get(0)));
+    }
+
+    /**
+     * 占位与错峰结果（11-14 序号 2-4）：帧里必须带出「占了谁、占多久」与
+     * 「错峰移了多少、移前后会面时刻」，且与入参同值（不重算、不造数）。
+     */
+    @Test
+    void project_shouldCarryOccupancyAndStaggerResults() {
+        long meetMs = MEET.atZone(ZoneId.of("Asia/Shanghai")).toInstant().toEpochMilli();
+        OccupancySlotView occupancy = new OccupancySlotView("SLOT-1", "机占用", "UAV-02",
+                meetMs - 600_000L, meetMs, "有效");
+        StaggerResultView stagger = StaggerResultView.shifted(3000L, meetMs, meetMs + 3000L);
+
+        RendezvousFrame frame = new RendezvousFrameProjector()
+                .project(new RendezvousFrameProjector.Input(
+                        "ORD-1", 115.9, 29.7, true, 3, List.of(), MEET,
+                        "NEST-01", "UAV-02", List.of(), occupancy, stagger));
+
+        assertEquals(occupancy, frame.occupancy(), "占位结果须原样透传");
+        assertEquals(stagger, frame.stagger(), "错峰结果须原样透传");
+        assertEquals(true, frame.stagger().applied());
+        assertEquals(3000L, frame.stagger().shiftMs());
+        assertEquals(meetMs + 3000L, frame.stagger().committedMeetTs().longValue(),
+                "定案会面时刻须含错峰平移");
+        assertEquals("空域冲突经错峰 3000 ms 消除", frame.stagger().reason(),
+                "可读原因须带平移量，前端直接显示");
+    }
+
+    /** 未登记占位／未进入定案校验时必须为 null，不得造默认行——「没登记」与「登记了空值」不能混。 */
+    @Test
+    void project_shouldKeepOccupancyAndStaggerNullWhenNotProvided() {
+        RendezvousFrame frame = new RendezvousFrameProjector()
+                .project(new RendezvousFrameProjector.Input(
+                        "ORD-1", 115.9, 29.7, true, 3, List.of(), MEET));
+
+        assertEquals(null, frame.occupancy());
+        assertEquals(null, frame.stagger());
+    }
+
+    /** 无冲突的错峰结果用 none() 表达：applied=false、shiftMs=0、前后会面时刻相同、无原因。 */
+    @Test
+    void staggerNone_shouldRepresentNoConflict() {
+        long meetMs = MEET.atZone(ZoneId.of("Asia/Shanghai")).toInstant().toEpochMilli();
+        StaggerResultView none = StaggerResultView.none(meetMs);
+
+        assertEquals(false, none.applied());
+        assertEquals(0L, none.shiftMs());
+        assertEquals(meetMs, none.originalMeetTs().longValue());
+        assertEquals(meetMs, none.committedMeetTs().longValue());
+        assertEquals(null, none.reason(), "无冲突不写原因，避免前端误显示「错峰失败」");
     }
 
     /** 上游组合缺失时 distKm 为 NaN，必须转成 null 出库——NaN 不是合法 JSON，会让前端整帧解析失败。 */

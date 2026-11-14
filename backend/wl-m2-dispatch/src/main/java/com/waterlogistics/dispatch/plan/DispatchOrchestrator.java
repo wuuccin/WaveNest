@@ -3,7 +3,9 @@ package com.waterlogistics.dispatch.plan;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.waterlogistics.algo.candidate.CandidateGenerator;
 import com.waterlogistics.contract.state.OrderStatus;
+import com.waterlogistics.contract.ws.OccupancySlotView;
 import com.waterlogistics.contract.ws.PlanTrackFrame;
+import com.waterlogistics.contract.ws.StaggerResultView;
 import com.waterlogistics.dispatch.feasibility.CandidateFeasibilityPlanner;
 import com.waterlogistics.dispatch.frame.RendezvousFrameProjector;
 import com.waterlogistics.dispatch.queue.TaskQueueService;
@@ -188,7 +190,14 @@ public class DispatchOrchestrator {
         }
         // 契约 §2.2：先落 plan_track 再推 plan_track WS 帧；落库失败抛异常并回滚派单事务。
         int pointCount = planTrackWriter.write(finalFrame);
-        occupyDroneSlot(orderId, best.droneId(), committedMeetTime, nowMs);
+        OccupancySlotView occupancy = occupyDroneSlot(orderId, best.droneId(), committedMeetTime, nowMs);
+        // 错峰结果随会面帧带出：applied/shiftMs 与时移前后会面时刻同源，前端据此显示「错峰 +N ms」
+        // 并核对会面时刻已同步时移。无冲突时用 none(meetTs) 而不是 null，以区分「无冲突」与「未校验」。
+        long originalMeetMs = plan.meetTime().atZone(DB_ZONE).toInstant().toEpochMilli();
+        long committedMeetMs = committedMeetTime.atZone(DB_ZONE).toInstant().toEpochMilli();
+        StaggerResultView stagger = shiftMs > 0L
+                ? StaggerResultView.shifted(shiftMs, originalMeetMs, committedMeetMs)
+                : StaggerResultView.none(originalMeetMs);
         taskLogRecorder.record(orderId, PlanTrackFrame.OP_TYPE,
                 OrderStatus.DISPATCHED.getValue(), OrderStatus.DISPATCHED.getValue(), nowMs);
         eventPublisher.publishEvent(new MissionTrackPlannedEvent(finalFrame));
@@ -206,7 +215,11 @@ public class DispatchOrchestrator {
                         // 全量候选含中选者本身（selected=true），前端据此高亮中选、置灰落选。
                         best.nestId(),
                         best.droneId(),
-                        RendezvousFrameProjector.candidateViewsOf(selection, best.comboId())))));
+                        RendezvousFrameProjector.candidateViewsOf(selection, best.comboId()),
+                        // 占位与错峰结果（11-14 序号 2-4）：帧里显式带出「占了谁、占多久」与
+                        // 「错峰移了多少、移前后会面时刻」，前端按帧渲染，不再靠日志反推。
+                        occupancy,
+                        stagger))));
 
         log.info("派发编排完成：orderId={} droneId={} comboId={} 会面点={},{} 会面时刻={} 起飞时刻={} 错峰={}ms 计划点={} 末段预检={} 解={} 快照版本={}",
                 orderId, best.droneId(), best.comboId(), plan.meetLon(), plan.meetLat(),
@@ -221,8 +234,12 @@ public class DispatchOrchestrator {
         return comboId == null || comboId.isBlank() ? "COMBO-" + orderId : comboId;
     }
 
-    /** 错峰：整帧计划点整体后移，保持分段顺序与点数不变。 */
-    private static PlanTrackFrame shiftFrame(PlanTrackFrame frame, long shiftMs) {
+    /**
+     * 错峰：整帧计划点整体后移，保持分段顺序与点数不变。
+     *
+     * <p>包级可见，供单测直接断言「整帧与会面时刻同步时移」。
+     */
+    static PlanTrackFrame shiftFrame(PlanTrackFrame frame, long shiftMs) {
         List<PlanTrackFrame.Segment> shifted = frame.segments().stream()
                 .map(segment -> new PlanTrackFrame.Segment(segment.kind(),
                         segment.points().stream()
@@ -237,13 +254,20 @@ public class DispatchOrchestrator {
     /**
      * 执行机实例占位进派单事务：从当前时刻到定案会面时刻占用该机，
      * 登记 orderId 使终态 {@code releaseByOrder} 能按订单释放。
+     *
+     * @return 本次登记的占位视图，随会面帧带出，供前端显示「占了谁、占多久」
      */
-    private void occupyDroneSlot(String orderId, String droneId,
+    private OccupancySlotView occupyDroneSlot(String orderId, String droneId,
             LocalDateTime meetTime, long nowMs) {
         LocalDateTime t1 = LocalDateTime.ofInstant(Instant.ofEpochMilli(nowMs), DB_ZONE);
         LocalDateTime t2 = meetTime != null && meetTime.isAfter(t1) ? meetTime : t1.plusHours(1);
-        occupancySlotService.occupyForOrder(OccupancySlotService.OBJECT_TYPE_DRONE_OCCUPY,
-                droneId, t1, t2, "常规驻留", orderId);
+        String slotId = occupancySlotService.occupyForOrder(
+                OccupancySlotService.OBJECT_TYPE_DRONE_OCCUPY, droneId, t1, t2, "常规驻留", orderId);
+        return new OccupancySlotView(slotId, OccupancySlotService.OBJECT_TYPE_DRONE_OCCUPY, droneId,
+                t1.atZone(DB_ZONE).toInstant().toEpochMilli(),
+                t2.atZone(DB_ZONE).toInstant().toEpochMilli(),
+                // 与 occupyForOrder 落库的初始状态同值（《23-状态机定义》§10「有效」）
+                "有效");
     }
 
     /**
