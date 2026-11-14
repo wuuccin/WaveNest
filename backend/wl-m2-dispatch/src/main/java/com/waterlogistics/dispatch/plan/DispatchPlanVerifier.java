@@ -151,8 +151,13 @@ public class DispatchPlanVerifier {
                             + " 空域冲突绕行几何已产出但本编排未接线，回退换候选组合");
                 }
                 // 第三级：回退换机。抛异常让派单事务整体回滚，由上层换候选。
+                // 失败原因写成可读中文句（11-14 序号 2-4）：带上本次错峰平移量与冲突时间窗，
+                // 排障时不必再去翻日志反推「错峰为什么没成」。
                 throw new IllegalStateException("订单 " + orderId
-                        + " 空域冲突，错峰后仍冲突且绕行几何首版留桩，回退换候选组合；"
+                        + " 空域冲突：经错峰平移 " + staggerMs + " ms 后仍未消除（冲突时间窗 "
+                        + afterStagger.conflictSpaceTime().tBegin() + "~"
+                        + afterStagger.conflictSpaceTime().tEnd()
+                        + " ms），绕行几何首版留桩未产出，回退换候选组合；"
                         + "检查版本=" + first.checksumVersion());
             }
         }

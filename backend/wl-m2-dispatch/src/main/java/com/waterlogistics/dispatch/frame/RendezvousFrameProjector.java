@@ -1,7 +1,9 @@
 package com.waterlogistics.dispatch.frame;
 
 import com.waterlogistics.contract.ws.CandidateView;
+import com.waterlogistics.contract.ws.OccupancySlotView;
 import com.waterlogistics.contract.ws.RendezvousFrame;
+import com.waterlogistics.contract.ws.StaggerResultView;
 import com.waterlogistics.dispatch.feasibility.CandidateFeasibilityPlanner.CandidateVerdict;
 import com.waterlogistics.dispatch.feasibility.CandidateFeasibilityPlanner.FeasibleSelection;
 import java.time.LocalDateTime;
@@ -42,6 +44,10 @@ public final class RendezvousFrameProjector {
      * @param chosenNestId     中选机巢；未选出时为 {@code null}
      * @param chosenDroneId    中选无人机；未选出时为 {@code null}
      * @param candidates       全量候选视图（含中选者）；传 {@code null} 按空列表处理
+     * @param occupancy        占位结果；未登记时传 {@code null}（帧里保持 {@code null}，不造默认行）
+     * @param stagger          错峰结果；未进入定案校验时传 {@code null}。无冲突请传
+     *                         {@link StaggerResultView#none(long)} 而不是 {@code null}，
+     *                         让前端能区分「无冲突未错峰」与「未校验」
      */
     public record Input(
             String orderId,
@@ -53,16 +59,29 @@ public final class RendezvousFrameProjector {
             LocalDateTime meetTime,
             String chosenNestId,
             String chosenDroneId,
-            List<CandidateView> candidates) {
+            List<CandidateView> candidates,
+            OccupancySlotView occupancy,
+            StaggerResultView stagger) {
 
         /**
-         * 兼容构造器：保留扩字段前的七参签名，候选对比三项留空（队列侧与旧测试仍可用）。
+         * 兼容构造器：保留扩字段前的十参签名，占位与错峰两项留空（队列侧与旧测试仍可用）。
+         */
+        public Input(String orderId, double meetLon, double meetLat, boolean locked,
+                     int candidateCount, List<String> rejectionReasons,
+                     LocalDateTime meetTime, String chosenNestId, String chosenDroneId,
+                     List<CandidateView> candidates) {
+            this(orderId, meetLon, meetLat, locked, candidateCount, rejectionReasons,
+                    meetTime, chosenNestId, chosenDroneId, candidates, null, null);
+        }
+
+        /**
+         * 兼容构造器：保留扩字段前的七参签名，候选对比三项与占位／错峰留空（队列侧与旧测试仍可用）。
          */
         public Input(String orderId, double meetLon, double meetLat, boolean locked,
                      int candidateCount, List<String> rejectionReasons,
                      LocalDateTime meetTime) {
             this(orderId, meetLon, meetLat, locked, candidateCount, rejectionReasons,
-                    meetTime, null, null, null);
+                    meetTime, null, null, null, null, null);
         }
     }
 
@@ -80,7 +99,9 @@ public final class RendezvousFrameProjector {
                 toEpochMs(input.meetTime()),
                 input.chosenNestId(),
                 input.chosenDroneId(),
-                List.copyOf(input.candidates() == null ? List.of() : input.candidates()));
+                List.copyOf(input.candidates() == null ? List.of() : input.candidates()),
+                input.occupancy(),
+                input.stagger());
     }
 
     /**
