@@ -24,6 +24,11 @@ export const api = {
   intervene: body => request('/api/intervene', { method: 'POST', body: JSON.stringify(body) }),
   resetShip: (options = {}) => request('/sim/ship/reset', { ...options, method: 'POST' }),
   turnShip: (delta = 45, options = {}) => request(`/sim/ship/turn?delta=${encodeURIComponent(delta)}`, { ...options, method: 'POST' }),
+  injectWeather: ({ windSpeedMs, windDirDeg = 135, gustMs, persist = true }, options = {}) => {
+    const params = new URLSearchParams({ wind: String(windSpeedMs), dir: String(windDirDeg), persist: String(persist) })
+    if (gustMs != null) params.set('gust', String(gustMs))
+    return request(`/sim/weather/inject?${params}`, { ...options, method: 'POST' })
+  },
   tasks: () => request('/api/monitor/tasks'),
   records: taskId => request(`/api/monitor/tasks/${encodeURIComponent(taskId)}/records`),
   stats: () => request('/api/monitor/statistics'),
