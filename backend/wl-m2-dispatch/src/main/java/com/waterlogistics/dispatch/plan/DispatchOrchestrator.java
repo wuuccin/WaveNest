@@ -10,9 +10,14 @@ import com.waterlogistics.dispatch.queue.TaskQueueService;
 import com.waterlogistics.dispatch.record.TaskLogRecorder;
 import com.waterlogistics.dispatch.rendezvous.RendezvousCoordinator;
 import com.waterlogistics.dispatch.rendezvous.RendezvousPlanCommittedEvent;
+import com.waterlogistics.dispatch.resource.OccupancySlotService;
 import com.waterlogistics.storage.entity.OrderTaskEntity;
 import com.waterlogistics.storage.repository.OrderTaskMapper;
 import java.math.BigDecimal;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
@@ -61,12 +66,17 @@ public class DispatchOrchestrator {
 
     private static final Logger log = LoggerFactory.getLogger(DispatchOrchestrator.class);
 
+    private static final ZoneId DB_ZONE = ZoneId.of("Asia/Shanghai");
+
     private final TaskQueueService taskQueueService;
     private final RendezvousCoordinator rendezvous;
     private final OrderTaskMapper orderTaskMapper;
     private final ApplicationEventPublisher eventPublisher;
     private final MissionTrackAssembler missionTrackAssembler;
     private final TaskLogRecorder taskLogRecorder;
+    private final DispatchPlanVerifier planVerifier;
+    private final PlanTrackWriter planTrackWriter;
+    private final OccupancySlotService occupancySlotService;
 
     /**
      * C1：选机段的可行性择优（卢肄文）。生成 → 逐个判可行性 → 取最近的可飞候选。
@@ -82,7 +92,10 @@ public class DispatchOrchestrator {
             CandidateFeasibilityPlanner candidateFeasibilityPlanner,
             ApplicationEventPublisher eventPublisher,
             MissionTrackAssembler missionTrackAssembler,
-            TaskLogRecorder taskLogRecorder) {
+            TaskLogRecorder taskLogRecorder,
+            DispatchPlanVerifier planVerifier,
+            PlanTrackWriter planTrackWriter,
+            OccupancySlotService occupancySlotService) {
         this.taskQueueService = taskQueueService;
         this.rendezvous = rendezvous;
         this.orderTaskMapper = orderTaskMapper;
@@ -90,6 +103,9 @@ public class DispatchOrchestrator {
         this.eventPublisher = eventPublisher;
         this.missionTrackAssembler = missionTrackAssembler;
         this.taskLogRecorder = taskLogRecorder;
+        this.planVerifier = planVerifier;
+        this.planTrackWriter = planTrackWriter;
+        this.occupancySlotService = occupancySlotService;
     }
 
     /**
@@ -148,13 +164,34 @@ public class DispatchOrchestrator {
             throw new IllegalStateException("订单 " + orderId + " 会面点回填影响行数为 " + rows + "，期望 1");
         }
 
-        // 第 6 步：装配三段航迹，写一条任务日志摘要，并发布规划航迹帧。
-        // 航迹生成失败随本事务回滚，不留下「已派发但无航迹」的半成品。
-        PlanTrackFrame trackFrame = missionTrackAssembler.assemble(orderId, best.comboId(), plan);
+        // 第 6 步：装配三段航迹 → 定案校验 → 落 plan_track → 执行机实例占位
+        // → 一条任务日志摘要 → 发布规划航迹帧。全部在同一派单事务内：
+        // 任一步失败随事务回滚，不留下「已派发但无航迹／无占位」的半成品。
+        long nowMs = System.currentTimeMillis();
+        PlanTrackFrame trackFrame = missionTrackAssembler.assemble(orderId, best.comboId(), plan,
+                Long.toString(nowMs));
+        DispatchPlanVerifier.Outcome outcome = planVerifier.verify(trackFrame, plan, orderId,
+                comboIdForVerify(best.comboId(), orderId), best.droneId(), order.getShipMmsi(), nowMs);
+        long shiftMs = outcome.shiftMs();
+        PlanTrackFrame finalFrame = shiftMs > 0L ? shiftFrame(trackFrame, shiftMs) : trackFrame;
+        LocalDateTime committedMeetTime = shiftMs > 0L
+                ? plan.meetTime().plusNanos(shiftMs * 1_000_000L) : plan.meetTime();
+        if (shiftMs > 0L) {
+            int shiftedRows = orderTaskMapper.update(null, new LambdaUpdateWrapper<OrderTaskEntity>()
+                    .eq(OrderTaskEntity::getOrderId, orderId)
+                    .eq(OrderTaskEntity::getStatus, OrderStatus.DISPATCHED.getValue())
+                    .set(OrderTaskEntity::getMeetTime, committedMeetTime));
+            if (shiftedRows != 1) {
+                throw new IllegalStateException("订单 " + orderId + " 错峰后会面时刻回填影响行数为 "
+                        + shiftedRows + "，期望 1");
+            }
+        }
+        // 契约 §2.2：先落 plan_track 再推 plan_track WS 帧；落库失败抛异常并回滚派单事务。
+        int pointCount = planTrackWriter.write(finalFrame);
+        occupyDroneSlot(orderId, best.droneId(), committedMeetTime, nowMs);
         taskLogRecorder.record(orderId, PlanTrackFrame.OP_TYPE,
-                OrderStatus.DISPATCHED.getValue(), OrderStatus.DISPATCHED.getValue(),
-                System.currentTimeMillis());
-        eventPublisher.publishEvent(new MissionTrackPlannedEvent(trackFrame));
+                OrderStatus.DISPATCHED.getValue(), OrderStatus.DISPATCHED.getValue(), nowMs);
+        eventPublisher.publishEvent(new MissionTrackPlannedEvent(finalFrame));
 
         // C3：完整方案已持久化后发布投影，app 层在事务提交后转成 WebSocket 帧。
         // 会面帧投影抽成纯函数 RendezvousFrameProjector，编排器与队列侧（T1-6）共用同一口径，
@@ -164,18 +201,49 @@ public class DispatchOrchestrator {
                         orderId, plan.meetLon(), plan.meetLat(), true,
                         selection.candidates().size(),
                         RendezvousFrameProjector.reasonsOf(selection),
-                        plan.meetTime(),
+                        committedMeetTime,
                         // 候选对比三项（10-29 第二步）：中选机巢／中选无人机／全量候选。
                         // 全量候选含中选者本身（selected=true），前端据此高亮中选、置灰落选。
                         best.nestId(),
                         best.droneId(),
                         RendezvousFrameProjector.candidateViewsOf(selection, best.comboId())))));
 
-        log.info("派发编排完成：orderId={} droneId={} comboId={} 会面点={},{} 会面时刻={} 解={} 快照版本={}",
+        log.info("派发编排完成：orderId={} droneId={} comboId={} 会面点={},{} 会面时刻={} 起飞时刻={} 错峰={}ms 计划点={} 末段预检={} 解={} 快照版本={}",
                 orderId, best.droneId(), best.comboId(), plan.meetLon(), plan.meetLat(),
-                plan.meetTime(), plan.solutionId(), plan.snapshotVersion());
+                committedMeetTime, outcome.takeoffMs(), shiftMs, pointCount,
+                outcome.handoverPredicted(), plan.solutionId(), plan.snapshotVersion());
 
         return best.droneId();
+    }
+
+    /** 三个门面方法要非空 comboId；未组批时用订单号构造稳定标识。 */
+    private static String comboIdForVerify(String comboId, String orderId) {
+        return comboId == null || comboId.isBlank() ? "COMBO-" + orderId : comboId;
+    }
+
+    /** 错峰：整帧计划点整体后移，保持分段顺序与点数不变。 */
+    private static PlanTrackFrame shiftFrame(PlanTrackFrame frame, long shiftMs) {
+        List<PlanTrackFrame.Segment> shifted = frame.segments().stream()
+                .map(segment -> new PlanTrackFrame.Segment(segment.kind(),
+                        segment.points().stream()
+                                .map(point -> new PlanTrackFrame.Point(point.lon(), point.lat(),
+                                        point.altM(), point.speedMs(), point.tMs() + shiftMs))
+                                .toList()))
+                .toList();
+        return new PlanTrackFrame(frame.orderId(), frame.routeId(), frame.comboId(),
+                frame.opType(), shifted);
+    }
+
+    /**
+     * 执行机实例占位进派单事务：从当前时刻到定案会面时刻占用该机，
+     * 登记 orderId 使终态 {@code releaseByOrder} 能按订单释放。
+     */
+    private void occupyDroneSlot(String orderId, String droneId,
+            LocalDateTime meetTime, long nowMs) {
+        LocalDateTime t1 = LocalDateTime.ofInstant(Instant.ofEpochMilli(nowMs), DB_ZONE);
+        LocalDateTime t2 = meetTime != null && meetTime.isAfter(t1) ? meetTime : t1.plusHours(1);
+        occupancySlotService.occupyForOrder(OccupancySlotService.OBJECT_TYPE_DRONE_OCCUPY,
+                droneId, t1, t2, "常规驻留", orderId);
     }
 
     /**

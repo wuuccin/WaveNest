@@ -12,8 +12,10 @@ import com.waterlogistics.contract.ws.ShipTrajPoint;
 import com.waterlogistics.dispatch.frame.RendezvousFrameProjector;
 import com.waterlogistics.dispatch.prediction.PredictionService;
 import com.waterlogistics.dispatch.prediction.PredictionSnapshot;
+import com.waterlogistics.dispatch.prediction.RecomputeDecisionGate;
 import com.waterlogistics.dispatch.prediction.RecomputeRequest;
 import com.waterlogistics.dispatch.prediction.RecomputeRequester;
+import com.waterlogistics.dispatch.prediction.ReplanDecisionExpiredEvent;
 import com.waterlogistics.dispatch.rendezvous.RendezvousPlanCommittedEvent;
 import com.waterlogistics.dispatch.weather.WeatherSnapshotPort;
 import com.waterlogistics.rendezvous.facade.RendezvousFacade;
@@ -101,6 +103,7 @@ public class RendezvousRecomputeRequester implements RecomputeRequester {
     private final DroneContextPort droneContextPort;
     private final WeatherSnapshotPort weatherSnapshotPort;
     private final SysParamLoader sysParamLoader;
+    private final RecomputeDecisionGate decisionGate;
     private final ApplicationEventPublisher eventPublisher;
     private final TransactionTemplate transactionTemplate;
 
@@ -115,6 +118,7 @@ public class RendezvousRecomputeRequester implements RecomputeRequester {
      * @param droneContextPort    执行机台账端口（重算按 {@code droneId} 反查起点与机型速度）
      * @param weatherSnapshotPort 代表风况来源（重算与首派同一取数口径）
      * @param sysParamLoader      重算时限与阈值参数
+     * @param decisionGate        6a 判据闸门（八键读表、冷却期、迟滞、死区、决策截止）
      * @param eventPublisher      发布已提交会面方案
      * @param transactionTemplate 同事务提交「坐标更新 + 事件」，避免推送早于落库
      */
@@ -124,6 +128,7 @@ public class RendezvousRecomputeRequester implements RecomputeRequester {
             DroneContextPort droneContextPort,
             WeatherSnapshotPort weatherSnapshotPort,
             SysParamLoader sysParamLoader,
+            RecomputeDecisionGate decisionGate,
             ApplicationEventPublisher eventPublisher,
             TransactionTemplate transactionTemplate) {
         this.predictionService = predictionService;
@@ -132,6 +137,7 @@ public class RendezvousRecomputeRequester implements RecomputeRequester {
         this.droneContextPort = droneContextPort;
         this.weatherSnapshotPort = weatherSnapshotPort;
         this.sysParamLoader = sysParamLoader;
+        this.decisionGate = decisionGate;
         this.eventPublisher = eventPublisher;
         this.transactionTemplate = transactionTemplate;
     }
@@ -152,9 +158,35 @@ public class RendezvousRecomputeRequester implements RecomputeRequester {
                 log.debug("会面重算跳过：mmsi={} 无在飞订单", request.mmsi());
                 return;
             }
+            long nowMs = System.currentTimeMillis();
             for (OrderTaskEntity order : orders) {
-                recomputeOne(order, snapshot.get(), request.currentCourseDeg(),
-                        request.triggerReason());
+                // 6a 判据闸门接每帧循环体：八键读表，冷却／迟滞／死区／最小间隔／决策截止
+                // 全部在重算与下发之前判定；不通过的一律不调门面、不改会面点。
+                RecomputeDecisionGate.Decision decision = decisionGate.evaluate(
+                        order.getOrderId(), request.courseDeltaDeg(), order.getMeetTime(), nowMs);
+                if (decision == RecomputeDecisionGate.Decision.DECISION_DEADLINE) {
+                    decisionGate.noteDeadlineReport();
+                    long meetMs = order.getMeetTime() == null ? 0L
+                            : order.getMeetTime().atZone(DB_ZONE).toInstant().toEpochMilli();
+                    eventPublisher.publishEvent(new ReplanDecisionExpiredEvent(
+                            order.getOrderId(), request.mmsi(), meetMs, nowMs,
+                            request.courseDeltaDeg(), "已进会面决策窗口，停止重算与下发"));
+                    warnThrottled(order.getOrderId(),
+                            "6a 决策截止，只上报 M2：orderId={} deltaDeg={}",
+                            order.getOrderId(), request.courseDeltaDeg());
+                    continue;
+                }
+                if (decision != RecomputeDecisionGate.Decision.ALLOW) {
+                    log.debug("6a 重算跳过：orderId={} 判据={} deltaDeg={}",
+                            order.getOrderId(), decision, request.courseDeltaDeg());
+                    continue;
+                }
+                decisionGate.markTriggered(order.getOrderId(), nowMs);
+                boolean committed = recomputeOne(order, snapshot.get(),
+                        request.currentCourseDeg(), request.triggerReason());
+                if (committed) {
+                    decisionGate.markCompleted(order.getOrderId(), System.currentTimeMillis());
+                }
             }
         } catch (RuntimeException e) {
             // 预测刷新热路径：失败只告警，不影响预测链本身
@@ -171,26 +203,26 @@ public class RendezvousRecomputeRequester implements RecomputeRequester {
                 .isNotNull(OrderTaskEntity::getMeetLat));
     }
 
-    private void recomputeOne(OrderTaskEntity order, PredictionSnapshot snapshot,
+    private boolean recomputeOne(OrderTaskEntity order, PredictionSnapshot snapshot,
             double observedCogDeg, String triggerReason) {
         String orderId = order.getOrderId();
         String droneId = order.getDroneId();
         if (droneId == null || droneId.isBlank()) {
-            return;
+            return false;
         }
         RendezvousRecalcResult result = recomputeWithRetry(order, snapshot, droneId,
                 observedCogDeg, triggerReason);
         if (result == null) {
             warnThrottled(orderId, "会面重算失败，保留旧点：orderId={} droneId={}", orderId, droneId);
-            return;
+            return false;
         }
         B_RendezvousSolution solution = result.solution();
         if (!solution.hasSolution()) {
             warnThrottled(orderId, "会面重算无解，保留旧点：orderId={} reason={}",
                     orderId, solution.noSolutionReason());
-            return;
+            return false;
         }
-        commit(order, solution.meetLon(), solution.meetLat(), solution.meetTMin(),
+        return commit(order, solution.meetLon(), solution.meetLat(), solution.meetTMin(),
                 solution.snapshotVersion(), droneId);
     }
 
@@ -342,9 +374,9 @@ public class RendezvousRecomputeRequester implements RecomputeRequester {
     /**
      * 同事务提交「条件更新坐标 + 发布会面帧」：订单已不在飞则影响行数为 0，不推旧点。
      */
-    private void commit(OrderTaskEntity order, double meetLon, double meetLat, long meetMs,
+    private boolean commit(OrderTaskEntity order, double meetLon, double meetLat, long meetMs,
             String snapshotVersion, String droneId) {
-        transactionTemplate.execute(status -> {
+        Boolean committed = transactionTemplate.execute(status -> {
             int rows = orderTaskMapper.update(null, new LambdaUpdateWrapper<OrderTaskEntity>()
                     .eq(OrderTaskEntity::getOrderId, order.getOrderId())
                     .in(OrderTaskEntity::getStatus, IN_FLIGHT_STATUSES)
@@ -352,7 +384,7 @@ public class RendezvousRecomputeRequester implements RecomputeRequester {
                     .set(OrderTaskEntity::getMeetLat, BigDecimal.valueOf(meetLat)));
             if (rows == 0) {
                 log.warn("会面点更新未命中（订单已不在飞）：orderId={}", order.getOrderId());
-                return null;
+                return false;
             }
             log.info("会面点已重算并更新：orderId={} 新点=({}, {}) 快照版本={}",
                     order.getOrderId(), meetLon, meetLat, snapshotVersion);
@@ -369,8 +401,9 @@ public class RendezvousRecomputeRequester implements RecomputeRequester {
                             droneId,
                             List.of()));
             eventPublisher.publishEvent(new RendezvousPlanCommittedEvent(frame));
-            return null;
+            return true;
         });
+        return Boolean.TRUE.equals(committed);
     }
 
     private static LocalDateTime toLocalDateTime(long epochMs) {

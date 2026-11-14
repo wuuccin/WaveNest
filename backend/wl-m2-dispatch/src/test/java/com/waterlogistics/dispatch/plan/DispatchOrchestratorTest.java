@@ -27,7 +27,7 @@ class DispatchOrchestratorTest {
                     throw new UnsupportedOperationException(method.getName());
                 });
         DispatchOrchestrator orchestrator = new DispatchOrchestrator(
-                queue, null, mapper, null, null, null, null);
+                queue, null, mapper, null, null, null, null, null, null, null);
 
         IllegalStateException thrown = assertThrows(IllegalStateException.class,
                 () -> orchestrator.orchestrate("ORD-MISSING"));
