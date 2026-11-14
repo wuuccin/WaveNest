@@ -264,7 +264,7 @@ class RescheduleServiceTest {
         private final String droneId;
 
         private StubOrchestrator(String droneId) {
-            super(null, null, null, null, null, null, null);
+            super(null, null, null, null, null, null, null, null, null, null);
             this.droneId = droneId;
         }
 

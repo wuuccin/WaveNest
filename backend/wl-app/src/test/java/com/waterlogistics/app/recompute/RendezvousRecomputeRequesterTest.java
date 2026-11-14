@@ -23,6 +23,7 @@ import com.waterlogistics.contract.state.OrderStatus;
 import com.waterlogistics.contract.ws.ShipTrajPoint;
 import com.waterlogistics.dispatch.prediction.PredictionService;
 import com.waterlogistics.dispatch.prediction.PredictionSnapshot;
+import com.waterlogistics.dispatch.prediction.RecomputeDecisionGate;
 import com.waterlogistics.dispatch.prediction.RecomputeRequest;
 import com.waterlogistics.dispatch.rendezvous.RendezvousPlanCommittedEvent;
 import com.waterlogistics.dispatch.weather.WeatherSnapshotPort;
@@ -66,6 +67,7 @@ class RendezvousRecomputeRequesterTest {
     private DroneContextPort droneContextPort;
     private WeatherSnapshotPort weatherSnapshotPort;
     private SysParamLoader sysParamLoader;
+    private RecomputeDecisionGate decisionGate;
     private ApplicationEventPublisher eventPublisher;
     private TransactionTemplate transactionTemplate;
     private RendezvousRecomputeRequester requester;
@@ -88,9 +90,10 @@ class RendezvousRecomputeRequesterTest {
         eventPublisher = mock(ApplicationEventPublisher.class);
         transactionTemplate = mock(TransactionTemplate.class);
 
+        decisionGate = new RecomputeDecisionGate(sysParamLoader);
         requester = new RendezvousRecomputeRequester(predictionService, orderTaskMapper,
                 rendezvousFacade, droneContextPort, weatherSnapshotPort, sysParamLoader,
-                eventPublisher, transactionTemplate);
+                decisionGate, eventPublisher, transactionTemplate);
 
         lenient().when(sysParamLoader.getInt(anyString(), anyInt()))
                 .thenAnswer(invocation -> invocation.getArgument(1));

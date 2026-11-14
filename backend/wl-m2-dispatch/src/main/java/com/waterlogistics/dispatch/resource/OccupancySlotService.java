@@ -46,6 +46,9 @@ public class OccupancySlotService {
     /** 第二级迫停占位写入的对象类型（37 §5.5 取值之一） */
     private static final String OBJECT_TYPE_FORCED_STOP = "迫停占用";
 
+    /** 派单事务内的执行机实例占位类型，与 {@link #occupyForOrder} 配套，终态按订单释放。 */
+    public static final String OBJECT_TYPE_DRONE_OCCUPY = "机占用";
+
     /** 第二级迫停占位的类型（37 §5.5 取值之一） */
     private static final String TYPE_EMERGENCY_STOP = "应急迫停";
 
@@ -91,6 +94,53 @@ public class OccupancySlotService {
     @Transactional
     public String occupy(String objectType, String objectId,
                          LocalDateTime t1, LocalDateTime t2, String type) {
+        return occupyInternal(objectType, objectId, t1, t2, type, null);
+    }
+
+    /**
+     * 派单事务内的执行机实例占位——与 {@link #occupy} 同一套命名锁与重叠检查，
+     * 差别只在登记 {@code orderId}，使终态 {@link #releaseByOrder} 能按订单释放本占位。
+     *
+     * <p>《1112-两天总计划》序号 3「四键占位进派单事务」：此前生产主链只有
+     * {@code tryReserve}（按货巢）与 {@code releaseByOrder}，无人机实例占位
+     * ({@code occupy}) 只在单测里被调用。本方法由 {@code DispatchOrchestrator}
+     * 在派发回填之后、推帧之前调用，与派单同一事务。
+     *
+     * @param orderId 归属订单号，必填；不登记则终态无法释放，会永久占住该机
+     * @return 新登记的 slotId
+     */
+    @Transactional
+    public String occupyForOrder(String objectType, String objectId,
+                                 LocalDateTime t1, LocalDateTime t2, String type, String orderId) {
+        if (orderId == null || orderId.isBlank()) {
+            throw new IllegalArgumentException("派单占位须带 orderId，否则终态无法按订单释放");
+        }
+        // 重派（requeue → 再编排）会带着同一订单号再进本方法；先释放本单本机上一次的
+        // 有效占位，否则重叠检查会把自己的旧锁算成并发冲突。只按 (orderId, objectType,
+        // objectId) 精确匹配，不动其他订单、也不动 FORCED_STOP 类型的迫停占位。
+        releaseOwnSlot(orderId, objectType, objectId);
+        return occupyInternal(objectType, objectId, t1, t2, type, orderId);
+    }
+
+    private void releaseOwnSlot(String orderId, String objectType, String objectId) {
+        List<OccupancySlotEntity> own = occupancySlotMapper.selectList(
+                new LambdaQueryWrapper<OccupancySlotEntity>()
+                        .eq(OccupancySlotEntity::getOrderId, orderId)
+                        .eq(OccupancySlotEntity::getObjectType, objectType)
+                        .eq(OccupancySlotEntity::getObjectId, objectId)
+                        .eq(OccupancySlotEntity::getStatus, STATUS_ACTIVE));
+        for (OccupancySlotEntity slot : own) {
+            try {
+                release(slot.getSlotId());
+            } catch (RuntimeException e) {
+                // 与 releaseByOrder 同口径：释放失败只记日志，不阻断本轮派单
+                log.warn("派单占位旧锁释放失败：slotId={} err={}", slot.getSlotId(), e.getMessage());
+            }
+        }
+    }
+
+    private String occupyInternal(String objectType, String objectId,
+                                  LocalDateTime t1, LocalDateTime t2, String type, String orderId) {
         validateSlot(objectType, objectId, t1, t2, type);
         String lockName = occupyLockName(objectType, objectId);
         Integer acquired = occupancySlotMapper.getLock(lockName, 5);
@@ -103,7 +153,7 @@ public class OccupancySlotService {
                 throw new IllegalStateException(
                     "对象 " + objectType + "/" + objectId + " 在 [" + t1 + ", " + t2 + ") 已有有效占位");
             }
-            return insertSlot(objectType, objectId, t1, t2, type, null);
+            return insertSlot(objectType, objectId, t1, t2, type, orderId);
         } finally {
             occupancySlotMapper.releaseLock(lockName);
         }
@@ -208,9 +258,11 @@ public class OccupancySlotService {
     }
 
     /**
-     * 按订单释放其关联的迫停占位（M2 终态释放）。
+     * 按订单释放其关联的迫停占位与派单执行机占位（M2 终态释放）。
      *
-     * <p>订单到达「已完成」／「失败」终态时调用，避免迫停占位泄漏导致容量统计持续偏高。
+     * <p>订单到达「已完成」／「失败」终态时调用，避免占位泄漏导致容量统计持续偏高。
+     * 派单事务内 {@link #occupyForOrder} 登记的执行机占位也必须在此释放，
+     * 否则该机在后续订单里会一直被判为时窗重叠。
      * <b>幂等且不抛异常</b>（C3 释放失败处置）：无对应有效占位时静默返回；
      * 释放过程中 {@link #release(String)} 抛出的状态异常只记日志、不向调用方传播，
      * 订单态不回滚（与 {@code FlightPhaseAdvancer.emit}「审计已落库，推送失败只告警」同口径）。
@@ -225,7 +277,8 @@ public class OccupancySlotService {
         List<OccupancySlotEntity> slots = occupancySlotMapper.selectList(
                 new LambdaQueryWrapper<OccupancySlotEntity>()
                         .eq(OccupancySlotEntity::getOrderId, orderId)
-                        .eq(OccupancySlotEntity::getObjectType, OBJECT_TYPE_FORCED_STOP)
+                        .in(OccupancySlotEntity::getObjectType,
+                                List.of(OBJECT_TYPE_FORCED_STOP, OBJECT_TYPE_DRONE_OCCUPY))
                         .eq(OccupancySlotEntity::getStatus, STATUS_ACTIVE));
         if (slots.isEmpty()) {
             return;
@@ -233,9 +286,9 @@ public class OccupancySlotService {
         for (OccupancySlotEntity slot : slots) {
             try {
                 release(slot.getSlotId());
-                log.info("订单终态释放迫停占位：orderId={} slotId={}", orderId, slot.getSlotId());
+                log.info("订单终态释放占位：orderId={} slotId={}", orderId, slot.getSlotId());
             } catch (IllegalStateException e) {
-                log.warn("订单终态释放迫停占位失败（不影响订单态）：orderId={} slotId={} err={}",
+                log.warn("订单终态释放占位失败（不影响订单态）：orderId={} slotId={} err={}",
                         orderId, slot.getSlotId(), e.getMessage());
             }
         }
