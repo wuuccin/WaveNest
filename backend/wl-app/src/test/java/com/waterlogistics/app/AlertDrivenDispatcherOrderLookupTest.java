@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -13,12 +14,17 @@ import com.waterlogistics.algo.inflight.HomecomingParams;
 import com.waterlogistics.algo.inflight.HomecomingTier;
 import com.waterlogistics.contract.mq.AlertEventMessage;
 import com.waterlogistics.contract.rest.GeoPoint;
+import com.waterlogistics.contract.state.AlertLevel;
 import com.waterlogistics.contract.state.AlertType;
 import com.waterlogistics.contract.state.OrderStatus;
 import com.waterlogistics.dispatch.alert.AlertDrivenDispatcher;
 import com.waterlogistics.dispatch.alert.HomecomingDecisionEvent;
 import com.waterlogistics.dispatch.alert.HomecomingInputAssembler;
 import com.waterlogistics.dispatch.homecoming.HomecomingService;
+import com.waterlogistics.dispatch.reschedule.InflightSafetyRequest;
+import com.waterlogistics.dispatch.reschedule.InflightSafetyService;
+import com.waterlogistics.dispatch.reschedule.InflightSafetyTrigger;
+import com.waterlogistics.dispatch.reschedule.InflightSafetyVerdict;
 import com.waterlogistics.dispatch.reschedule.RescheduleService;
 import com.waterlogistics.dispatch.taskstate.FlightPhaseAdvancer;
 import com.waterlogistics.storage.entity.OrderTaskEntity;
@@ -54,6 +60,8 @@ class AlertDrivenDispatcherOrderLookupTest {
     @Mock
     private RescheduleService rescheduleService;
     @Mock
+    private InflightSafetyService inflightSafetyService;
+    @Mock
     private HomecomingService homecomingService;
     @Mock
     private HomecomingInputAssembler assembler;
@@ -72,8 +80,9 @@ class AlertDrivenDispatcherOrderLookupTest {
 
     @BeforeEach
     void setUp() {
-        dispatcher = new AlertDrivenDispatcher(rescheduleService, homecomingService, assembler,
-                orderTaskMapper, droneMapper, taskLogMapper, eventPublisher, flightPhaseAdvancer);
+        dispatcher = new AlertDrivenDispatcher(rescheduleService, inflightSafetyService,
+                homecomingService, assembler, orderTaskMapper, droneMapper, taskLogMapper,
+                eventPublisher, flightPhaseAdvancer);
     }
 
     /** ① 偏航告警未带单号、反查命中 → 真正触发重调度，且用的是反查出的单号。 */
@@ -138,6 +147,60 @@ class AlertDrivenDispatcherOrderLookupTest {
 
         verify(rescheduleService).reschedule(ORDER);
         verify(flightPhaseAdvancer, never()).activeOrderIdOf(any());
+    }
+
+    @Test
+    void weatherExceeded_shouldReviewOnceAndIgnoreDuplicateEvent() {
+        when(inflightSafetyService.review(any())).thenReturn(Optional.of(weatherVerdict()));
+
+        dispatcher.route(weatherAlert());
+        dispatcher.route(weatherAlert());
+
+        ArgumentCaptor<InflightSafetyRequest> captor =
+                ArgumentCaptor.forClass(InflightSafetyRequest.class);
+        verify(inflightSafetyService).review(captor.capture());
+        InflightSafetyRequest request = captor.getValue();
+        assertThat(request.eventId()).isEqualTo("EV-WEATHER");
+        assertThat(request.trigger()).isEqualTo(InflightSafetyTrigger.AIRSPACE_OR_WEATHER);
+        assertThat(request.orderId()).isEqualTo(ORDER);
+        assertThat(request.droneId()).isEqualTo(DRONE);
+        assertThat(request.windSpeedMs()).isEqualTo(18.0);
+        assertThat(request.alertLevel()).isEqualTo(AlertLevel.CRITICAL);
+        assertThat(request.durationSec()).isEqualTo(30);
+        assertThat(request.observedAtMs()).isEqualTo(1_700_000_000_000L);
+        assertThat(request.cleared()).isFalse();
+    }
+
+    @Test
+    void linkError_shouldNotTriggerAnyDownstreamReview() {
+        dispatcher.route(alert(AlertType.LINK_ERROR, ORDER));
+
+        verify(inflightSafetyService, never()).review(any());
+        verify(rescheduleService, never()).reschedule(any());
+        verify(homecomingService, never()).reviewAndDecide(any(), any(), anyList());
+    }
+
+    @Test
+    void weatherExceeded_whenReviewFails_shouldReleaseEventForRetry() {
+        when(inflightSafetyService.review(any()))
+                .thenThrow(new IllegalStateException("复核服务暂不可用"))
+                .thenReturn(Optional.of(weatherVerdict()));
+
+        dispatcher.onAlertEvent(weatherAlert());
+        dispatcher.onAlertEvent(weatherAlert());
+        dispatcher.onAlertEvent(weatherAlert());
+
+        verify(inflightSafetyService, times(2)).review(any());
+    }
+
+    private static AlertEventMessage weatherAlert() {
+        return new AlertEventMessage("EV-WEATHER", AlertType.WEATHER_EXCEED.getValue(), "严重", 30,
+                DRONE, ORDER, 1_700_000_000_000L, 18.0, 14.0);
+    }
+
+    private static InflightSafetyVerdict weatherVerdict() {
+        return new InflightSafetyVerdict(InflightSafetyVerdict.Verdict.TERMINATE,
+                "EV-WEATHER", ORDER, DRONE, 18.0, AlertLevel.CRITICAL, "气象超限");
     }
 
     private static AlertEventMessage alert(AlertType type, String orderId) {

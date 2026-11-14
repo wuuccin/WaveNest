@@ -6,7 +6,12 @@ import com.waterlogistics.algo.inflight.HomecomingParams;
 import com.waterlogistics.algo.inflight.NestCandidate;
 import com.waterlogistics.contract.mq.AlertEventMessage;
 import com.waterlogistics.contract.mq.TopicName;
+import com.waterlogistics.contract.state.AlertLevel;
 import com.waterlogistics.contract.state.AlertType;
+import com.waterlogistics.dispatch.reschedule.InflightSafetyRequest;
+import com.waterlogistics.dispatch.reschedule.InflightSafetyService;
+import com.waterlogistics.dispatch.reschedule.InflightSafetyTrigger;
+import com.waterlogistics.dispatch.reschedule.InflightSafetyVerdict;
 import com.waterlogistics.dispatch.reschedule.RescheduleService;
 import com.waterlogistics.dispatch.homecoming.HomecomingService;
 import com.waterlogistics.dispatch.taskstate.FlightPhaseAdvancer;
@@ -23,6 +28,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.amqp.core.ExchangeTypes;
@@ -49,7 +55,7 @@ import org.springframework.stereotype.Component;
  *       {@link HomecomingService#reviewAndDecide} 三级落点判定；决策产出后
  *       <b>落审计（task_log）＋广播（{@link HomecomingDecisionEvent}）即止</b>——
  *       三个下游动作（返航航迹／归巢时隙占位／返航指令）按清单保持不接实；</li>
- *   <li><b>气象类</b> → 本类不动作：熔断置位/解除由 B2 的 {@code WeatherGateTrigger} 管，
+ *   <li><b>气象类</b> → 调用在飞安全复核生产入口；熔断置位/解除由 B2 的 {@code WeatherGateTrigger} 管，
  *       解除后的积压唤醒由 {@link WeatherClearWaker} 管（本包内，边沿轮询）；</li>
  *   <li><b>链路异常</b> → 无订单侧动作，记日志即可。</li>
  * </ol>
@@ -82,6 +88,7 @@ public class AlertDrivenDispatcher {
     private static final ZoneId DB_ZONE = ZoneId.of("Asia/Shanghai");
 
     private final RescheduleService rescheduleService;
+    private final InflightSafetyService inflightSafetyService;
     private final HomecomingService homecomingService;
     private final HomecomingInputAssembler assembler;
     private final OrderTaskMapper orderTaskMapper;
@@ -104,6 +111,7 @@ public class AlertDrivenDispatcher {
             });
 
     public AlertDrivenDispatcher(RescheduleService rescheduleService,
+            InflightSafetyService inflightSafetyService,
             HomecomingService homecomingService,
             HomecomingInputAssembler assembler,
             OrderTaskMapper orderTaskMapper,
@@ -112,6 +120,7 @@ public class AlertDrivenDispatcher {
             ApplicationEventPublisher eventPublisher,
             FlightPhaseAdvancer flightPhaseAdvancer) {
         this.rescheduleService = rescheduleService;
+        this.inflightSafetyService = inflightSafetyService;
         this.homecomingService = homecomingService;
         this.assembler = assembler;
         this.orderTaskMapper = orderTaskMapper;
@@ -157,12 +166,53 @@ public class AlertDrivenDispatcher {
         switch (type) {
             case DEVIATION -> handleDeviation(message);
             case LOW_BATTERY, LOST_LINK -> handleHomecoming(message);
-            case WEATHER_EXCEED, LINK_ERROR -> log.info(
-                    "告警 {} 无调度侧动作：eventId={} orderId={}（气象由闸门链路管，链路异常无订单动作）",
-                    type.getValue(), message.eventId(), message.orderId());
+            case WEATHER_EXCEED -> handleWeather(message);
+            case LINK_ERROR -> log.info(
+                    "链路异常告警无订单侧动作：eventId={} orderId={}",
+                    message.eventId(), message.orderId());
             case WAIT_CARGO_TIMEOUT, WAIT_RESOURCE -> log.info(
                     "等待原因告警 {} 无调度侧动作：eventId={} orderId={}（透出与展示由 M2 WaitReasonAlertEmitter 负责）",
                     type.getValue(), message.eventId(), message.orderId());
+        }
+    }
+
+    /** 将气象超限告警交给在飞安全复核生产入口，并沿用事件占位的去重语义。 */
+    private void handleWeather(AlertEventMessage message) {
+        if (!claimEvent(message.eventId())) {
+            log.info("同一气象告警事件已复核过，去重跳过：eventId={}", message.eventId());
+            return;
+        }
+        boolean done = false;
+        try {
+            Double windSpeedMs = message.currentValue();
+            if (windSpeedMs == null) {
+                log.warn("气象超限告警缺少风速，无法在飞安全复核：eventId={} orderId={}",
+                        message.eventId(), message.orderId());
+                return;
+            }
+            InflightSafetyRequest request = new InflightSafetyRequest(
+                    message.eventId(),
+                    InflightSafetyTrigger.AIRSPACE_OR_WEATHER,
+                    message.orderId(),
+                    message.droneId(),
+                    windSpeedMs,
+                    AlertLevel.fromValue(message.level()),
+                    message.duration(),
+                    message.timestamp(),
+                    false);
+            Optional<InflightSafetyVerdict> verdict = inflightSafetyService.review(request);
+            if (verdict.isEmpty()) {
+                log.warn("在飞安全复核未产生结论，事件占位已释放：eventId={} orderId={}",
+                        message.eventId(), message.orderId());
+                return;
+            }
+            log.info("气象超限告警触发在飞安全复核完成：orderId={} 结论={} eventId={}",
+                    message.orderId(), verdict.get().verdict().getValue(), message.eventId());
+            done = true;
+        } finally {
+            if (!done) {
+                releaseEvent(message.eventId());
+            }
         }
     }
 
