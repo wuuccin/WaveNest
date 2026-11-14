@@ -1,9 +1,11 @@
 package com.waterlogistics.dispatch.resource;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.waterlogistics.algo.inflight.TimeWindow;
 import com.waterlogistics.storage.entity.NestEntity;
@@ -40,6 +42,12 @@ class OccupancySlotServiceTest {
     private static final String ORDER_ID = "ORD-001";
 
     private final List<OccupancySlotEntity> SLOTS = new ArrayList<>();
+
+    /** 最近一次 selectList 收到的条件包装器，供断言「查询带了哪些条件」 */
+    private Wrapper<?> lastListWrapper;
+
+    /** 最近一次 selectOne 收到的条件包装器（{@code findActiveSlotByOrder} 走这条） */
+    private Wrapper<?> lastOneWrapper;
 
     private OccupancySlotService service;
 
@@ -99,12 +107,48 @@ class OccupancySlotServiceTest {
 
     /** releaseByOrder 无任何占位时静默返回，幂等不抛（C3 释放失败处置口径）。 */
     @Test
-    void releaseByOrder_withoutAnySlot_shouldBeNoOp() {
-        // 不创建任何占位，直接释放一个不存在的订单占位
+    void releaseByOrder_withoutAnySlot_shouldBeNoOp() {        // 不创建任何占位，直接释放一个不存在的订单占位
         service.releaseByOrder(ORDER_ID);
 
         // 无异常即通过：releaseByOrder 对空结果集静默返回
         assertTrue(SLOTS.isEmpty(), "无占位时不应产生任何行");
+    }
+
+    /**
+     * MEDIUM.62：{@code activeSlots} 必须把已结束时隙挡在结果外。
+     *
+     * <p>全仓没有过期作业，「已过期」状态从未被写入，只按 status 查会把历史时隙当成本刻占用。
+     * 单测用桩记录条件包装器，断言查询带上了 {@code t2 > now}。
+     */
+    @Test
+    void activeSlots_shouldFilterEndedSlots() {
+        service.tryReserve(NEST_ID, new TimeWindow(1_000L, 3_000L), ORDER_ID);
+
+        service.activeSlots("迫停占用", NEST_ID);
+
+        assertNotNull(lastListWrapper, "activeSlots 应走 selectList 查询");
+        String sql = lastListWrapper.getSqlSegment().toLowerCase();
+        assertTrue(sql.contains("t2"), "查询须带结束时刻条件，实得：" + lastListWrapper.getSqlSegment());
+        assertTrue(sql.contains(">"),
+                "结束时刻的条件须为大于（排除已结束时隙），实得：" + lastListWrapper.getSqlSegment());
+    }
+
+    /**
+     * 与 {@code activeSlots} 同源：{@code findActiveSlotByOrder} 也必须带结束时刻条件。
+     *
+     * <p>它有生产调用点（{@code CargoNestGate} 判「本单已锁巢」后跳过 {@code tryReserve}），
+     * 把过期锁当真等于锁根本没上，故单测钉住这条条件。
+     */
+    @Test
+    void findActiveSlotByOrder_shouldFilterEndedSlots() {
+        service.findActiveSlotByOrder(ORDER_ID);
+
+        assertNotNull(lastOneWrapper, "findActiveSlotByOrder 应走 selectOne 查询");
+        String sql = lastOneWrapper.getSqlSegment().toLowerCase();
+        assertTrue(sql.contains("t2"),
+                "查询须带结束时刻条件，实得：" + lastOneWrapper.getSqlSegment());
+        assertTrue(sql.contains(">"),
+                "结束时刻的条件须为大于（排除已结束时隙），实得：" + lastOneWrapper.getSqlSegment());
     }
 
     // ───────────────────────── fake mappers ─────────────────────────
@@ -126,6 +170,7 @@ class OccupancySlotServiceTest {
                                 .filter(s -> s.getSlotId().equals(args[0]))
                                 .findFirst().orElse(null);
                         case "selectList" -> {
+                            lastListWrapper = (Wrapper<?>) args[0];
                             // releaseByOrder 查有效迫停占位；单测场景直接返回全部有效迫停占位。
                             yield SLOTS.stream()
                                     .filter(s -> "迫停占用".equals(s.getObjectType())
@@ -133,6 +178,13 @@ class OccupancySlotServiceTest {
                                     .toList();
                         }
                         case "selectCount" -> 0L;
+                        case "selectOne" -> {
+                            lastOneWrapper = (Wrapper<?>) args[0];
+                            yield SLOTS.stream()
+                                    .filter(s -> ORDER_ID.equals(s.getOrderId())
+                                            && "有效".equals(s.getStatus()))
+                                    .findFirst().orElse(null);
+                        }
                         case "update" -> {
                             // release: eq slotId + eq 有效 → set 已释放。
                             // 单测同时只有一个有效占位，直接把首个「有效」占位置为「已释放」。

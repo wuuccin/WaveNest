@@ -119,7 +119,8 @@ public class RescheduleService {
      *
      * <p><b>本层的范围</b>：只做判档，纯函数、无 IO。前置 P1（订单存在）与 P2（订单处于
      * 去程中或末段交接中）由调用方在调用前保证；{@code task_log} 留痕、终止档调
-     * {@link #abandonMeetAndReturnHome}、结论广播由功能入口接线时落地，不在本方法内。
+     * {@link #abandonMeetAndReturnHome}、结论广播由生产入口
+     * {@link InflightSafetyService#review} 落地，不在本方法内。
      *
      * <p><b>为什么返回 {@code Optional}</b>：空表示「没判」而不是「判过且安全」。
      * 订单查不到、状态不符、风速非法、级别非两档属「没判」，调用方不得据此放行
