@@ -15,6 +15,7 @@ import com.waterlogistics.algo.estimation.WaterwayGeometry;
 import com.waterlogistics.contract.mq.AisMessage;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.Deque;
 import java.util.List;
 import java.util.Map;
@@ -162,6 +163,16 @@ public class PrecisePredictionEngine implements ResidualSampleSource {
 
     /** 残差样本保留期相对预测时域的余量，s（时域外的观测算不出残差，留着也无用）。 */
     private static final long RESIDUAL_RETENTION_MARGIN_SEC = 60L;
+
+    /**
+     * 精算状态表在船数上限（MEDIUM.3）。
+     *
+     * <p>为什么需要一条<b>与时间无关</b>的上限：{@link #evictStale} 的两条判据都依赖
+     * 「时间过去了」，而短时间涌入大量新船（回放、批量补数、别的部门灌流）时表会先涨起来。
+     * 取 2048 是因为单船状态的最大占用在十 KB 量级（300 条观测 ＋ 两个滤波器 ＋ 折线），
+     * 满上限约 20~40 MB，对调度服务的堆是可控量级；再大就不像在跟踪，像在存档。
+     */
+    static final int MAX_TRACKED_SHIPS = 2048;
 
     /**
      * 预测探针的撒点间隔，s。
@@ -322,6 +333,14 @@ public class PrecisePredictionEngine implements ResidualSampleSource {
 
         long lastAppliedTsMs = Long.MIN_VALUE;
 
+        /**
+         * 最近一次<b>被接纳</b>的观测时刻，Unix 毫秒（MEDIUM.3 的淘汰判据）。
+         *
+         * <p>与 {@link #lastAppliedTsMs} 分开：后者在重锚后仍要参与「时间不能倒流」的判定，
+         * 而这个只回答「这船多久没消息了」——两者语义不同，合并会让重锚顺带把船判成失联。
+         */
+        long lastSeenTsMs = Long.MIN_VALUE;
+
         double predictedVarianceS;
 
         double normalizedInnovation;
@@ -441,6 +460,81 @@ public class PrecisePredictionEngine implements ResidualSampleSource {
     /** 已在跟踪的船数。 */
     public int trackedShipCount() {
         return states.size();
+    }
+
+    /**
+     * 清掉一艘船的全部状态（{@link PredictionService#evictStale} 的引擎侧出口）。
+     *
+     * <p><b>MEDIUM.3</b>：{@code states} 此前只经 {@code computeIfAbsent} 增、从不删，
+     * 每艘见过的船都要长留一个 {@code ArrayDeque}（最多 {@code refColdStartSec} 秒的
+     * {@code AisMessage}，1 Hz 下约 300 个对象）＋两个滤波器 ＋ 一条参考折线 ＋ 最多 32 个点。
+     * 舰队级 AIS 流下这是缓慢 OOM。服务层清理必须连引擎一起清，否则「服务层看着干净、
+     * 引擎侧还在涨」。
+     *
+     * @param mmsi 船号；{@code null} 或空白直接忽略
+     * @return 是否确实清掉了一艘
+     */
+    public boolean evict(String mmsi) {
+        if (mmsi == null || mmsi.isBlank()) {
+            return false;
+        }
+        return states.remove(mmsi) != null;
+    }
+
+    /**
+     * 清掉「最久没有新观测」的船：先把 {@code lastSeenTsMs} 早于 {@code nowMs − maxIdleMs}
+     * 的全部移除，再按上限兜底。
+     *
+     * <p>两道口子分开：前者是语义清理（这船确实失联了），后者是容量保护（即便时间口径
+     * 还没到，也不能让表无限长大）。只有语义清理挡不住「短时间内涌入大量新船」。
+     *
+     * @param nowMs     当前时刻，Unix 毫秒
+     * @param maxIdleMs 允许的最长静默时长，ms（≤0 时只做上限兜底）
+     * @return 被清掉的船数
+     */
+    public int evictStale(long nowMs, long maxIdleMs) {
+        int removed = 0;
+        if (maxIdleMs > 0L) {
+            for (Map.Entry<String, ShipState> entry : states.entrySet()) {
+                long lastSeen = entry.getValue().lastSeenTsMs;
+                if (lastSeen != Long.MIN_VALUE && nowMs - lastSeen > maxIdleMs
+                        && states.remove(entry.getKey(), entry.getValue())) {
+                    removed++;
+                }
+            }
+        }
+        removed += trimToCap();
+        return removed;
+    }
+
+    /**
+     * 超过 {@link #MAX_TRACKED_SHIPS} 时按最后观测时刻淘汰最旧的几条。
+     *
+     * <p>排序取全表在船数超限时才发生，正常路径（≤ 上限）零开销。
+     *
+     * @return 本次淘汰条数
+     */
+    private int trimToCap() {
+        int overflow = states.size() - MAX_TRACKED_SHIPS;
+        if (overflow <= 0) {
+            return 0;
+        }
+        List<Map.Entry<String, ShipState>> sorted = new ArrayList<>(states.entrySet());
+        sorted.sort(Comparator.comparingLong(entry -> entry.getValue().lastSeenTsMs));
+        int removed = 0;
+        for (Map.Entry<String, ShipState> entry : sorted) {
+            if (removed >= overflow) {
+                break;
+            }
+            if (states.remove(entry.getKey(), entry.getValue())) {
+                removed++;
+            }
+        }
+        if (removed > 0) {
+            log.warn("精算状态表超出上限，已淘汰最久未观测的 {} 艘（上限 {}）",
+                    removed, MAX_TRACKED_SHIPS);
+        }
+        return removed;
     }
 
     /** 取某船状态（未跟踪时为空）。 */
@@ -699,6 +793,12 @@ public class PrecisePredictionEngine implements ResidualSampleSource {
         validate(observation);
 
         ShipState state = states.computeIfAbsent(observation.mmsi(), key -> new ShipState());
+        // MEDIUM.3：先记「最后消息时刻」，再按上限兜底。记在这里而不是 applyObservation 里，
+        // 是因为迟到/重复观测同样算「这船还在」——它不该被淘汰判据当成失联。
+        if (observation.ts() > state.lastSeenTsMs) {
+            state.lastSeenTsMs = observation.ts();
+        }
+        trimToCap();
 
         synchronized (state) {
             if (!append(state, observation)) {
@@ -755,12 +855,27 @@ public class PrecisePredictionEngine implements ResidualSampleSource {
                             state.window.size());
                     return Optional.empty();
                 }
+                // MEDIUM.41：重锚<b>只平移坐标原点</b>，不重建滤波器。
+                // 旧写法把 initialized 置 false 再重放整个窗口，代价是协方差从 σ_pos 重新起步、
+                // v 用一段更短的基线重估——2026-10-30 偏差报告 §4.3 观测到的 1~1.6 km 沿程塌陷
+                // 与 v 缓慢恢复，怀疑的正是这条路径。平移后 P_ss/P_sv/P_vv 与 v_s 全部保留。
+                WaterwayGeometry.Projection beforeAnchor =
+                        state.geometry.project(observation.lon(), observation.lat());
+                WaterwayGeometry.Projection afterAnchor =
+                        rebuilt.project(observation.lon(), observation.lat());
                 state.geometry = rebuilt;
-                state.initialized = false;
-                state.lastAppliedTsMs = Long.MIN_VALUE;
-                for (AisMessage historic : state.window) {
-                    applyObservation(state, historic);
-                }
+                state.along.shiftAlongOrigin(afterAnchor.s() - beforeAnchor.s());
+                // 横向不做平移：e 是「离参考线多远」，新旧参考线都由这艘船最近一段实测轨迹建出，
+                // 同一个点到两条线的垂距只差米级（不是沿程那样的公里级），而 e 本身被
+                // clampToChannel 夹在半个航道内。差别让之后几拍的更新自然吸收，比硬搬一个
+                // 坐标原点更符合「换了一条参考线」的语义。
+                // NIS 序列跨重锚不可比：旧样本的 z 是按旧参考线算的，留着会把标定统计带偏
+                state.zSeries.clear();
+                // 前提监测与航行阶段机的历史都寄存在<b>旧坐标的弧长</b>上。一次公里级平移会被它们
+                // 读成「位置突变」，故按冷启动重建；二者是判据出口（有效性结论、阶段枚举），
+                // 不是量化状态，重建代价远低于丢掉 P_ss 与 v 估计。
+                state.premise = null;
+                state.navPhase = null;
             }
 
             Computed computed = predictFromState(state, observation.ts(), observation.mmsi());

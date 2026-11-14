@@ -2,6 +2,7 @@ package com.waterlogistics.dispatch.prediction;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -41,6 +42,7 @@ class LoggingRecomputeRequesterTest {
 
         assertDoesNotThrow(() -> requester.requestRecompute(request("413000001")),
                 "递归必须断在闸门里，不能以 StackOverflowError 收场");
+        assertTrue(requester.flush(5_000L), "重算队列未在超时前处理完");
 
         assertEquals(1, requester.recursionDroppedCount(), "内层那次应被记一次断开");
         assertEquals(1, requester.receivedRequestCount(),
@@ -110,5 +112,51 @@ class LoggingRecomputeRequesterTest {
                 () -> new RecomputeRequest("  ", 1L, 0.0, 0.0, 10.0, "空船号", T0));
         org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
                 () -> new RecomputeRequest("413000001", 1L, 0.0, 0.0, Double.NaN, "NaN", T0));
+    }
+
+    /**
+     * ★ 11-14 序号 2-6 · MEDIUM.2：重算不得占着调用方线程。
+     *
+     * <p>判据用「把重算卡住，再量 {@code requestRecompute} 的返回耗时」来验：
+     * 同步实现会一直卡到重算结束，异步实现立即返回。这比断言「有线程池字段」更本质——
+     * 验的是<b>行为</b>，实现换成别的异步方案也照样成立。
+     */
+    @Test
+    @DisplayName("★ MEDIUM.2：重算在 worker 线程上跑，调用方不被阻塞；同船连发被合并")
+    void requestRecompute_shouldNotBlockCaller() throws Exception {
+        LoggingRecomputeRequester requester = new LoggingRecomputeRequester();
+        java.util.concurrent.CountDownLatch started = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+
+        PredictionSettings settings = new PredictionSettings(30.0, 0.15, 10.0, 0.02, 600L, 60L, 900L);
+        PredictionService blocking = new PredictionService(settings, requester) {
+            @Override
+            public Optional<PredictionSnapshot> recompute(String mmsi) {
+                started.countDown();
+                try {
+                    release.await(5, java.util.concurrent.TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                return Optional.empty();
+            }
+        };
+        requester.bindPredictionService(blocking);
+
+        long beginNs = System.nanoTime();
+        requester.requestRecompute(request("413000001"));
+        long elapsedMs = (System.nanoTime() - beginNs) / 1_000_000L;
+
+        assertTrue(elapsedMs < 500L,
+                "重算被卡住时调用方仍应立即返回，实测耗时 " + elapsedMs + " ms");
+        assertTrue(started.await(5, java.util.concurrent.TimeUnit.SECONDS), "worker 应已开始处理");
+
+        // 同一条船再有信号：不排队，直接并进在途的那次
+        requester.requestRecompute(request("413000001"));
+        assertEquals(1L, requester.coalescedCount(), "同船在途重算期间的新信号应被合并");
+
+        release.countDown();
+        assertTrue(requester.flush(5_000L), "放行后队列应在超时前清空");
+        assertEquals(2L, requester.receivedRequestCount(), "两条信号都要记入收到数");
     }
 }

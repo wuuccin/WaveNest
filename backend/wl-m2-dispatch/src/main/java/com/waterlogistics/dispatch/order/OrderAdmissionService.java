@@ -245,17 +245,17 @@ public class OrderAdmissionService {
                 decision.etaTsMs());
 
         // 先发布版本 1，保证实时端按「待受理 → 后续状态」的顺序看到完整时间线。
-        eventPublisher.publishEvent(new OrderStateChangedEvent(view));
+        publishOrCompensate(orderId, new OrderStateChangedEvent(view), "状态广播");
 
         // B0：发布「订单已受理」事件（waitReason=null → 完整主链），由 DispatchTrigger 驱动
         // 落库 → 受理 → 组批调度；priority 写枚举名（HIGH.18），不透传原始请求串。
         // 11-05 序号 2：expectedTimeMs 改传系统算出的 deadline（不再是客户端提交值），
         // etaTs 传未派单阶段的下界，cargoNestId 传货巢（落 order_task.cargo_nest_id），
         // 三者都由 DispatchTrigger 落库。
-        eventPublisher.publishEvent(new OrderSubmittedEvent(
+        publishOrCompensate(orderId, new OrderSubmittedEvent(
                 orderId, pipelineRequest.mmsi(), request.goodsWeight(), request.goodsType(),
                 decision.deadlineMs(), priority.name(), nowMs, null, null, decision.etaTsMs(),
-                pipelineRequest.cargoNestId()));
+                pipelineRequest.cargoNestId()), "受理落库");
 
         return OrderSubmitResponse.accepted(view);
     }
@@ -291,15 +291,16 @@ public class OrderAdmissionService {
                 orderId, pipelineRequest.mmsi(), decision.reason(), waitReason, wakeEtaTs,
                 decision.deadlineMs(), decision.etaTsMs());
 
-        eventPublisher.publishEvent(new OrderStateChangedEvent(view));
+        publishOrCompensate(orderId, new OrderStateChangedEvent(view), "状态广播");
 
         // 延后事件：DispatchTrigger 只落库为「已受理待唤醒」，不受理、不组批
         // 11-05 序号 2：cargoNestId 一并带出——延后单同样要能在库里看见「货在哪个巢」，
         // 否则唤醒后被重判时货巢丢失，只能退回「离船最近巢」，与用户下单时的意图不符
-        eventPublisher.publishEvent(new OrderSubmittedEvent(
+        publishOrCompensate(orderId, new OrderSubmittedEvent(
                 orderId, pipelineRequest.mmsi(), request.goodsWeight(), request.goodsType(),
                 decision.deadlineMs(), pipelineRequest.priority(), nowMs,
-                waitReason.name(), wakeEtaTs, decision.etaTsMs(), pipelineRequest.cargoNestId()));
+                waitReason.name(), wakeEtaTs, decision.etaTsMs(), pipelineRequest.cargoNestId()),
+                "延后落库");
 
         // 定时唤醒：tEnter−wakeMargin（等船）与 suspendRetrySec 重评点（数据不足／未进段）
         // 都给出确定时刻；事件型唤醒（闸门解除／货就绪）由既有链路兜住，wakeAtMs=0 不注册
@@ -309,6 +310,38 @@ public class OrderAdmissionService {
 
         return OrderSubmitResponse.deferred(view, decision.reason().name(), decision.detail(),
                 waitReason.name(), wakeEtaTs);
+    }
+
+    /**
+     * 发布事件；失败时先把内存视图退回去，再把异常原样抛出（MEDIUM.30）。
+     *
+     * <p><b>要解决的错配</b>：{@code publishEvent} 是同步的，{@code DispatchTrigger} 在下游落库
+     * 失败时会回滚自己的事务并重新抛出。此前本类不接这个异常，于是——订单已 {@code put} 进
+     * {@link #orders}、{@code task_log} 也记了「订单接入」，而库里没这一行；调用方拿到 500。
+     * 三条真相各说一套，事后按订单号查会查到一个只存在于内存里的单。
+     *
+     * <p><b>为什么不改成「先落库再进内存」</b>：状态广播必须先发版本 1，实时端才能按
+     * 「待受理 → 后续状态」排时间线；把顺序倒过去会把前端的状态序列弄成倒序。
+     * 也不改成「失败返回 rejected」：落库失败是基础设施故障，不是业务判定，
+     * 用 200 ＋ {@code reasonCode} 包装它会让上游以为「这单被规则拒了、可以改参数重提」。
+     *
+     * <p><b>修完的口径</b>：内存视图与调用方看到的结果一致（都失败）；
+     * {@code task_log} 里那条「订单接入」保持不动——它是留痕，不是真相来源，
+     * 而以 {@code order_task} 为准的既有约定没变。
+     *
+     * @param orderId 订单号（补偿时要按它从内存视图里摘掉）
+     * @param event   待发布事件
+     * @param phase   阶段名，仅用于日志定位是「状态广播」还是「受理/延后落库」失败
+     */
+    private void publishOrCompensate(String orderId, Object event, String phase) {
+        try {
+            eventPublisher.publishEvent(event);
+        } catch (RuntimeException e) {
+            orders.remove(orderId);
+            log.warn("订单事件发布失败，内存视图已回退：orderId={} 阶段={}（task_log 中该单的接入留痕保留）",
+                    orderId, phase, e);
+            throw e;
+        }
     }
 
     /** 判定链原因 → 展示层等待原因（口径：等船／等货／闸门或数据）。 */

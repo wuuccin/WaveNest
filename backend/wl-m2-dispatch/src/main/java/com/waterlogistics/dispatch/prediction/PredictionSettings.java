@@ -30,6 +30,28 @@ public record PredictionSettings(
         long stepSec,
         long validitySec) {
 
+    /**
+     * 装配期校验（MEDIUM.48）：<b>复用算法层的不变式，不自立一套</b>。
+     *
+     * <p><b>为什么必须在这里验</b>：此前本记录体不收任何约束，坏值（{@code sigmaPosM=0}、
+     * {@code alpha} 为负、{@code horizon < step}）能安静地过 Spring 装配，直到第一笔预测请求
+     * 调 {@link #toParams()} 才抛——错误现场离病根隔着一次启动和一次业务请求，
+     * 排障时要先把「是不是配置坏了」排除掉才能看算法。放在紧凑构造器里，配置一坏启动即失败。
+     *
+     * <p><b>为什么不直接调 {@link #toParams()}</b>：紧凑构造器执行时字段还没赋值，
+     * 那时调 {@code toParams()} 读到的是全 0。故按同样顺序把入参传给
+     * {@link PredictionParams} 的构造器，让它替我们判——这是<b>唯一</b>的规则来源，
+     * 算法层改了判据这里自动跟上。
+     *
+     * <p><b>与 {@link PredictionConfig} 的关系</b>：配置侧已对 {@code sys_param} 的坏值做
+     * 「回落缺省＋warn」，这里不是重复劳动——那里的兜底只覆盖「读表读出来的值」，
+     * 单测与其它构造点（如 {@code OfflinePredictionFixture}）直接 {@code new} 时没有第二道网。
+     */
+    public PredictionSettings {
+        new PredictionParams(sigma0AlongM, alphaAlongMs, sigma0CrossM, alphaCrossMs,
+                horizonSec, stepSec, validitySec);
+    }
+
     /** 组装算法层参数对象（算法层不读配置，只收参数）。 */
     public PredictionParams toParams() {
         return new PredictionParams(
