@@ -172,6 +172,18 @@ class AlertDrivenDispatcherOrderLookupTest {
     }
 
     @Test
+    void weatherExceeded_whenWindSpeedMissing_shouldPassNaNInsteadOfZero() {
+        when(inflightSafetyService.review(any())).thenReturn(Optional.empty());
+
+        dispatcher.onAlertEvent(weatherAlertWithoutWind());
+
+        ArgumentCaptor<InflightSafetyRequest> captor =
+                ArgumentCaptor.forClass(InflightSafetyRequest.class);
+        verify(inflightSafetyService).review(captor.capture());
+        assertThat(captor.getValue().windSpeedMs()).isNaN();
+    }
+
+    @Test
     void linkError_shouldNotTriggerAnyDownstreamReview() {
         dispatcher.route(alert(AlertType.LINK_ERROR, ORDER));
 
@@ -196,6 +208,12 @@ class AlertDrivenDispatcherOrderLookupTest {
     private static AlertEventMessage weatherAlert() {
         return new AlertEventMessage("EV-WEATHER", AlertType.WEATHER_EXCEED.getValue(), "严重", 30,
                 DRONE, ORDER, 1_700_000_000_000L, 18.0, 14.0);
+    }
+
+    /** 检测侧未带风速的气象告警，用于验证 M2 传 NaN 而不是 0 */
+    private static AlertEventMessage weatherAlertWithoutWind() {
+        return new AlertEventMessage("EV-WEATHER", AlertType.WEATHER_EXCEED.getValue(), "严重", 30,
+                DRONE, ORDER, 1_700_000_000_000L, null, 14.0);
     }
 
     private static InflightSafetyVerdict weatherVerdict() {

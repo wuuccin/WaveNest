@@ -184,12 +184,9 @@ public class AlertDrivenDispatcher {
         }
         boolean done = false;
         try {
-            Double windSpeedMs = message.currentValue();
-            if (windSpeedMs == null) {
-                log.warn("气象超限告警缺少风速，无法在飞安全复核：eventId={} orderId={}",
-                        message.eventId(), message.orderId());
-                return;
-            }
+            Double reported = message.currentValue();
+            // 风速缺失传 NaN 而不是 0：0 是合法风速，会判出建立在假数据上的调整结论
+            double windSpeedMs = reported == null ? Double.NaN : reported;
             InflightSafetyRequest request = new InflightSafetyRequest(
                     message.eventId(),
                     InflightSafetyTrigger.AIRSPACE_OR_WEATHER,
