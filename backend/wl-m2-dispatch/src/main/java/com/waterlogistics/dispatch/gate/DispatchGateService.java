@@ -3,6 +3,8 @@ package com.waterlogistics.dispatch.gate;
 import com.waterlogistics.contract.rest.DispatchGate;
 import com.waterlogistics.contract.rest.GateSource;
 import com.waterlogistics.contract.rest.GateStatus;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -18,10 +20,15 @@ import java.util.Objects;
  * 字段口径已随序 2 契约落定（此前待定项关闭）：gateStatus=GateStatus、
  * gateSources=GateSource 列表，落库传输一律取 getValue() 中文取值。
  *
+ * <p>序号 3 起，本类同时是八个人工干预动作的唯一入口：三个闸门动作直接改状态，
+ * 五个订单动作委托 {@link OrderInterventionService}。订单干预出口可空，
+ * 以便只验闸门逻辑的单测继续用无参构造直接 {@code new}。
+ *
  * <h3>并发口径（HIGH.10 / HIGH.11 / LOW.5）</h3>
  * 状态（status + 来源列表）<b>只由一把锁保护</b>：四个读写方法全部 {@code synchronized}，
  * 列表为普通 {@code ArrayList}（不再混用 CopyOnWrite，避免「两套保护机制 + 读路径无保护」
  * 的快照不一致）。{@link #isOpen()} 只读单个 {@code volatile} 字段，不参与组合读，保持无锁。
+ * 五个订单动作不读写闸门状态，刻意不加 {@code synchronized}，避免把数据库事务圈进闸门锁。
  */
 @Service
 public class DispatchGateService {
@@ -29,6 +36,22 @@ public class DispatchGateService {
     private final List<GateSource> gateSources = new ArrayList<>();
 
     private volatile GateStatus gateStatus = GateStatus.NORMAL;
+
+    private final OrderInterventionService orderInterventionService;
+
+    /** 单测与仅用闸门的装配：不带订单干预出口。 */
+    public DispatchGateService() {
+        this(null);
+    }
+
+    /**
+     * 生产装配：注入订单干预出口。{@code @Lazy} 断开「闸门 ↔ 订单服务 ↔ 预测链」
+     * 可能形成的构造环，与 {@code RendezvousRecomputeRequester} 的装配口径一致。
+     */
+    @Autowired
+    public DispatchGateService(@Lazy OrderInterventionService orderInterventionService) {
+        this.orderInterventionService = orderInterventionService;
+    }
 
     /** 闸门是否放行（正常即放行） */
     public boolean isOpen() {
@@ -82,5 +105,37 @@ public class DispatchGateService {
     public synchronized void reset() {
         gateSources.removeIf(s -> s == GateSource.MANUAL);
         gateStatus = gateSources.isEmpty() ? GateStatus.NORMAL : GateStatus.BROKEN;
+    }
+
+    /** 调整会面点：校验订单与状态、落干预留痕；航迹重算由序号 3 第二批接主链时挂接。 */
+    public void adjustMeet(String orderId) {
+        delegate("adjust_meet", orderId);
+    }
+
+    /** 撤回未起飞订单：仅 OUTBOUND 之前的五个状态可执行，落「已拒绝」。 */
+    public void withdraw(String orderId) {
+        delegate("withdraw", orderId);
+    }
+
+    /** 取消订单：任一未终止、未完成状态可执行，落「已拒绝」。 */
+    public void cancel(String orderId) {
+        delegate("cancel", orderId);
+    }
+
+    /** 紧急叫停：仅去程中／末段交接中／返航中可执行，落「异常终止」。 */
+    public void emergencyAbort(String orderId) {
+        delegate("abort", orderId);
+    }
+
+    /** 人工接管：按《23》§3 四对一映射表落「已拒绝（转人工）」。 */
+    public void manualTakeover(String orderId) {
+        delegate("manual", orderId);
+    }
+
+    private void delegate(String action, String orderId) {
+        if (orderInterventionService == null) {
+            throw new IllegalStateException("订单干预出口未装配：" + action);
+        }
+        orderInterventionService.execute(action, orderId);
     }
 }
