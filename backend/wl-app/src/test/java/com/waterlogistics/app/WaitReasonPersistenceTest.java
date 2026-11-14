@@ -67,7 +67,7 @@ class WaitReasonPersistenceTest {
     void gateDeferralShouldPersistWaitReasonAndClearOnLeavingWaitState() {
         // 前置：南昌赣江演示航段船位，候选与会面求解都依赖真实预测快照
         predictionService.refresh(new AisMessage(
-                SHIP, "等待原因测试船", 115.8590, 28.6630, 5.0, 90.0,
+                SHIP, "等待原因测试船", 115.857937, 28.663776, 5.0, 90.0,
                 System.currentTimeMillis()));
 
         OrderSubmitResponse resp = admissionService.submit(new OrderSubmitRequest(
