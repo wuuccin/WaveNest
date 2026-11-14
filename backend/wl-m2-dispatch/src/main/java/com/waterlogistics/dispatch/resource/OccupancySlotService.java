@@ -294,13 +294,30 @@ public class OccupancySlotService {
         }
     }
 
-    /** 按对象类型+Id 查询当前有效占位列表 */
+    /**
+     * 按对象类型+Id 查询<b>当前仍未结束</b>的有效占位列表。
+     *
+     * <p><b>时间条件不可省（MEDIUM.62）</b>：{@code occupancy_slot.status} 的取值里有「已过期」，
+     * 但全仓没有任何过期作业去写它——该状态实际从未产生，已结束时隙会一直停在「有效」。
+     * 只按 status 查会把早已结束的时隙当成本刻占用：据此算容量会虚高，据此判冲突会误拒。
+     * 故此处以 {@code t2 > now} 把已结束时隙挡在结果外。
+     *
+     * <p><b>为什么不在这里做惰性过期写入</b>：状态迁移仍归 {@link #release(String)} 与
+     * {@link #releaseByOrder(String)}；查询路径里改状态会让「读」变成写事务，且与
+     * {@code release} 的「仅有效可释放」前置冲突（过期后反而释放不了）。
+     *
+     * @param objectType 对象类型（机占用/起飞时段/会面窗口/归巢时隙/迫停占用）
+     * @param objectId   关联对象 Id
+     * @return 未结束且状态为「有效」的占位；无匹配时为空列表
+     */
     public List<OccupancySlotEntity> activeSlots(String objectType, String objectId) {
+        LocalDateTime now = LocalDateTime.now(DB_ZONE);
         return occupancySlotMapper.selectList(
             new LambdaQueryWrapper<OccupancySlotEntity>()
                 .eq(OccupancySlotEntity::getObjectType, objectType)
                 .eq(OccupancySlotEntity::getObjectId, objectId)
-                .eq(OccupancySlotEntity::getStatus, STATUS_ACTIVE));
+                .eq(OccupancySlotEntity::getStatus, STATUS_ACTIVE)
+                .gt(OccupancySlotEntity::getT2, now));
     }
 
     /**
