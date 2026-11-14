@@ -110,6 +110,33 @@ public class RescheduleService {
     }
 
     /**
+     * 在飞安全复核入口（气象超限路径）：告警快照 → 三值结论。
+     *
+     * <p>《84》§3.3 边界：「不做底层异常检测与告警分级——归 G 组，只消费其告警事件」。
+     * 故本方法<b>不读阈值键、不比 8.0 与 14.0、不看机型抗风上限</b>，判档按告警侧已给出的
+     * 级别与解除标志。阈值的判断在 M4 检测器内（{@code weatherWindWarningThreshold}＝8.0、
+     * {@code weatherWindCriticalThreshold}＝14.0），本层只消费结果。
+     *
+     * <p><b>本层的范围</b>：只做判档，纯函数、无 IO。前置 P1（订单存在）与 P2（订单处于
+     * 去程中或末段交接中）由调用方在调用前保证；{@code task_log} 留痕、终止档调
+     * {@link #abandonMeetAndReturnHome}、结论广播由功能入口接线时落地，不在本方法内。
+     *
+     * <p><b>为什么返回 {@code Optional}</b>：空表示「没判」而不是「判过且安全」。
+     * 订单查不到、状态不符、风速非法、级别非两档属「没判」，调用方不得据此放行
+     * ——与 {@link #reschedule} 用 {@code Optional<String>} 区分「延后」与「派发成功」
+     * 的写法一致。
+     *
+     * <p><b>终止档不写订单状态</b>：《23》§3 约束 2「飞行中途的风速突变不新增任务状态，
+     * 只触发调度侧重跑；状态仍停在去程中」。任务作废后的落点由功能 10 判定后写无人机状态。
+     *
+     * @param request 告警快照（风速口径见 {@link InflightSafetyRequest}）；可为 {@code null}
+     * @return 三值结论；入参不可判时为空
+     */
+    public Optional<InflightSafetyVerdict> evaluateInflightSafety(InflightSafetyRequest request) {
+        return InflightSafetyVerdict.judge(request);
+    }
+
+    /**
      * 放弃本次会面 → 原机返航（<b>16 号已接 {@code dispatch.homecoming}</b>）。
      *
      * <p>《29》§3.5.1(1b)：6b 处置结论为「放弃本次会面」时交功能 10 做返航复核与三级落点判定，
