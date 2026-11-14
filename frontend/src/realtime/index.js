@@ -49,7 +49,7 @@ export function createRealtime() {
       const droneId = droneIdForOrder(normalizeReplayTasks(taskResult), orderId)
       if (droneId) {
         try {
-          const history = await api.replay(droneId)
+          const history = await api.replay(orderId)
           const latest = new Map()
           for (const frame of history.frames || []) {
             if (frame.type === 'ship_traj' && frame.data?.mmsi) latest.set(`ship_traj:${frame.data.mmsi}`, frame)

@@ -3,12 +3,30 @@ package com.waterlogistics.monitor.query;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.when;
 
 import com.waterlogistics.algo.measurement.TelemetryCleaner;
 import com.waterlogistics.contract.mq.UavTelemetry;
+import com.waterlogistics.contract.rest.FlightReplayResponse;
+import com.waterlogistics.contract.ws.DroneStateFrame;
 import com.waterlogistics.monitor.ingest.TelemetryService;
 import com.waterlogistics.monitor.store.FlightRecordStore;
+import com.waterlogistics.monitor.store.ShipPredictionReplayStore;
+import com.waterlogistics.storage.entity.OrderTaskEntity;
+import com.waterlogistics.storage.entity.TaskLogEntity;
+import com.waterlogistics.storage.repository.AlertMapper;
+import com.waterlogistics.storage.repository.OrderTaskMapper;
+import com.waterlogistics.storage.repository.PlanTrackMapper;
+import com.waterlogistics.storage.repository.TaskLogMapper;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -25,15 +43,17 @@ class FlightQueryControllerTest {
         store.append(telemetry.acceptState(frame(1_000L, 80.0)));
         FlightQueryController controller = new FlightQueryController(new FlightQueryService(store));
 
-        FlightQueryController.ReplayResponse response = controller.replay("UAV-D0-1");
+        FlightReplayResponse response = controller.replay("UAV-D0-1");
 
         assertEquals("UAV-D0-1", response.taskId());
         assertEquals(2, response.frames().size());
         assertEquals("drone_state", response.frames().get(0).type());
-        assertEquals(1_000L, response.frames().get(0).data().ts());
-        assertEquals(90.0, response.frames().get(0).data().heading());
-        assertNull(response.frames().get(0).data().activeOrderId());
-        assertEquals(2_000L, response.frames().get(1).data().ts());
+        DroneStateFrame first = (DroneStateFrame) response.frames().get(0).data();
+        DroneStateFrame second = (DroneStateFrame) response.frames().get(1).data();
+        assertEquals(1_000L, first.ts());
+        assertEquals(90.0, first.heading());
+        assertNull(first.activeOrderId());
+        assertEquals(2_000L, second.ts());
     }
 
     @Test
@@ -57,6 +77,53 @@ class FlightQueryControllerTest {
         assertEquals(1L, controller.statistics().get("flights"));
         assertEquals(1L, controller.statistics().get("samples"));
     }
+
+    @Test
+    void replay_shouldBindOrderAndUsePersistedStateVersion() {
+        FlightRecordStore store = new FlightRecordStore();
+        TelemetryService telemetry = new TelemetryService(LIMITS, 4.5);
+        store.append(telemetry.acceptState(frame(1_700_000_000_000L, 80.0)));
+        OrderTaskMapper orders = Mockito.mock(OrderTaskMapper.class);
+        TaskLogMapper logs = Mockito.mock(TaskLogMapper.class);
+        AlertMapper alerts = Mockito.mock(AlertMapper.class);
+        PlanTrackMapper plans = Mockito.mock(PlanTrackMapper.class);
+        ShipPredictionReplayStore predictions = Mockito.mock(ShipPredictionReplayStore.class);
+        OrderTaskEntity order = new OrderTaskEntity();
+        order.setOrderId("ORD-1");
+        order.setDroneId("UAV-D0-1");
+        order.setShipMmsi("413000001");
+        order.setCreateTime(local(1_699_999_999_000L));
+        when(orders.selectById("ORD-1")).thenReturn(order);
+        TaskLogEntity transition = new TaskLogEntity();
+        transition.setOrderId("ORD-1");
+        transition.setLogId(8L);
+        transition.setOpType("派发");
+        transition.setFromStatus("待调度");
+        transition.setToStatus("已派发");
+        transition.setTs(local(1_700_000_000_000L));
+        when(logs.selectList(any(QueryWrapper.class))).thenReturn(List.of(transition));
+        when(predictions.range("413000001", 1_700_000_000_000L, 1_700_000_000_000L))
+                .thenReturn(List.of(new com.waterlogistics.contract.ws.ShipTrajFrame(
+                        "413000001", 4L, 1_700_000_000_000L, 90, 600, "VALID",
+                        List.of(new com.waterlogistics.contract.ws.ShipTrajPoint(
+                                1_700_000_000_000L, 115.9, 29.7, 12, 8)))));
+        var controller = new FlightQueryController(new FlightQueryService(store), orders, logs,
+                alerts, plans, predictions);
+
+        FlightReplayResponse response = controller.replay("ORD-1");
+
+        assertEquals("ORD-1", response.orderId());
+        assertEquals("UAV-D0-1", response.taskId());
+        assertTrue(response.frames().stream().anyMatch(frame -> frame.type().equals("ship_traj")));
+        var orderFrame = response.frames().stream().filter(frame -> frame.type().equals("order_state"))
+                .findFirst().orElseThrow();
+        assertEquals(9L, ((java.util.Map<?, ?>) orderFrame.data()).get("stateVersion"));
+    }
+
+    private static LocalDateTime local(long ts) {
+        return LocalDateTime.ofInstant(Instant.ofEpochMilli(ts), ZoneId.of("Asia/Shanghai"));
+    }
+
 
     private static UavTelemetry frame(long ts, double battery) {
         return new UavTelemetry("UAV-D0-1", 115.90, 29.70, 100, 10, battery, 90, ts);

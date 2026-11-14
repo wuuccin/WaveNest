@@ -21,8 +21,8 @@ function ellipsePoints(lon, lat, along, cross, course) {
   }
   return points
 }
-export function drawShip(map, group, state, actualTrack = [], debug = false) {
-  group.clearLayers()
+export function drawShip(map, group, state, actualTrack = [], debug = false, clear = true) {
+  if (clear) group.clearLayers()
   if (!state || !Number.isFinite(state.lon) || !Number.isFinite(state.lat)) return
   const actual = actualTrack.filter(p => Number.isFinite(p?.lon) && Number.isFinite(p?.lat))
   if (actual.length > 1) {
@@ -49,7 +49,7 @@ export function drawShip(map, group, state, actualTrack = [], debug = false) {
     }
   }
   const position = systemMapPoint(state)
-  const marker = L.marker([position.lat, position.lon], { icon: L.divIcon({ className: 'ship-pin', html: '<span>船</span><b class="map-marker-label">船舶当前位置</b>', iconSize: [48, 48], iconAnchor: [24, 24] }) })
+  const marker = L.marker([position.lat, position.lon], { icon: L.divIcon({ className: 'ship-pin', html: `<span>船</span><b class="map-marker-label">${escapeHtml(state.shipName || state.mmsi || '船舶当前位置')}</b>`, iconSize: [48, 48], iconAnchor: [24, 24] }) })
   if (debug) marker.bindPopup(`<strong>船舶 ${escapeHtml(state.mmsi || state.shipId || '未知')}</strong><br>系统坐标（CGCS2000/WGS-84）<br>${position.lon.toFixed(6)}, ${position.lat.toFixed(6)}`)
   marker.addTo(group)
 }

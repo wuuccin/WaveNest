@@ -242,6 +242,8 @@ h1, h2, p { margin: 0; }
 .candidate-cards strong { color: #284e57; font-size: 11px; }
 .candidate-reasons { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; }
 .candidate-reasons li { padding: 6px 8px; border-radius: 4px; color: #75513d; background: #fff5ec; font-size: 10px; line-height: 1.4; }
+.candidate-row-reasons { margin: 3px 0 0; padding-left: 14px; color: #75513d; font-size: 10px; line-height: 1.4; }
+.candidate-result { margin: 6px 0 0; color: #284e57; font-size: 11px; line-height: 1.5; }
 .candidate-empty { color: #5b7479; font-size: 10px; }
 .state-chip, .form-status, .count-badge { display: inline-flex; align-items: center; justify-content: center; min-height: 25px; padding: 0 9px; border-radius: 999px; color: var(--teal-dark); background: var(--teal-soft); font-size: 11px; font-weight: 750; white-space: nowrap; }
 .state-chip.success { color: #267759; background: #e5f4ec; }
@@ -393,6 +395,23 @@ h1, h2, p { margin: 0; }
 .focus-intervene .intervene-grid button { min-height: 52px; padding: 0 16px; font-size: 13px; font-weight: 750; }
 .table-panel { min-height: 420px; padding: 0 20px 20px; }
 .count-badge { min-width: 45px; color: #587178; background: #eef3f3; }
+.order-filters { display: flex; gap: 12px; align-items: end; margin: 12px 0; flex-wrap: wrap; }
+.order-filters label { display: grid; gap: 5px; color: var(--muted); font-size: 11px; }
+.order-filters select { min-width: 130px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 6px; color: var(--ink); background: #fff; }
+.overview-panels { display: grid; grid-template-columns: minmax(260px, .7fr) minmax(0, 1.3fr); gap: 14px; margin: 14px 0; }
+.stats-panel, .realtime-panel { min-width: 0; padding: 15px; border: 1px solid var(--line); border-radius: 9px; background: #fff; }
+.stats-panel .kpis { display: flex; gap: 16px; justify-content: space-between; margin: 14px 0; }
+.stats-panel .kpis div { display: grid; gap: 4px; }
+.stats-panel .kpis strong { font-size: 19px; color: var(--ink); }
+.stats-panel .kpis span { font-size: 10px; color: var(--muted); }
+.stats-panel .stats-chart { height: 125px; }
+.realtime-cards { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
+.realtime-cards article { min-width: 0; padding: 10px; border: 1px solid var(--line); border-radius: 7px; }
+.realtime-cards strong, .realtime-cards small { display: block; overflow-wrap: anywhere; }
+.realtime-cards strong { margin: 5px 0; font-size: 12px; }
+.realtime-cards p, .realtime-cards small { color: var(--muted); font-size: 10px; }
+@media (max-width: 1100px) { .overview-panels { grid-template-columns: 1fr; } }
+@media (max-width: 680px) { .realtime-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .order-table-wrap { overflow: auto; border: 1px solid var(--line); border-radius: 6px; }
 .order-table { width: 100%; border-collapse: collapse; text-align: left; white-space: nowrap; }
 .order-table th { padding: 12px 14px; color: var(--muted); background: #f5f8f8; font-size: 11px; font-weight: 700; }

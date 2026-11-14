@@ -16,11 +16,11 @@ await page.route('**/api/monitor/tasks', route => route.fulfill({ json: { tasks:
   { orderId: 'ORD-02', droneId: 'UAV-02' },
   { orderId: 'ORD-EMPTY', droneId: 'UAV-EMPTY' }
 ], total: 2 } }))
-await page.route('**/api/replay/UAV-02', route => route.fulfill({ json: { frames: [
+await page.route('**/api/replay/ORD-02', route => route.fulfill({ json: { frames: [
   { type: 'drone_state', data: { uavId: 'UAV-02', lon: 114.30, lat: 30.60, battery: 80, ts: 1000 } },
   { type: 'drone_state', data: { uavId: 'UAV-02', lon: null, lat: 30.61, battery: 79, ts: 2000 } }
 ] } }))
-await page.route('**/api/replay/UAV-EMPTY', route => route.fulfill({
+await page.route('**/api/replay/ORD-EMPTY', route => route.fulfill({
   status: 404,
   contentType: 'application/json',
   body: JSON.stringify({ detail: '未找到飞行任务：UAV-EMPTY' })
@@ -35,13 +35,13 @@ try {
   assert.equal(await select.inputValue(), 'ORD-02', '下拉选中值必须是 orderId')
   assert.equal(await select.locator('option:checked').textContent(), 'ORD-02 · UAV-02')
   await page.getByText('2 条记录').waitFor()
-  assert(requests.includes('/api/replay/UAV-02'), '回放请求必须把 orderId 映射为 droneId')
+  assert(requests.includes('/api/replay/ORD-02'), '回放请求必须以订单号隔离同机多单')
   assert(!requests.some(path => path.endsWith('/records')), '不得调用未实现的记录明细端点')
 
   await select.selectOption('ORD-EMPTY')
   await page.getByText('该任务暂无飞行记录', { exact: true }).waitFor()
   assert.equal(await page.getByText(/回放读取失败/).count(), 0, '404 应呈现空态而非失败')
-  assert(requests.includes('/api/replay/UAV-EMPTY'))
+  assert(requests.includes('/api/replay/ORD-EMPTY'))
   console.log('replay browser checks passed')
 } finally {
   await page.close()
