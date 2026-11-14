@@ -134,7 +134,7 @@ class AlertDrivenRescheduleTest {
     private String dispatchedOrder() {
         // 船位取南昌赣江演示航段南昌大桥旁（T1-5 起机巢在航段两端，两巢均在 5km 内）
         predictionService.refresh(new AisMessage(
-                SHIP, "F1测试船", 115.8590, 28.6630, 5.0, 90.0, System.currentTimeMillis()));
+                SHIP, "F1测试船", 115.857937, 28.663776, 5.0, 90.0, System.currentTimeMillis()));
         OrderSubmitResponse resp = admissionService.submit(new OrderSubmitRequest(
                 SHIP, 5.5, CARGOS[(int) (orderSeq.getAndIncrement() % CARGOS.length)],
                 System.currentTimeMillis() + 3_600_000L, "URGENT"));
@@ -262,7 +262,7 @@ class AlertDrivenRescheduleTest {
     @Test
     void weatherClear_shouldWakeBacklog() {
         predictionService.refresh(new AisMessage(
-                SHIP, "F1测试船", 115.8590, 28.6630, 5.0, 90.0, System.currentTimeMillis()));
+                SHIP, "F1测试船", 115.857937, 28.663776, 5.0, 90.0, System.currentTimeMillis()));
 
         // 熔断中下单 → B3 延后语义：已受理待唤醒（不是拒单）
         gateService.trip(GateSource.AUTO);

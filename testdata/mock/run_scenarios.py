@@ -510,16 +510,23 @@ def resolve_meet_points(
     位置信息。两者同值时按契约 §6.2 视为失败，直接报错而不是静默沿用。
     """
     last = truth_points[-1]
-    prev = truth_points[-2]
     truth_lon = float(last["lon"])
     truth_lat = float(last["lat"])
 
-    north = float(last["lat"]) - float(prev["lat"])
-    east = float(last["lon"]) - float(prev["lon"])
-    norm = math.hypot(north, east)
-    if norm == 0.0:
-        raise ValueError("truth.csv 末两点重合，无法确定末段航向")
-    u_east, u_north = east / norm, north / norm
+    # 船抵达全长后可能仍有若干静止点（sog=0、经纬度不变），末两点会重合。
+    # 从尾部往前取最后一个位移非零的相邻点对定末段航向，真值会面点仍取末点。
+    u_east = None
+    u_north = None
+    for i in range(len(truth_points) - 1, 0, -1):
+        a, b = truth_points[i - 1], truth_points[i]
+        north = float(b["lat"]) - float(a["lat"])
+        east = float(b["lon"]) - float(a["lon"])
+        norm = math.hypot(north, east)
+        if norm > 0.0:
+            u_east, u_north = east / norm, north / norm
+            break
+    if u_east is None or u_north is None:
+        raise ValueError("truth.csv 全段无位移，无法确定末段航向")
     # 右转 90 度得到横向单位向量。
     v_east, v_north = u_north, -u_east
 

@@ -45,8 +45,8 @@ import org.springframework.transaction.annotation.Transactional;
 @Transactional
 class DispatchPerturbationComparisonTest {
     private static final ZoneId DB_ZONE = ZoneId.of("Asia/Shanghai");
-    private static final double SHIP_LON = 115.8590;
-    private static final double SHIP_LAT = 28.6630;
+    private static final double SHIP_LON = 115.857937;
+    private static final double SHIP_LAT = 28.663776;
     private static final double METERS_PER_LON = GeoApprox.METERS_PER_DEG
             * Math.cos(Math.toRadians(SHIP_LAT));
     private static final double BATTERY_RANGE_M = 30_000.0;

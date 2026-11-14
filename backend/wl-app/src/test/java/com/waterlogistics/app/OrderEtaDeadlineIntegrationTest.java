@@ -131,7 +131,7 @@ class OrderEtaDeadlineIntegrationTest {
     /** 喂一条 AIS，让该船有预测快照（候选距离过滤与会面求解都以真实船位为前提）。 */
     private void feedShip() {
         predictionService.refresh(new AisMessage(
-                MMSI, "ETA集成测试船", 115.8590, 28.6630, 5.0, 90.0,
+                MMSI, "ETA集成测试船", 115.857937, 28.663776, 5.0, 90.0,
                 System.currentTimeMillis()));
     }
 }

@@ -118,7 +118,7 @@ class SmokeM6M2Test {
         // 船号取用例独占值：演示应用在跑时它的仿真器会把 123456789 的 AIS 发到消息队列，
         // 会覆盖本用例手喂的船位快照，表现为与本用例无关的失败
         predictionService.refresh(new AisMessage(
-                "900000003", "冒烟测试船", 115.8590, 28.6630, 5.0, 90.0,
+                "900000003", "冒烟测试船", 115.857937, 28.663776, 5.0, 90.0,
                 System.currentTimeMillis()));
 
         // 下单（C0 自然触发：submit 发事件 → DispatchTrigger 落库＋受理
