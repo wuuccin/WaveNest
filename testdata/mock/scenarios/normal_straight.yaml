@@ -32,3 +32,4 @@ param_sources:
   tick_millis: design_assumption     # 固定 1 Hz 与零均值高斯噪声属理想化
   path_start_m: design_assumption    # s = 0 为 Live E2E 口径设定值
   中心线十三点: measured              # 016 头注：2026-11-09 天地图影像河心重取（WGS-84），影像放样可追溯
+  风突变幅度: design_assumption       # 002_sys_param 头注「尚无上游风况分布可依」

@@ -31,4 +31,5 @@ param_sources:
   tick_millis: design_assumption
   path_start_m: design_assumption
   中心线十三点: measured
+  风突变幅度: design_assumption       # 002_sys_param 头注「尚无上游风况分布可依」
   uav_battery_low_pct: design_assumption   # 家族自造阈值

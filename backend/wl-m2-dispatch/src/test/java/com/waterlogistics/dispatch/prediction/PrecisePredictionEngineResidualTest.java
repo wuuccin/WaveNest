@@ -120,18 +120,21 @@ class PrecisePredictionEngineResidualTest {
     }
 
     @Test
-    @DisplayName("τ 在栅格上轮转：连跑 400 s 应得到 60/180/300 三档，而不是清一色 60")
+    @DisplayName("τ 在栅格上轮转且队列乱序不丢探针：连跑 400 s 应得到 60/180/60/300 四档")
     void probeLags_shouldRotate() {
         PrecisePredictionEngine engine = engine();
 
         feedStraight(engine, 400, 4.115);
 
         List<ResidualSample> samples = engine.residualSamplesOf(MMSI);
-        assertEquals(3, samples.size(),
-                "400 s 内到点的探针只有三支（60、210、360 三个评估时刻），实际=" + samples.size());
+        assertEquals(4, samples.size(),
+                "400 s 内到点的探针有四支（60、210、270、360 四个评估时刻）；第 8 支探针 τ 轮转回 60，"
+                        + "评估时刻 270 s 早于队头的 690 s，遍历全队列才不会把它卡住，实际="
+                        + samples.size());
         assertEquals(60, samples.get(0).tauSec());
         assertEquals(180, samples.get(1).tauSec(), "第二支探针按栅格取 180，不该还是 60");
-        assertEquals(300, samples.get(2).tauSec(), "第三支取 300");
+        assertEquals(60, samples.get(2).tauSec(), "第 8 支探针 τ 轮转回 60，在 270 s 到点");
+        assertEquals(300, samples.get(3).tauSec(), "第三支取 300，在 360 s 到点");
     }
 
     @Test

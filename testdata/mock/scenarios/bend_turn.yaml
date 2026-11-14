@@ -30,3 +30,4 @@ param_sources:
   tick_millis: design_assumption
   path_start_m: design_assumption    # s = 1000 为 20 min 子段口径设定值
   中心线十三点: measured
+  风突变幅度: design_assumption       # 002_sys_param 头注「尚无上游风况分布可依」

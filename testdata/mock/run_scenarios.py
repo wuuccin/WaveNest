@@ -623,7 +623,8 @@ def write_truth_csv(
 ) -> list[dict[str, Any]]:
     """把 scenario.yaml 指定的 truth.csv 复制到 out/truth.csv 并返回真值点。"""
     truth_source = scenario["truth_source"]
-    src = (repo_root / truth_source).resolve()
+    # repo_root 是仓库根，而场景里的 truth_source 相对 testdata/mock/ 书写；按本文件目录解析。
+    src = (Path(__file__).resolve().parent / truth_source).resolve()
     if not src.exists():
         raise FileNotFoundError(
             f"truth.csv 不存在：{src}（罗才辉产出，契约 §6）"
