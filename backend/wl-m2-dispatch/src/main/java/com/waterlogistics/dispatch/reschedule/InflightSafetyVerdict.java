@@ -30,7 +30,7 @@ import java.util.Optional;
  * @param droneId     无人机标识
  * @param windSpeedMs 判档时的风速（m/s）
  * @param alertLevel  判档时的告警级别
- * @param reason      判档说明，写入 {@code task_log} 备注列
+ * @param reason      判档说明（进广播事件与运行日志；{@code task_log} 无备注列，不落库）
  */
 public record InflightSafetyVerdict(
         Verdict verdict,

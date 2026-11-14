@@ -2,7 +2,9 @@ package com.waterlogistics.dispatch.delivery;
 
 import com.waterlogistics.contract.mq.GoodsRecycleConfirmation;
 import com.waterlogistics.contract.state.GoodsStatus;
+import com.waterlogistics.contract.state.OrderStatus;
 import com.waterlogistics.dispatch.goods.GoodsLifecycleService;
+import com.waterlogistics.dispatch.queue.TaskQueueService;
 import com.waterlogistics.storage.entity.OrderTaskEntity;
 import com.waterlogistics.storage.entity.TaskLogEntity;
 import com.waterlogistics.storage.repository.OrderTaskMapper;
@@ -10,6 +12,8 @@ import com.waterlogistics.storage.repository.TaskLogMapper;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.EnumSet;
+import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -43,15 +47,30 @@ public class GoodsRecycleHandler {
 
     private static final String OP_TYPE_RECYCLE = "回收确认-货物已回收";
 
+    /**
+     * 回收完成后需要回写「待调度」的订单状态。
+     *
+     * <p>这四个状态是「货物随原机回巢、尚未交付」的全部可能：已派发（未起飞即中止）、
+     * 去程中、末段交接中（中止返航）、返航中（已在中止返航路上）。
+     * <b>不在此集合的一律不动订单</b>——已完成（正常交付后回收）、已拒绝／失败／异常终止
+     * 都不该被回收事件改回待调度。
+     */
+    private static final Set<OrderStatus> REQUEUE_AFTER_RECYCLE = EnumSet.of(
+            OrderStatus.DISPATCHED, OrderStatus.OUTBOUND,
+            OrderStatus.HANDOVER, OrderStatus.RETURNING);
+
     private final GoodsLifecycleService goodsLifecycleService;
     private final OrderTaskMapper orderTaskMapper;
     private final TaskLogMapper taskLogMapper;
+    private final TaskQueueService taskQueueService;
 
     public GoodsRecycleHandler(GoodsLifecycleService goodsLifecycleService,
-            OrderTaskMapper orderTaskMapper, TaskLogMapper taskLogMapper) {
+            OrderTaskMapper orderTaskMapper, TaskLogMapper taskLogMapper,
+            TaskQueueService taskQueueService) {
         this.goodsLifecycleService = goodsLifecycleService;
         this.orderTaskMapper = orderTaskMapper;
         this.taskLogMapper = taskLogMapper;
+        this.taskQueueService = taskQueueService;
     }
 
     /**
@@ -90,9 +109,45 @@ public class GoodsRecycleHandler {
         entry.setToStatus(GoodsStatus.RECYCLED.getValue());
         entry.setTs(LocalDateTime.ofInstant(Instant.ofEpochMilli(msg.ts()), DB_ZONE));
         taskLogMapper.insert(entry);
+
+        requeueAfterRecycle(order);
         log.info("落巢回收确认完成：orderId={} goodsId={} uavId={} nestId={}",
                 msg.orderId(), msg.goodsId(), msg.uavId(), msg.nestId());
         return OK;
+    }
+
+    /**
+     * 回收确认的第二步：订单回「待调度」，让《21》§8 的「落巢回收 → 重派」走得通。
+     *
+     * <p><b>不补这一步的后果</b>：中止返航／迫停他巢的单子在回收后仍停在「返航中」，
+     * {@code RescheduleService.requeueOrder} 的 {@code requireNotInFlight} 与
+     * {@link TaskQueueService#requeue} 的白名单各挡一次——同一票货永远重派不出去。
+     * 这里的写点就是 §8 那张表里「回收确认 → 订单回待调度」那一格的落点。
+     *
+     * <p><b>复用 {@link TaskQueueService#requeue} 而不是直接改状态</b>：它一并在同一事务里
+     * 清派单字段（机号／会面点）、把无人机置空闲、写「重入队」审计并发状态事件。
+     * 直接 {@code update order_task.status} 会留下「机号还绑着、机还占着」的脏行。
+     *
+     * <p>状态不在 {@link #REQUEUE_AFTER_RECYCLE} 内时只记日志、不动订单：
+     * 正常交付后（已完成）的回收不走重派。
+     */
+    private void requeueAfterRecycle(OrderTaskEntity order) {
+        OrderStatus status;
+        try {
+            status = OrderStatus.fromValue(order.getStatus());
+        } catch (RuntimeException e) {
+            log.warn("回收确认后不回写订单：状态不可解析 orderId={} status={}",
+                    order.getOrderId(), order.getStatus());
+            return;
+        }
+        if (!REQUEUE_AFTER_RECYCLE.contains(status)) {
+            log.info("回收确认后不动订单：当前状态「{}」不属中止返航路径 orderId={}",
+                    status.getValue(), order.getOrderId());
+            return;
+        }
+        taskQueueService.requeue(order.getOrderId());
+        log.info("回收确认后订单回「待调度」，等待重派：orderId={} 原状态={}",
+                order.getOrderId(), status.getValue());
     }
 
     /** 野外迫降点不接回收确认：货物不在系统设施内，须人工回收（《21》§8）。 */

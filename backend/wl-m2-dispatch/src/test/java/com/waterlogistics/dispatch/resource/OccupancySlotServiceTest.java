@@ -46,6 +46,9 @@ class OccupancySlotServiceTest {
     /** 最近一次 selectList 收到的条件包装器，供断言「查询带了哪些条件」 */
     private Wrapper<?> lastListWrapper;
 
+    /** 最近一次 selectOne 收到的条件包装器（{@code findActiveSlotByOrder} 走这条） */
+    private Wrapper<?> lastOneWrapper;
+
     private OccupancySlotService service;
 
     @BeforeAll
@@ -130,6 +133,24 @@ class OccupancySlotServiceTest {
                 "结束时刻的条件须为大于（排除已结束时隙），实得：" + lastListWrapper.getSqlSegment());
     }
 
+    /**
+     * 与 {@code activeSlots} 同源：{@code findActiveSlotByOrder} 也必须带结束时刻条件。
+     *
+     * <p>它有生产调用点（{@code CargoNestGate} 判「本单已锁巢」后跳过 {@code tryReserve}），
+     * 把过期锁当真等于锁根本没上，故单测钉住这条条件。
+     */
+    @Test
+    void findActiveSlotByOrder_shouldFilterEndedSlots() {
+        service.findActiveSlotByOrder(ORDER_ID);
+
+        assertNotNull(lastOneWrapper, "findActiveSlotByOrder 应走 selectOne 查询");
+        String sql = lastOneWrapper.getSqlSegment().toLowerCase();
+        assertTrue(sql.contains("t2"),
+                "查询须带结束时刻条件，实得：" + lastOneWrapper.getSqlSegment());
+        assertTrue(sql.contains(">"),
+                "结束时刻的条件须为大于（排除已结束时隙），实得：" + lastOneWrapper.getSqlSegment());
+    }
+
     // ───────────────────────── fake mappers ─────────────────────────
 
     private OccupancySlotMapper stubSlotMapper() {
@@ -157,6 +178,13 @@ class OccupancySlotServiceTest {
                                     .toList();
                         }
                         case "selectCount" -> 0L;
+                        case "selectOne" -> {
+                            lastOneWrapper = (Wrapper<?>) args[0];
+                            yield SLOTS.stream()
+                                    .filter(s -> ORDER_ID.equals(s.getOrderId())
+                                            && "有效".equals(s.getStatus()))
+                                    .findFirst().orElse(null);
+                        }
                         case "update" -> {
                             // release: eq slotId + eq 有效 → set 已释放。
                             // 单测同时只有一个有效占位，直接把首个「有效」占位置为「已释放」。

@@ -321,10 +321,15 @@ public class OccupancySlotService {
     }
 
     /**
-     * 按订单查其持有的<b>有效</b>占位（11-05 序号 2 · 货到巢关锁幂等）。
+     * 按订单查其持有的<b>有效且未结束</b>占位（11-05 序号 2 · 货到巢关锁幂等）。
      *
      * <p>货到巢关在派单前锁巢时隙，订单等货期间锁一直持有；唤醒重派时
      * 凭本方法复用已有锁，不重复 tryReserve（否则会把本单自己的锁计入容量）。</p>
+     *
+     * <p><b>时间条件不可省（与 {@link #activeSlots} 同源）</b>：只按 status 查，
+     * 过期时隙会被当成本单仍持有的锁。本方法有生产调用点——
+     * {@code CargoNestGate} 用它判「本单已锁巢」并<b>跳过</b> {@code tryReserve}，
+     * 一旦把过期锁当真，等于该锁根本没上；{@code CargoGateWaker} 也会复用这把不存在的锁。</p>
      *
      * @param orderId 关联订单；为空时返回空
      */
@@ -332,10 +337,12 @@ public class OccupancySlotService {
         if (orderId == null || orderId.isBlank()) {
             return Optional.empty();
         }
+        LocalDateTime now = LocalDateTime.now(DB_ZONE);
         return Optional.ofNullable(occupancySlotMapper.selectOne(
                 new LambdaQueryWrapper<OccupancySlotEntity>()
                         .eq(OccupancySlotEntity::getOrderId, orderId)
                         .eq(OccupancySlotEntity::getStatus, STATUS_ACTIVE)
+                        .gt(OccupancySlotEntity::getT2, now)
                         .last("LIMIT 1")));
     }
 
