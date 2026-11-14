@@ -14,6 +14,8 @@ import com.waterlogistics.dispatch.prediction.PredictionUpdatedEvent;
 import com.waterlogistics.dispatch.rendezvous.RendezvousPlanCommittedEvent;
 import com.waterlogistics.dispatch.taskstate.FlightPhaseAdvancer;
 import com.waterlogistics.dispatch.taskstate.FlightPhaseChangedEvent;
+import com.waterlogistics.storage.entity.DroneEntity;
+import com.waterlogistics.storage.repository.DroneMapper;
 import org.springframework.amqp.core.ExchangeTypes;
 import org.springframework.amqp.rabbit.annotation.Exchange;
 import org.springframework.amqp.rabbit.annotation.Queue;
@@ -38,16 +40,23 @@ public final class RealtimeEventBridge {
 
     /** 可为 null：单元测试按旧签名构造时不查在飞订单，{@code activeOrderId} 取 null。 */
     private final FlightPhaseAdvancer flightPhaseAdvancer;
+    private final DroneMapper droneMapper;
 
     public RealtimeEventBridge(WsPushEndpoint endpoint) {
-        this(endpoint, null);
+        this(endpoint, null, null);
+    }
+
+    public RealtimeEventBridge(WsPushEndpoint endpoint,
+            FlightPhaseAdvancer flightPhaseAdvancer) {
+        this(endpoint, flightPhaseAdvancer, null);
     }
 
     @Autowired
     public RealtimeEventBridge(WsPushEndpoint endpoint,
-            FlightPhaseAdvancer flightPhaseAdvancer) {
+            FlightPhaseAdvancer flightPhaseAdvancer, DroneMapper droneMapper) {
         this.endpoint = endpoint;
         this.flightPhaseAdvancer = flightPhaseAdvancer;
+        this.droneMapper = droneMapper;
     }
 
     /** 等状态事务提交后再发送已确认的订单视图；本层只转发。 */
@@ -91,9 +100,10 @@ public final class RealtimeEventBridge {
                     durable = "true"),
             key = TopicName.DATA_UAV_TELEMETRY))
     public void onUavTelemetry(UavTelemetry telemetry) {
+        DroneEntity drone = droneMapper == null ? null : droneMapper.selectById(telemetry.uavId());
         endpoint.publish(WsFrameType.DRONE_STATE, new DroneStateFrame(
                 telemetry.uavId(), telemetry.lon(), telemetry.lat(), telemetry.battery(),
-                null, telemetry.ts(), telemetry.heading(), activeOrderIdOf(telemetry.uavId())));
+                drone == null ? null : drone.getStatus(), telemetry.ts(), telemetry.heading(), activeOrderIdOf(telemetry.uavId())));
     }
 
     /** C5 告警产出走 alert.event；本层只做字段投影与提示语拼装。 */

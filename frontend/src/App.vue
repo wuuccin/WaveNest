@@ -8,7 +8,7 @@ import GuidedDemo from './components/GuidedDemo.vue'
 import PredictionPanel from './components/PredictionPanel.vue'
 import PlanTrackPanel from './components/PlanTrackPanel.vue'
 import { createRealtime } from './realtime'
-import { DEMO_STAGES } from './realtime/demo'
+import { DEMO_STAGES, createDemoRunner } from './realtime/demo'
 import { normalizeFrame } from './api/adapter'
 import { SCENES } from './realtime/mock'
 import { candidateAssessment } from './realtime/candidateAssessment'
@@ -55,6 +55,8 @@ const fleet = useFleetStore()
 const airspace = useAirspaceStore()
 const planTrack = usePlanTrackStore()
 const connection = realtime.status
+const demoRunner = createDemoRunner({ api, subscribe: realtime.subscribe, connected: () => connection.connection === 'WebSocket 已连接' })
+const demoState = demoRunner.state
 
 const view = computed(() => ['dashboard', 'console', 'crew', 'replay', 'guide'].includes(route.value) ? route.value : 'dashboard')
 const pageTitle = computed(() => ({ dashboard: '运行总览', console: '调度台', crew: '船员下单', replay: '任务回放', guide: '分步演示' })[view.value])
@@ -100,9 +102,9 @@ const guideRoute = computed(() => {
   return { type: 'return', points: [first, nest] }
 })
 const completedCount = computed(() => orders.orders.filter(order => order.orderStatus === '已完成').length)
-const stageIndex = computed(() => source.value === 'mock' ? sceneIndex.value : 0)
+const stageIndex = computed(() => source.value === 'mock' ? 0 : demoState.step)
 const stageTitle = computed(() => stageIndex.value > 0 ? DEMO_STAGES[stageIndex.value - 1] : '等待开始')
-const showDemoProgress = computed(() => source.value === 'mock' && sceneIndex.value > 0)
+const showDemoProgress = computed(() => source.value === 'live' && demoState.step > 0)
 const phase = computed(() => missionDrone.value?.flightPhase || '待命')
 const battery = computed(() => Number.isFinite(missionDrone.value?.battery) ? Math.round(missionDrone.value.battery) : null)
 const uncertaintyLabel = computed(() => {
@@ -130,8 +132,8 @@ const onHash = () => {
 const go = target => { location.hash = `#${target}` }
 const openConsole = focus => { consoleFocus.value = focus; go('console') }
 const stageClass = index => ({
-  done: index < stageIndex.value,
-  active: index === stageIndex.value - 1,
+  done: demoState.completed ? index < stageIndex.value : index < stageIndex.value - 1,
+  active: !demoState.completed && index === stageIndex.value - 1,
   pending: index >= stageIndex.value
 })
 const selectOrder = orderId => { selectedOrderId.value = orderId }
@@ -148,6 +150,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  demoRunner.cancel()
   guideToken++
   nestRequestToken++
   window.removeEventListener('hashchange', onHash)
@@ -203,6 +206,7 @@ function stopScreenRecording() {
 
 function selectSource(next) {
   if (source.value === next) return
+  demoRunner.cancel()
   guideToken++
   Object.assign(guide, { orderId: '', loading: false, ready: false, error: '', index: 0, waitSeconds: 0, branch: '' })
   returnGuideSteps.value = []
@@ -522,7 +526,7 @@ async function importRecording(event) {
 
       <template v-if="view === 'dashboard'">
         <section class="operations-hero" aria-label="配送调度入口">
-          <div class="operations-hero-copy"><span class="hero-kicker">无人机配送调度工作台</span><h2>从一笔订单开始，跟踪到交接完成</h2><p>船员提交物资需求后，可在这里查看订单、飞行位置和异常。分步演示会在船舶变向时让你选择后续处理方式。</p><div class="hero-buttons"><button class="hero-main-action" @click="go('crew')">＋ 新建配送订单 <span>船员入口</span></button><button class="hero-side-action" @click="startGuide">从下单开始分步演示 →</button></div></div>
+          <div class="operations-hero-copy"><span class="hero-kicker">无人机配送调度工作台</span><h2>从一笔订单开始，跟踪到交接完成</h2><p>船员提交物资需求后，可在这里查看订单、飞行位置和异常。实时一键演示会注入突变风速，并等待气象超限事件与原机无人机返航状态；订单此时可能保持去程中。</p><div class="hero-buttons"><button class="hero-main-action" @click="go('crew')">＋ 新建配送订单 <span>船员入口</span></button><button class="hero-side-action" @click="startGuide">从下单开始分步演示 →</button><button v-if="source === 'live'" class="hero-side-action" :disabled="demoState.running" @click="demoRunner.run()">{{ demoState.running ? '实时演示进行中' : '一键演示实时主线' }}</button></div><p v-if="demoState.error" role="alert">{{ demoState.error }}</p><p v-else-if="demoState.completed" role="status">后端已确认演示主线完成。</p></div>
           <div class="hero-live-card"><span class="hero-live-label">当前系统</span><strong>{{ source === 'mock' ? '离线演示' : connection.connection }}</strong><p>{{ source === 'mock' ? '正在使用本地样例数据，适合讲解流程。' : '订单、位置和告警来自本机后端服务。' }}</p><div><span>进行中订单</span><b>{{ activeCount }}</b></div><div><span>待关注告警</span><b :class="{ 'value-alert': alerts.items.length }">{{ alerts.items.length }}</b></div></div>
         </section>
         <section class="workflow-grid" aria-label="主要功能">
