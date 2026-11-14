@@ -62,14 +62,10 @@ class InterveneWireTest {
                 GateStatus.BROKEN, List.of(GateSource.MANUAL)).withConfirmation("ORD-1");
         JsonNode body = mapper.readTree(mapper.writeValueAsString(confirmed));
 
-        // 不钉字段总数：isBroken() 是既有 JavaBean 风格方法，Jackson 3 会额外序列化出
-        // "broken" 字段；本批只保证 §3.4 五个契约字段齐全且取值正确，不改动既有线格式。
-        assertTrue(body.size() >= 5);
-        assertTrue(body.has("gateStatus"));
-        assertTrue(body.has("gateSources"));
-        assertTrue(body.has("confirmed"));
-        assertTrue(body.has("message"));
-        assertTrue(body.has("orderId"));
+        // §3.4 只列五个字段；isBroken() 已 @JsonIgnore，不再多出 "broken"。
+        assertEquals(5, body.size());
+        assertEquals("熔断中", body.get("gateStatus").asText(), "§3.4：写中文取值，不写枚举名");
+        assertEquals("人工冻结", body.get("gateSources").get(0).asText(), "§3.4：写中文取值");
         assertTrue(body.get("confirmed").asBoolean());
         assertEquals("", body.get("message").asText());
         assertEquals("ORD-1", body.get("orderId").asText());
@@ -81,7 +77,9 @@ class InterveneWireTest {
         JsonNode body = mapper.readTree(mapper.writeValueAsString(
                 new DispatchGate(GateStatus.NORMAL, List.of())));
 
-        assertTrue(body.size() >= 5);
+        assertEquals(5, body.size());
+        assertEquals("正常", body.get("gateStatus").asText());
+        assertEquals(0, body.get("gateSources").size(), "正常时来源为空数组");
         assertFalse(body.get("confirmed").asBoolean());
         assertEquals("", body.get("message").asText());
         assertTrue(body.get("orderId").isNull());
