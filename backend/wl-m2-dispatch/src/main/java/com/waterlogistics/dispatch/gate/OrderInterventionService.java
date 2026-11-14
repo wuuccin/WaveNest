@@ -18,8 +18,14 @@ public interface OrderInterventionService {
     /**
      * 执行一个订单级动作。
      *
+     * <p>返回值只服务《1112》§3.4 的 {@code message} 字段：{@code null} 表示动作已完全生效；
+     * 非空表示动作已受理并留痕、但预期效果没有落地（目前只有 {@code adjust_meet}
+     * 会面点未重算成功这一种），由 {@link DispatchGateService} 转成
+     * {@code DispatchGate.withRejection} 回吐前端。状态流转类动作恒返回 {@code null}。
+     *
      * @param action  归一后的英文 action（五个订单级动作之一）
      * @param orderId 已由调用方校验非空的订单号
+     * @return {@code null} 或未生效原因（中文短句，非空串）
      */
-    void execute(String action, String orderId);
+    String execute(String action, String orderId);
 }

@@ -107,9 +107,13 @@ public class DispatchGateService {
         gateStatus = gateSources.isEmpty() ? GateStatus.NORMAL : GateStatus.BROKEN;
     }
 
-    /** 调整会面点：校验订单与状态、落干预留痕；航迹重算由序号 3 第二批接主链时挂接。 */
-    public void adjustMeet(String orderId) {
-        delegate("adjust_meet", orderId);
+    /**
+     * 调整会面点：按订单当前最新预测重算会面点（《1112》§3.2），不改订单状态。
+     *
+     * @return {@code null} 表示会面点已改成功；非空为未生效原因（供 §3.4 {@code message} 回吐）
+     */
+    public String adjustMeet(String orderId) {
+        return delegate("adjust_meet", orderId);
     }
 
     /** 撤回未起飞订单：仅 OUTBOUND 之前的五个状态可执行，落「已拒绝」。 */
@@ -132,10 +136,10 @@ public class DispatchGateService {
         delegate("manual", orderId);
     }
 
-    private void delegate(String action, String orderId) {
+    private String delegate(String action, String orderId) {
         if (orderInterventionService == null) {
             throw new IllegalStateException("订单干预出口未装配：" + action);
         }
-        orderInterventionService.execute(action, orderId);
+        return orderInterventionService.execute(action, orderId);
     }
 }
