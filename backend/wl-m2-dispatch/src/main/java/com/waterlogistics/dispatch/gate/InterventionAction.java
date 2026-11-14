@@ -17,8 +17,9 @@ import java.util.Locale;
  * 四对一映射表；{@code ABORT} 在飞叫停落「异常终止」；{@code WITHDRAW}／{@code CANCEL}
  * 落「已拒绝」。
  *
- * <p>{@code adjust_meet} 不改订单状态：请求体不含新会面点坐标，本批只做校验与
- * 干预留痕，航迹重算由序号 3 第二批接主链时挂接，不伪造 6a 航向跳变信号。
+ * <p>{@code adjust_meet} 不改订单状态：§3.1 请求体不含新会面点坐标，按「最新预测重算」
+ * 实现（{@code ManualMeetRecomputePort}），只算会面点、不重算航迹，也不伪造 6a
+ * 航向跳变信号（人工指令不走六键判定，只守会面决策窗口）。
  */
 enum InterventionAction {
 

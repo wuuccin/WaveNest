@@ -71,11 +71,12 @@ public class GateController {
             throw badRequest("该操作需要订单号");
         }
 
+        String rejection = null;
         switch (action) {
             case "trip" -> dispatchGateService.trip(source);
             case "clear" -> dispatchGateService.clear(source);
             case "reset" -> dispatchGateService.reset();
-            case "adjust_meet" -> dispatchGateService.adjustMeet(orderId);
+            case "adjust_meet" -> rejection = dispatchGateService.adjustMeet(orderId);
             case "withdraw" -> dispatchGateService.withdraw(orderId);
             case "cancel" -> dispatchGateService.cancel(orderId);
             case "abort" -> dispatchGateService.emergencyAbort(orderId);
@@ -83,7 +84,12 @@ public class GateController {
             default -> throw badRequest("未知干预操作：" + request.action()
                     + "；支持 " + InterventionAction.SUPPORTED);
         }
-        return dispatchGateService.summary().withConfirmation(orderId);
+        // 调整会面点按最新预测重算：未生效（无解／未派单／已进决策窗口／重算失败）时
+        // 仍返回 200（动作已受理并留痕），用 §3.4 的 confirmed=false + message 回吐原因，
+        // 不新增 §3.3 之外的 HTTP 错误码。
+        return rejection == null
+                ? dispatchGateService.summary().withConfirmation(orderId)
+                : dispatchGateService.summary().withRejection(rejection, orderId);
     }
 
     /**

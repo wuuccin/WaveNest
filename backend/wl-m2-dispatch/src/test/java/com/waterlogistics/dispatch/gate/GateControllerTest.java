@@ -39,15 +39,20 @@ class GateControllerTest {
     private String lastAction;
     private String lastOrderId;
 
+    /** 订单出口的返回值：{@code null} 表示动作完全生效，非空表示已受理但未生效的原因。 */
+    private String rejectionToReturn;
+
     @BeforeEach
     void setUp() {
         service = new DispatchGateService((action, orderId) -> {
             lastAction = action;
             lastOrderId = orderId;
+            return rejectionToReturn;
         });
         controller = new GateController(service);
         lastAction = null;
         lastOrderId = null;
+        rejectionToReturn = null;
     }
 
     @Test
@@ -196,6 +201,21 @@ class GateControllerTest {
             assertEquals(GateStatus.NORMAL, resp.gateStatus(),
                     entry.getKey() + " 是订单动作，不得改动闸门");
         }
+    }
+
+    @Test
+    @DisplayName("调整会面点未生效 → 200 + confirmed=false + message，不新增 §3.3 错误码")
+    void adjustMeetNotEffective_shouldBeUnconfirmedWithMessage() {
+        rejectionToReturn = "按最新预测求无解，保留原会面点";
+
+        DispatchGate resp = controller.intervene(
+                new InterveneRequest("调整会面点", "ORD-1", null));
+
+        assertEquals("adjust_meet", lastAction);
+        assertFalse(resp.confirmed(), "会面点没改成功不得回 confirmed=true");
+        assertEquals("按最新预测求无解，保留原会面点", resp.message());
+        assertEquals("ORD-1", resp.orderId());
+        assertEquals(GateStatus.NORMAL, resp.gateStatus(), "订单动作不改闸门");
     }
 
     @Test

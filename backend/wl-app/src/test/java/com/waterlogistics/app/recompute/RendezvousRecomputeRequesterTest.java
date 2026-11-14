@@ -25,6 +25,8 @@ import com.waterlogistics.dispatch.prediction.PredictionService;
 import com.waterlogistics.dispatch.prediction.PredictionSnapshot;
 import com.waterlogistics.dispatch.prediction.RecomputeDecisionGate;
 import com.waterlogistics.dispatch.prediction.RecomputeRequest;
+import com.waterlogistics.dispatch.rendezvous.ManualMeetRecomputePort;
+import com.waterlogistics.dispatch.rendezvous.ManualMeetRecomputePort.Outcome;
 import com.waterlogistics.dispatch.rendezvous.RendezvousPlanCommittedEvent;
 import com.waterlogistics.dispatch.weather.WeatherSnapshotPort;
 import com.waterlogistics.rendezvous.facade.RendezvousFacade;
@@ -38,6 +40,7 @@ import com.waterlogistics.storage.entity.OrderTaskEntity;
 import com.waterlogistics.storage.param.SysParamLoader;
 import com.waterlogistics.storage.repository.OrderTaskMapper;
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
@@ -219,6 +222,73 @@ class RendezvousRecomputeRequesterTest {
         verify(rendezvousFacade, times(1)).recompute(any(RendezvousRecalcRequest.class),
                 any(RecalcOptions.class));
         verify(orderTaskMapper, never()).update(any(), any());
+    }
+
+    @Test
+    void manualAdjustMeet_shouldRecomputeEvenWithoutHeadingJump() {
+        OrderTaskEntity order = order();
+        order.setMeetTime(LocalDateTime.now().plusHours(2));
+        when(orderTaskMapper.selectById(ORDER_ID)).thenReturn(order);
+        when(predictionService.recompute(MMSI)).thenReturn(Optional.of(snapshot()));
+        when(orderTaskMapper.update(isNull(), any())).thenReturn(1);
+        when(droneContextPort.resolve(DRONE)).thenReturn(droneContext());
+        when(rendezvousFacade.recompute(any(RendezvousRecalcRequest.class),
+                any(RecalcOptions.class))).thenReturn(solvedResult());
+
+        Outcome outcome = requester.recomputeForOrder(ORDER_ID, "人工干预-调整会面点");
+
+        assertEquals(Outcome.COMMITTED, outcome, "人工点击没航向跳变也必须重算，不得被死区挡住");
+        ArgumentCaptor<RendezvousRecalcRequest> captor =
+                ArgumentCaptor.forClass(RendezvousRecalcRequest.class);
+        verify(rendezvousFacade).recompute(captor.capture(), any(RecalcOptions.class));
+        assertEquals("人工干预-调整会面点", captor.getValue().triggerReason(),
+                "触发原因应写明人工来源");
+        assertEquals(90.0, captor.getValue().stateSnapshot().shipCogDeg(), 1e-9,
+                "无观测航向时回落快照主轴方位");
+        verify(eventPublisher).publishEvent(any(RendezvousPlanCommittedEvent.class));
+    }
+
+    @Test
+    void manualAdjustMeet_onUndispatchedOrder_shouldNotCallFacade() {
+        OrderTaskEntity order = order();
+        order.setStatus(OrderStatus.ACCEPTED_WAIT_WAKE.getValue());
+        when(orderTaskMapper.selectById(ORDER_ID)).thenReturn(order);
+
+        Outcome outcome = requester.recomputeForOrder(ORDER_ID, "人工干预-调整会面点");
+
+        assertEquals(Outcome.NOT_DISPATCHED, outcome);
+        verify(rendezvousFacade, never()).recompute(any(RendezvousRecalcRequest.class),
+                any(RecalcOptions.class));
+        verify(eventPublisher, never()).publishEvent(any());
+    }
+
+    @Test
+    void manualAdjustMeet_insideDecisionWindow_shouldStopBeforeRefresh() {
+        OrderTaskEntity order = order();
+        order.setMeetTime(LocalDateTime.now().plusSeconds(30));
+        when(orderTaskMapper.selectById(ORDER_ID)).thenReturn(order);
+
+        Outcome outcome = requester.recomputeForOrder(ORDER_ID, "人工干预-调整会面点");
+
+        assertEquals(Outcome.DEADLINE, outcome, "已进会面窗口不再挪点");
+        verify(predictionService, never()).recompute(anyString());
+    }
+
+    @Test
+    void manualAdjustMeet_noSolution_shouldKeepOldPoint() {
+        OrderTaskEntity order = order();
+        order.setMeetTime(LocalDateTime.now().plusHours(2));
+        when(orderTaskMapper.selectById(ORDER_ID)).thenReturn(order);
+        when(predictionService.recompute(MMSI)).thenReturn(Optional.of(snapshot()));
+        when(droneContextPort.resolve(DRONE)).thenReturn(droneContext());
+        when(rendezvousFacade.recompute(any(RendezvousRecalcRequest.class),
+                any(RecalcOptions.class))).thenReturn(unsolvedResult());
+
+        Outcome outcome = requester.recomputeForOrder(ORDER_ID, "人工干预-调整会面点");
+
+        assertEquals(Outcome.NO_SOLUTION, outcome);
+        verify(orderTaskMapper, never()).update(any(), any());
+        verify(eventPublisher, never()).publishEvent(any());
     }
 
     private static RecomputeRequest request() {

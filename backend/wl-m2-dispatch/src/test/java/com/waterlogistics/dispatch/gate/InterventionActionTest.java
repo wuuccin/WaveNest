@@ -125,7 +125,7 @@ class InterventionActionTest {
     }
 
     @Test
-    @DisplayName("adjust_meet 不改订单状态：目标态为 null，只留痕待第二批接重算")
+    @DisplayName("adjust_meet 不改订单状态：目标态为 null，重算由 ManualMeetRecomputePort 承接")
     void adjustMeet_shouldKeepStatus() {
         InterventionAction adjust = InterventionAction.fromNormalized("adjust_meet");
 
