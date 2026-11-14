@@ -57,6 +57,16 @@ class RecomputeClosedLoopTest {
         return new AisMessage(mmsi, "测试船", LON, LAT, sogKnots, cogDeg, ts);
     }
 
+    /**
+     * 等重算队列清空（11-14 序号 2-6 · MEDIUM.2 起重算在单线程 worker 上执行）。
+     *
+     * <p>异步化之后「请求返回」不等于「重算完成」，所以本类每个断言版本号的地方都要先等这个点。
+     * 用超时而不是 sleep 定值：慢机器上不会假红，真卡死也没法掩盖。
+     */
+    private void awaitRecompute() {
+        assertTrue(requester.flush(5_000L), "重算队列未在 5 s 内处理完（worker 可能已卡死）");
+    }
+
     @Test
     @DisplayName("★ F3 判据：航向跳变 → 发请求 → 快照重算（版本 +1）→ 产生更新事件")
     void courseJump_shouldRecomputeSnapshotAndPublishEvent() {
@@ -66,6 +76,7 @@ class RecomputeClosedLoopTest {
 
         // 90° 跳变：本版 v2 → 发信号 → 回跳重算出 v3
         service.refresh(ais("413000001", 8.0, 90.0, T0 + 1000L));
+        awaitRecompute();
 
         assertEquals(1, requester.requestCount(), "跳变应产生 1 次重算请求");
         assertEquals(3, service.snapshotOf("413000001").orElseThrow().version(),
@@ -80,6 +91,7 @@ class RecomputeClosedLoopTest {
     void publishedVersions_shouldBeMonotonic() {
         service.refresh(ais("413000001", 8.0, 0.0, T0));
         service.refresh(ais("413000001", 8.0, 90.0, T0 + 1000L));
+        awaitRecompute();
 
         List<Long> versions = events.stream().map(event -> event.frame().version()).toList();
         assertEquals(List.of(1L, 2L, 3L), versions);
@@ -90,6 +102,7 @@ class RecomputeClosedLoopTest {
     void recompute_shouldNotEmitAnotherRequest() {
         service.refresh(ais("413000001", 8.0, 0.0, T0));
         service.refresh(ais("413000001", 8.0, 90.0, T0 + 1000L));
+        awaitRecompute();
 
         assertEquals(1, requester.requestCount(),
                 "重算走的是不回发信号的路径；若回发，这里会变成 2 并可能继续增长");
@@ -100,6 +113,7 @@ class RecomputeClosedLoopTest {
     void recompute_shouldRebuildFromLatestObservation() {
         service.refresh(ais("413000001", 8.0, 45.0, T0));
         service.refresh(ais("413000001", 8.0, 135.0, T0 + 1000L));
+        awaitRecompute();
 
         PredictionSnapshot afterRecompute = service.snapshotOf("413000001").orElseThrow();
         assertEquals(T0 + 1000L, afterRecompute.t0Ms(), "重算用的时标取最新观测，不取首帧");
@@ -144,6 +158,7 @@ class RecomputeClosedLoopTest {
 
         assertDoesNotThrow(() -> failing.refresh(ais("413000001", 8.0, 0.0, T0)));
         assertDoesNotThrow(() -> failing.refresh(ais("413000001", 8.0, 90.0, T0 + 1000L)));
+        awaitRecompute();
 
         assertEquals(1, requester.requestCount(), "请求照常留痕");
         assertEquals(2, failing.snapshotOf("413000001").orElseThrow().version(),

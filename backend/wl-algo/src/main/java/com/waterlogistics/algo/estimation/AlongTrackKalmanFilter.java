@@ -212,6 +212,33 @@ public final class AlongTrackKalmanFilter {
         return vAlongMs;
     }
 
+    /**
+     * 平移弧长原点（重锚）：<b>只改 {@code s}</b>，不动速度、协方差与新息。
+     *
+     * <p><b>什么时候需要</b>：参考折线在尾部重建后，同一个物理点在新折线上的弧长与旧折线相差
+     * 一个常量 {@code Δs}。滤波器里存的是<b>旧坐标</b>下的 {@code s}，而之后的观测按<b>新坐标</b>
+     * 投影；不平移就等于把「换了一把尺子」当成「船瞬移了 Δs 米」。
+     *
+     * <p><b>为什么平移就够了</b>：{@code s} 是坐标，{@code v_s} 与 {@code P_ss}／{@code P_sv}／
+     * {@code P_vv} 是物理状态的估计，与坐标原点无关。平移后下一次 {@code update} 的新息
+     * {@code z = s_obs − s⁻} 才是同一个坐标系里的差。
+     *
+     * <p><b>为什么不能改用 {@link #initialize}</b>：那会按 {@code σ_pos} 把协方差重置回初值，
+     * 等于把「已经收敛了几十分钟的不确定度」当作刚初始化——预测会在重锚瞬间变得过度自信，
+     * 而这正是 {@code 2026-10-30} 偏差报告怀疑的沿程塌陷来源。
+     *
+     * @param deltaS 新坐标下的弧长减去旧坐标下的弧长，m（可为负）
+     * @throws IllegalStateException    滤波器尚未初始化
+     * @throws IllegalArgumentException 平移量非有限数
+     */
+    public void shiftAlongOrigin(double deltaS) {
+        if (!Double.isFinite(deltaS)) {
+            throw new IllegalArgumentException("弧长平移量必须为有限值：" + deltaS);
+        }
+        requireInitialized();
+        s += deltaS;
+    }
+
     /** 当前弧长方差 {@code P_ss}。 */
     public double varianceS() {
         return pSS;
