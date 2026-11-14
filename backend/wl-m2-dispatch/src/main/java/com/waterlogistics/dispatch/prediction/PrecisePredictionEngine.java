@@ -576,13 +576,15 @@ public class PrecisePredictionEngine implements ResidualSampleSource {
         long tObs = observation.ts();
         WaterwayGeometry.Projection measured = null;
 
-        while (!state.probes.isEmpty()) {
-            PredictionProbe probe = state.probes.peekFirst();
+        // τ 按 {60,180,300,600,900,1200,1800} 轮转，scheduleProbe 一律 addLast，
+        // 探针评估时刻并非升序；须遍历全队列，未到点者留在队列，不能因队头未到点就中断。
+        java.util.Iterator<PredictionProbe> iterator = state.probes.iterator();
+        while (iterator.hasNext()) {
+            PredictionProbe probe = iterator.next();
             if (probe.evalAtMs() > tObs) {
-                // 队列按评估时刻升序：队头还没到点，后面的更不会到
-                break;
+                continue;
             }
-            state.probes.removeFirst();
+            iterator.remove();
             if (probe.geometry() != state.geometry) {
                 continue;
             }
