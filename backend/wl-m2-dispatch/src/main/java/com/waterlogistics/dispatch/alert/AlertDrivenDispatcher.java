@@ -166,7 +166,7 @@ public class AlertDrivenDispatcher {
         switch (type) {
             case DEVIATION -> handleDeviation(message);
             case LOW_BATTERY, LOST_LINK -> handleHomecoming(message);
-            case WEATHER_EXCEED -> handleWeather(message);
+            case WEATHER_EXCEED -> handleInflightSafety(message);
             case LINK_ERROR -> log.info(
                     "链路异常告警无订单侧动作：eventId={} orderId={}",
                     message.eventId(), message.orderId());
@@ -177,7 +177,7 @@ public class AlertDrivenDispatcher {
     }
 
     /** 将气象超限告警交给在飞安全复核生产入口，并沿用事件占位的去重语义。 */
-    private void handleWeather(AlertEventMessage message) {
+    private void handleInflightSafety(AlertEventMessage message) {
         if (!claimEvent(message.eventId())) {
             log.info("同一气象告警事件已复核过，去重跳过：eventId={}", message.eventId());
             return;
