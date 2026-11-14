@@ -134,6 +134,34 @@ class MonitorClosureTest {
     }
 
     @Test
+    @DisplayName("★ MEDIUM.6 / MEDIUM.7：统计走 GROUP BY 聚合，不再把整表搬进 JVM 再计数")
+    void statistics_shouldAggregateInSql() {
+        AtomicReference<String> capturedSql = new AtomicReference<>();
+        // 只截 SQL、不连库：JdbcTemplate 的 query(String, RowCallbackHandler) 非 final，可覆写
+        org.springframework.jdbc.core.JdbcTemplate jdbcTemplate =
+                new org.springframework.jdbc.core.JdbcTemplate() {
+                    @Override
+                    public void query(String sql,
+                            org.springframework.jdbc.core.RowCallbackHandler rch) {
+                        capturedSql.set(sql);
+                    }
+                };
+        MonitorQueryService service = new MonitorQueryService(
+                orderTaskMapper(), taskLogMapper(), jdbcTemplate);
+
+        service.statistics();
+
+        String sql = capturedSql.get().toUpperCase(java.util.Locale.ROOT);
+        assertTrue(sql.contains("GROUP BY"),
+                "按状态计数必须在库里聚合，不是把每行取回来在内存里数：" + sql);
+        assertTrue(sql.contains("COUNT("), "计数交给 SQL：" + sql);
+        assertTrue(sql.contains("MAX(CREATE_TIME)"),
+                "最后下单时刻同样交给 SQL，避免为了让 Java 取最大值而全表搬运：" + sql);
+        assertTrue(!sql.contains("LIMIT"),
+                "统计要的是全表聚合结果，不是一页——这里加 LIMIT 会算出假数字");
+    }
+
+    @Test
     @DisplayName("★ MEDIUM.9：内存储留痕按订单数封顶，不随历史订单无限增长")
     void taskLogRecorder_shouldBoundTrackedOrders() {
         TaskLogRecorder recorder = new TaskLogRecorder();
