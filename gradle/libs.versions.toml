@@ -12,6 +12,8 @@ netty = "4.2.19.Final"
 lombok = "1.18.48"
 # MySQL 连接器 9.x 对应 MySQL 8.0/8.4 服务器，与 compose 起的 8.0 匹配。
 mysql-connector = "9.7.0"
+# Jackson 3 的注解包：tools.jackson:jackson-bom 3.1.5 的统一约束值为 2.21，此处与之对齐
+jackson-annotations = "2.21"
 
 [libraries]
 # Spring Boot 4.x 三处差异：starter 名 webmvc（非 web）、Jackson 3 包名 tools.jackson、
@@ -26,6 +28,8 @@ mybatis-plus-spring-boot4-starter = { module = "com.baomidou:mybatis-plus-spring
 paho-mqttv3-client = { module = "org.eclipse.paho:org.eclipse.paho.client.mqttv3", version.ref = "paho" }
 netty-all = { module = "io.netty:netty-all", version.ref = "netty" }
 lombok = { module = "org.projectlombok:lombok", version.ref = "lombok" }
+# Jackson 3 的枚举中文取值注解（契约 §3.4 要求 getValue() 中文上线）；包名仍是 com.fasterxml.jackson.annotation
+jackson-annotations = { module = "com.fasterxml.jackson.core:jackson-annotations", version.ref = "jackson-annotations" }
 mysql-connector-j = { module = "com.mysql:mysql-connector-j", version.ref = "mysql-connector" }
 
 [bundles]

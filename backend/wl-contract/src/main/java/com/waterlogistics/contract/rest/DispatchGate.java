@@ -1,5 +1,6 @@
 package com.waterlogistics.contract.rest;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import java.util.List;
 
 /**
@@ -41,7 +42,8 @@ public record DispatchGate(
         return new DispatchGate(gateStatus, gateSources, false, reason, actionOrderId);
     }
 
-    /** 闸门是否处于熔断中 */
+    /** 闸门是否处于熔断中（内部派生方法，不进 JSON：§3.4 只列五个字段） */
+    @JsonIgnore
     public boolean isBroken() {
         return gateStatus == GateStatus.BROKEN;
     }
