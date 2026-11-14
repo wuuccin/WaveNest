@@ -157,7 +157,7 @@ class CargoGateIntegrationTest {
     @DisplayName("货未到巢 → 已受理待唤醒+WAIT_CARGO+持锁；cargo-ready 后 waker 放行")
     void cargoGate_lateCargo_waitsThenReleases() {
         predictionService.refresh(new AisMessage(
-                SHIP, "货到巢关测试船", 115.8590, 28.6630, 5.0, 90.0,
+                SHIP, "货到巢关测试船", 115.857937, 28.663776, 5.0, 90.0,
                 System.currentTimeMillis()));
         insertNest();
         String orderId = insertWaitingOrder("NORMAL", LocalDateTime.now().plusHours(2),
@@ -176,7 +176,8 @@ class CargoGateIntegrationTest {
         assertThat(activeSlotOf(orderId)).as("等货期间应持有巢时隙锁").isNotNull();
 
         // cargo-ready 到达（卢肄文序号 1 端点的 service 入口）→ 轮询放行
-        cargoReadyService.markReady(orderId);
+        // 登记必须带货物实际到达的巢编号：后端要与订单记的货巢比对，一致才放行
+        cargoReadyService.markReady(orderId, NEST);
         cargoGateWaker.tick();
 
         OrderTaskEntity released = orderTaskMapper.selectById(orderId);
@@ -240,8 +241,8 @@ class CargoGateIntegrationTest {
         OrderTaskEntity e = new OrderTaskEntity();
         e.setOrderId("T-CG-" + UUID.randomUUID().toString().substring(0, 8));
         e.setShipMmsi(SHIP);
-        e.setShipLon(new BigDecimal("115.8590"));
-        e.setShipLat(new BigDecimal("28.6630"));
+        e.setShipLon(new BigDecimal("115.857937"));
+        e.setShipLat(new BigDecimal("28.663776"));
         e.setGoodsWeight(new BigDecimal("5.5"));
         e.setGoodsType("医疗物资");
         e.setCreateTime(created);

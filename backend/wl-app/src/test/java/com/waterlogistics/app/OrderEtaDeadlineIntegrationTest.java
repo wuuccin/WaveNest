@@ -4,10 +4,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.waterlogistics.contract.mq.AisMessage;
 import com.waterlogistics.contract.state.OrderStatus;
+import com.waterlogistics.dispatch.order.CargoReadyService;
 import com.waterlogistics.dispatch.order.OrderAdmissionService;
 import com.waterlogistics.dispatch.order.OrderSubmitRequest;
 import com.waterlogistics.dispatch.order.OrderSubmitResponse;
 import com.waterlogistics.dispatch.prediction.PredictionService;
+import com.waterlogistics.dispatch.queue.CargoGateWaker;
 import com.waterlogistics.dispatch.taskstate.FlightPhaseAdvancer;
 import com.waterlogistics.storage.entity.OrderTaskEntity;
 import com.waterlogistics.storage.param.SysParamLoader;
@@ -34,7 +36,9 @@ import org.springframework.transaction.annotation.Transactional;
  * <p>与 {@link SmokeM6M2Test} 同一套夹具口径：关仿真流、自喂船位，避免仿真覆盖快照。
  */
 @SpringBootTest(properties = {"wavenest.m2.flight-advance-enabled=false",
-        "wavenest.sim.enabled=false"})
+        "wavenest.sim.enabled=false",
+        // 货到巢关的后台轮询会与断言抢同一批订单，本类自己按需驱动放行
+        "wavenest.m2.cargo-gate-poll-enabled=false"})
 @Transactional
 class OrderEtaDeadlineIntegrationTest {
 
@@ -53,6 +57,10 @@ class OrderEtaDeadlineIntegrationTest {
     private FlightPhaseAdvancer flightPhaseAdvancer;
     @Autowired
     private SysParamLoader sysParamLoader;
+    @Autowired
+    private CargoReadyService cargoReadyService;
+    @Autowired
+    private CargoGateWaker cargoGateWaker;
 
     @Test
     @DisplayName("★ 不填期望送达时间 → 受理；deadline 与 eta_ts 均由系统算出并落库")
@@ -86,7 +94,13 @@ class OrderEtaDeadlineIntegrationTest {
         OrderSubmitResponse resp = admissionService.submit(new OrderSubmitRequest(
                 MMSI, 5.5, "医疗物资", null, "URGENT"));
         assertThat(resp.accepted()).isTrue();
-        // D-01：未指定货巢的订单建行即「已就绪」，主链不得依赖手工 markReady 放行
+        // 系统下单时刻选定货巢 → 货物建行为「未就绪」→ 登记到巢并由轮询放行后才派发，
+        // 派发之后飞行阶段推进器才有阶段可推
+        OrderTaskEntity submitted = orderTaskMapper.selectById(resp.orderId());
+        if (submitted.getCargoNestId() != null && !submitted.getCargoNestId().isBlank()) {
+            cargoReadyService.markReady(resp.orderId(), submitted.getCargoNestId());
+            cargoGateWaker.tick();
+        }
 
         // 把会面时刻回拨到已过时刻，让飞行阶段推进器一次补记完整飞行
         OrderTaskEntity row = orderTaskMapper.selectById(resp.orderId());
@@ -117,7 +131,7 @@ class OrderEtaDeadlineIntegrationTest {
     /** 喂一条 AIS，让该船有预测快照（候选距离过滤与会面求解都以真实船位为前提）。 */
     private void feedShip() {
         predictionService.refresh(new AisMessage(
-                MMSI, "ETA集成测试船", 115.8590, 28.6630, 5.0, 90.0,
+                MMSI, "ETA集成测试船", 115.857937, 28.663776, 5.0, 90.0,
                 System.currentTimeMillis()));
     }
 }

@@ -38,6 +38,14 @@ import java.util.HashMap;
  * 而真正决定这架机来不来得及的是「从巢飞到货点取货」这段。有货点用货点，
  * 没给货点（旧口径调用方）才退回船位——见 {@link CandidateInput#distanceBaseLon()}。
  *
+ * <h3>★ 货巢已定分支：组合固定为「已定货巢 ＋ 任一空闲机」</h3>
+ * <p>货巢由系统在下单时刻选定并落库后，{@code cargoNestId} 与货点坐标同时可用，
+ * 此时走单独一条分支：外层只枚举已定货巢一个巢（装货点不是候选生成的自由变量），
+ * 距离语义改为「机归属巢到装货点」，这段距离就是空机转场段，会面求解按它算
+ * 转场时长，电量判定按它估能耗；它不设硬闸，能不能赶上由求解判定、够不够电由
+ * 电量闸判定。排序在距离相同的情况下按「机归属巢＝装货巢」优先、
+ * 再按无人机编号升序。货巢未定时走原有的巢乘机双层枚举，行为不变。
+ *
  * <h3>★ 输入全部无效时抛而不是返回空</h3>
  * <p>{@code nests} 或 {@code drones} 为空时返回空列表（调用方已在上游判过，此处只是
  * 不制造异常）；<b>货巢已指定却查不到坐标</b>（{@link CandidateInput#hasUnresolvedCargoNest()}）
@@ -126,7 +134,10 @@ public class CandidateGenerator {
             // 已对 ship_lon/lat 做过快速失败守卫，能走到这里说明是旧口径调用方。
             return List.of();
         }
-
+        if (input.hasCargoPoint()) {
+            // 货巢已定且坐标可解析：走「装货点固定」分支，组合固定为「已定货巢 + 任一空闲机」。
+            return generateWithFixedCargoNest(input, params);
+        }
         List<CandidateCombo> out = new ArrayList<>();
         int seq = 0;
         // ★ 外层巢、内层机（11-05）：候选数＝巢×机可行数，不再是机数
@@ -181,6 +192,87 @@ public class CandidateGenerator {
                 return byDist;
             }
             return Boolean.compare(!isHomeNestCombo(input, a), !isHomeNestCombo(input, b));
+        });
+        return out;
+    }
+
+    /**
+     * 货巢已定分支：组合固定为「已定货巢 ＋ 任一空闲无人机」。
+     *
+     * <p><b>为什么外层只枚举一个巢</b>：货巢是装货点，由系统在下单时刻选定并落库，
+     * 不是候选生成的自由变量。外层再枚举其它巢，产出的组合起点与求解起点
+     * （{@code resolveStartNest} 取订单货巢）就会指向不同的巢，求解时组合被丢弃。
+     *
+     * <p><b>为什么距离改成「机归属巢到装货点」</b>：这一段正是空机转场段，
+     * 会面求解按它算转场时长与起飞时刻，电量判定也按它估能耗。
+     * 若沿用旧的「候选巢到货点」口径，外层只剩一个巢，距离恒为零，
+     * 转场段与能耗都会凭空消失。
+     *
+     * <p><b>为什么这段距离不设硬闸</b>：转场能不能赶上由会面求解判定，
+     * 电量够不够由电量闸判定（耗电随距离增长，远距离机自然被电量闸刷掉）。
+     * 若在这里再加一道距离闸，选巢侧就必须同步加一条「有机能赶到」的判据，
+     * 两处口径一旦漂移，就会选出一个产不出任何组合的货巢，订单从下单起就卡在调度中。
+     *
+     * <p><b>为什么机的归属巢坐标缺失就不产出该机</b>：算不出转场距离的组合，
+     * 电量闸与时限闸都失去依据。与其产出一个距离为零的假组合，不如不产出。
+     */
+    private List<CandidateCombo> generateWithFixedCargoNest(CandidateInput input, Params params) {
+        CandidateInput.NestView cargoNest = null;
+        Map<String, CandidateInput.NestView> nestById = new HashMap<>();
+        for (CandidateInput.NestView nest : input.nests()) {
+            if (nest.nestId() != null) {
+                nestById.put(nest.nestId(), nest);
+            }
+            if (nest.nestId() != null && nest.nestId().equals(input.cargoNestId())) {
+                cargoNest = nest;
+            }
+        }
+        if (cargoNest == null) {
+            // 货巢坐标可解析但该巢不在本轮可用巢列表里：巢不可用，不产出组合。
+            return List.of();
+        }
+        if (!cargoNest.hasFreeSlotFor()) {
+            return List.of();
+        }
+
+        List<CandidateCombo> out = new ArrayList<>();
+        int seq = 0;
+        for (CandidateInput.DroneView d : input.drones()) {
+            if (!"空闲".equals(d.status())) {
+                continue;
+            }
+            if (d.hasBattery() && d.battery() < params.minBatteryPercent()) {
+                continue;
+            }
+            if (d.hasMaxPayload() && d.maxPayloadKg() < input.payloadKg()) {
+                continue;
+            }
+            if (!cargoNest.allowedTypes().isEmpty() && !cargoNest.allowedTypes().contains(d.type())) {
+                continue;
+            }
+            CandidateInput.NestView home = nestById.get(d.nestId());
+            if (home == null || !isUsablePoint(home.lon(), home.lat())) {
+                continue;
+            }
+            double distKm = haversineKm(home.lon(), home.lat(), input.cargoLon(), input.cargoLat());
+            seq++;
+            out.add(new CandidateCombo(
+                    "CMB-" + String.format("%03d", seq),
+                    d.type(), cargoNest.nestId(), d.droneId(),
+                    round2(distKm), d.battery(),
+                    d.windLimitMs(), d.cruiseSpeedMs(), cargoNest));
+        }
+        // 距离升序；同距离时「机归属巢＝装货巢」的组合优先，再按无人机编号升序保证确定性
+        out.sort((a, b) -> {
+            int byDist = Double.compare(a.distKm(), b.distKm());
+            if (byDist != 0) {
+                return byDist;
+            }
+            int byHome = Boolean.compare(!isHomeNestCombo(input, a), !isHomeNestCombo(input, b));
+            if (byHome != 0) {
+                return byHome;
+            }
+            return a.droneId().compareTo(b.droneId());
         });
         return out;
     }

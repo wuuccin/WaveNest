@@ -4,6 +4,7 @@ import com.waterlogistics.algo.measurement.TelemetryCleaner;
 import com.waterlogistics.monitor.detect.DetectionOrchestrator;
 import com.waterlogistics.monitor.detect.DetectionSample;
 import com.waterlogistics.monitor.store.FlightRecordStore;
+import com.waterlogistics.monitor.taskstate.TelemetryTaskStateService;
 import com.waterlogistics.monitor.track.FlightContextProvider;
 import com.waterlogistics.monitor.track.FlightPointSink;
 import com.waterlogistics.monitor.track.FlightTracker;
@@ -52,6 +53,7 @@ public class UavTelemetryListener {
     private final FlightContextProvider flightContextProvider;
     private final FlightTracker flightTracker;
     private final FlightPointSink flightPointSink;
+    private final TelemetryTaskStateService taskStateService;
 
     @Autowired
     public UavTelemetryListener(TelemetryService telemetryService,
@@ -59,13 +61,15 @@ public class UavTelemetryListener {
                                 FlightRecordStore flightRecordStore,
                                 FlightContextProvider flightContextProvider,
                                 FlightTracker flightTracker,
-                                FlightPointSink flightPointSink) {
+                                FlightPointSink flightPointSink,
+                                TelemetryTaskStateService taskStateService) {
         this.telemetryService = telemetryService;
         this.detectionOrchestrator = detectionOrchestrator;
         this.flightRecordStore = flightRecordStore;
         this.flightContextProvider = flightContextProvider;
         this.flightTracker = flightTracker;
         this.flightPointSink = flightPointSink;
+        this.taskStateService = taskStateService;
     }
 
     /** Compatibility constructor for isolated tests without a database flight context. */
@@ -73,7 +77,18 @@ public class UavTelemetryListener {
                                 DetectionOrchestrator detectionOrchestrator,
                                 FlightRecordStore flightRecordStore) {
         this(telemetryService, detectionOrchestrator, flightRecordStore,
-                FlightContextProvider.NONE, new FlightTracker(), FlightPointSink.NONE);
+                FlightContextProvider.NONE, new FlightTracker(), FlightPointSink.NONE, null);
+    }
+
+    /** Compatibility constructor for isolated tracking tests. */
+    public UavTelemetryListener(TelemetryService telemetryService,
+                                DetectionOrchestrator detectionOrchestrator,
+                                FlightRecordStore flightRecordStore,
+                                FlightContextProvider flightContextProvider,
+                                FlightTracker flightTracker,
+                                FlightPointSink flightPointSink) {
+        this(telemetryService, detectionOrchestrator, flightRecordStore,
+                flightContextProvider, flightTracker, flightPointSink, null);
     }
 
     /**
@@ -111,6 +126,9 @@ public class UavTelemetryListener {
             // rendezvous baseline, not from the future planned-flight polyline.
             var measurement = context == null ? null : flightTracker.measure(
                     state, context.route(), context.landing(), false);
+            if (taskStateService != null) {
+                taskStateService.onTelemetry(state, context, measurement);
+            }
 
             // 4. 组装检测样本（missionActive 暂由遥测存在即视为在飞，
             //    后续与 C0 派发状态对齐后由任务状态机供值）

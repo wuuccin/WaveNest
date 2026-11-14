@@ -103,6 +103,9 @@ public record CandidateInput(
      * <p>单点收敛在这里，避免生成端与其它使用方各写一遍三元判断而分叉。
      * <b>注意</b>：{@link #hasUnresolvedCargoNest()} 为 {@code true} 时调用方应先短路返回空，
      * 不要用本方法的返回值当「船位兜底」。
+     *
+     * <p>货巢已定（{@link #hasCargoPoint()} 为 {@code true}）时，本方法只服务于旧分支；
+     * 货巢已定分支的距离基准是「机归属巢到装货点」，不使用本方法。
      */
     public double distanceBaseLon() {
         return hasCargoPoint() ? cargoLon : pickupLon;

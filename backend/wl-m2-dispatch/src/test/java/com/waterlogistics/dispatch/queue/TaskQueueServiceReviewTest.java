@@ -7,6 +7,7 @@ import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.waterlogistics.contract.rest.WaitReason;
 import com.waterlogistics.dispatch.gate.DispatchGateService;
+import com.waterlogistics.dispatch.order.OrderStateChangedEvent;
 import com.waterlogistics.storage.entity.DroneEntity;
 import com.waterlogistics.storage.entity.OrderTaskEntity;
 import com.waterlogistics.storage.entity.TaskLogEntity;
@@ -15,6 +16,7 @@ import com.waterlogistics.storage.repository.OrderTaskMapper;
 import com.waterlogistics.storage.repository.TaskLogMapper;
 import java.lang.reflect.Proxy;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
@@ -103,6 +105,26 @@ class TaskQueueServiceReviewTest {
 
         assertEquals(WaitReason.WAIT_RESOURCE.getCode(), order.getWaitReason());
         assertEquals(1, gate.releaseCalls, "置 WAIT_RESOURCE 前必须释放巢时隙锁");
+    }
+
+    @Test
+    @DisplayName("状态流转帧带货巢：订单视图里不能把订单上的货巢抹空")
+    void startDispatch_publishedViewKeepsCargoNest() {
+        OrderTaskEntity order = order("待调度");
+        order.setCargoNestId("NEST-A");
+        OrderTaskMapper orderTaskMapper = stubOrderTaskMapper(order, 1);
+        List<OrderStateChangedEvent> published = new ArrayList<>();
+        TaskQueueService service = new TaskQueueService(orderTaskMapper, stubTaskLogMapper(),
+                new DispatchGateService(), null,
+                event -> published.add((OrderStateChangedEvent) event),
+                new FixedGate(CargoNestGate.Decision.WAIT_CARGO));
+
+        service.startDispatch(ORDER_ID);
+
+        assertEquals(1, published.size(), "状态流转应发布一帧");
+        assertEquals("NEST-A", published.get(0).view().cargoNestId(),
+                "状态流转帧必须带订单上的货巢：不带就会把建单时选定的货巢抹成空，"
+                        + "前端显示「未指定货巢」，登记货物到巢的入口随之消失");
     }
 
     // ───────────────────────── stubs ─────────────────────────

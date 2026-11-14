@@ -385,8 +385,10 @@ public class TaskQueueService {
         taskLogMapper.insert(log);
 
         long version = stateVersion(order.getOrderId(), log.getLogId());
+        // 货巢必须带上：状态流转帧是订单视图的增量来源，不带就会把建单时选定的货巢抹成空，
+        // 前端据此显示「未指定货巢」，登记货物到巢的入口也随之消失
         OrderView view = new OrderView(order.getOrderId(), to, eventTs, version,
-                effectiveWaitReason, null, null, null);
+                effectiveWaitReason, null, null, null, null, order.getCargoNestId());
         eventPublisher.publishEvent(new OrderStateChangedEvent(view));
 
         // MEDIUM.54：订单进入终态/已完成后移除 fallback 键，防 map 无限增长

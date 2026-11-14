@@ -1,0 +1,36 @@
+# =====================================================================
+# 场景家族 6/6：cargo_late（货物晚到）
+# 用途：20 min 离线子段，货物就绪时延 cargo_ready_delay_sec 后订单才可派机，
+#       考察 WaitReason.WAIT_CARGO 路径——注意 WAIT_CARGO 不进 orderTimeline
+#       （契约 §8），order_state 不出现「等待装货」状态词。
+# 时延：cargo_ready_delay_sec = 600（s），家族自造值，标 design_assumption。
+# 船侧参数与 normal 家族一致；扰动在货物侧，不在船侧。
+# 复跑：同 seed 复跑会撞唯一键，先清表或换 pred_version（契约 §9）。
+# =====================================================================
+family: cargo_late
+seed: 6
+mode: offline
+t0_ms: 1794268800000
+path_start_m: 1000.0
+duration_sec: 1200
+speed_limits_ms: "0,2000,4.5;2000,4000,4.5;4000,6003.4,2.5"
+speed_profile: normal
+tick_millis: 1000
+truth_source: truth/cargo_late.csv
+noise_deg: 0.00005
+mmsi: "T6"
+pred_version: 11090006
+cargo_ready_delay_sec: 600    # 货物就绪时延（s），家族自造值
+param_sources:
+  sog_ms: design_assumption
+  speed_limits_ms: design_assumption
+  speed_profile: design_assumption
+  noise_deg: design_assumption
+  sigmaEM: design_assumption
+  tauESec: design_assumption
+  alphaAlongMs: design_assumption
+  tick_millis: design_assumption
+  path_start_m: design_assumption
+  中心线十三点: measured
+  风突变幅度: design_assumption       # 002_sys_param 头注「尚无上游风况分布可依」
+  cargo_ready_delay_sec: design_assumption   # 家族自造时延

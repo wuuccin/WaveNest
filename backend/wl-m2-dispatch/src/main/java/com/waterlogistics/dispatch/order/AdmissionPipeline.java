@@ -653,7 +653,7 @@ public final class AdmissionPipeline {
     // ───────────── 判据细节 ─────────────
 
     /**
-     * 重复单：同<b>货巢</b>（或同 {@code mmsi}）＋ 同 {@code cargoType} ＋ 重量差
+     * 重复单：同<b>船</b>（且同货巢）＋ 同 {@code cargoType} ＋ 重量差
      * ≤ {@code weightTolKg}，且下单时间落在 {@code dupWindowSec} 内的既有<b>非终止态</b>订单。
      *
      * <h3>11-05 序号 2：判据由「同 MMSI ＋ 同货型」改为「同货巢 ＋ 同货型 ＋ 时间窗」</h3>
@@ -661,9 +661,17 @@ public final class AdmissionPipeline {
      * 船只是承运方。按 MMSI 判会漏掉真正的一批货重复提交（换一条船下单就绕过判据），
      * 又会把「同一条船为两个不同巢的两批货下单」误判成重复。
      *
-     * <p><b>为什么未指定货巢时退回按 MMSI 判</b>：{@code cargoNestId} 可空（＝取离船最近巢），
-     * 两个都没指定的单在数据上是「同货巢」——若直接按 {@code null == null} 判重，
-     * 所有不填货巢的同货型订单都会被判成重复单，等于把正常下单堵死。退回按船判是保守口径：
+     * <h3>货巢决策归属改造后：判重键带回船，货巢不再单独成立</h3>
+     * <p>货巢已由系统在下单时刻选定，「同巢」不再是一批货的标识，而是系统按离船距离做的
+     * 物流安排——同一座巢同时服务多条船是常态（货就放在那座巢上，谁下单都从那座巢取货）。
+     * 按巢单独判重会把不同船的两笔不同订单判成重复，正常订单被拒。因此判重键取
+     * 「同船 ＋ 同货型 ＋ 重量 ＋ 时间窗」，货巢参与比对但不再单独成立：
+     * 同船不同巢仍不是重复（同一船可为两个巢的两批货下单），本单未指定货巢时按船判。
+     * 跨船重复提交同一批货的识别需要记录货巢来源（客户端指定还是系统选定），留作后续待办。
+     *
+     * <p><b>为什么未指定货巢时按船判</b>：两个都没指定货巢的单在数据上是「同货巢」——
+     * 若直接按 {@code null == null} 判重，所有不填货巢的同货型订单都会被判成重复单，
+     * 等于把正常下单堵死。按船判是保守口径：
      * 同一艘船在同一时间窗内不该同时接两笔同货型同重量的单。
      *
      * <h3>MED-BUG.28：{@code equals} 防 null</h3>
@@ -707,18 +715,28 @@ public final class AdmissionPipeline {
     /**
      * 两单是否出自同一批货（重复单判据的「同源」部分）。
      *
-     * <p>本单指定了货巢 → 必须同货巢（既有单未指定货巢时不算同源，因为无法确认）；
-     * 本单未指定 → 退回按 {@code mmsi} 判，理由见 {@link #isDuplicate}。
+     * <p><b>判重键为什么仍要带上船</b>：货巢已由系统在下单时刻选定，「同巢」不再是一批货
+     * 的标识，而是系统按离船距离做的物流安排——同一座巢同时服务多条船是常态（货就放在
+     * 那座巢上，谁下单都从那座巢取货）。若按巢单独判重，不同船的两笔不同订单会被误判成
+     * 重复，正常订单被拒。因此判重键取「同船 ＋ 同货型 ＋ 重量 ＋ 时间窗」，
+     * 货巢参与比对但不再单独成立：本单指定了货巢时，既有单必须指定同一座巢，
+     * 否则「同一船为两个巢的两批货下单」会被误判成重复；本单未指定货巢时退回按船判。
+     *
+     * <p>跨船重复提交同一批货的识别，需要在订单上记录货巢来源（客户端指定还是系统选定），
+     * 该项留作后续待办。
      *
      * @param request 本单
      * @param prior   既有单
      * @return 是否同源
      */
     private static boolean sameCargoOrigin(OrderRequest request, PriorOrder prior) {
-        if (request.cargoNestId() != null) {
-            return request.cargoNestId().equals(prior.cargoNestId());
+        if (!Objects.equals(request.mmsi(), prior.mmsi())) {
+            return false;
         }
-        return Objects.equals(request.mmsi(), prior.mmsi());
+        if (request.cargoNestId() == null) {
+            return true;
+        }
+        return request.cargoNestId().equals(prior.cargoNestId());
     }
 
     /** MMSI 为 9 位十进制数字。 */
