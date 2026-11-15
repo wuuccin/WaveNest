@@ -9,6 +9,8 @@ import PredictionPanel from './components/PredictionPanel.vue'
 import PlanTrackPanel from './components/PlanTrackPanel.vue'
 import StatsPanel from './components/StatsPanel.vue'
 import RealtimeStatusPanel from './components/RealtimeStatusPanel.vue'
+import WeatherScalePanel from './components/WeatherScalePanel.vue'
+import WeatherInjectPanel from './components/WeatherInjectPanel.vue'
 import { createRealtime } from './realtime'
 import { DEMO_STAGES, createDemoRunner } from './realtime/demo'
 import { normalizeFrame, ORDER_STATES } from './api/adapter'
@@ -17,7 +19,7 @@ import { candidateAssessment } from './realtime/candidateAssessment'
 import { GUIDE_STAGES, buildLiveGuideSteps, buildOfflineGuideSteps, buildContinueGuideSteps } from './realtime/guided'
 import { buildReplaySteps, droneIdForOrder, normalizeReplayTasks } from './replay/model'
 import { api } from './api/client'
-import { useOrderStore, useShipStore, useDroneStore, useAlertStore, useEventStore, useNestStore, useFleetStore, useAirspaceStore, usePlanTrackStore } from './stores'
+import { useOrderStore, useShipStore, useDroneStore, useAlertStore, useEventStore, useNestStore, useFleetStore, useAirspaceStore, usePlanTrackStore, useWeatherStore } from './stores'
 import { usePredictionStore } from './stores/prediction'
 
 const route = ref(location.hash.slice(1) || 'dashboard')
@@ -56,6 +58,7 @@ const nests = useNestStore()
 const fleet = useFleetStore()
 const airspace = useAirspaceStore()
 const planTrack = usePlanTrackStore()
+const weather = useWeatherStore()
 const connection = realtime.status
 const demoRunner = createDemoRunner({ api, subscribe: realtime.subscribe, connected: () => connection.connection === 'WebSocket 已连接' })
 const demoState = demoRunner.state
@@ -148,6 +151,7 @@ async function resetDemoEnvironment() {
   demoRunner.cancel()
   try {
     await Promise.all([api.resetShip(), api.resetWeather()])
+    weather.applyStatus(await api.weatherStatus())
     feedback.value = '船舶航向和风况已复位'
   } catch (error) { feedback.value = `仿真复位失败：${error.message}` }
 }
@@ -553,6 +557,7 @@ async function importRecording(event) {
         <div class="dashboard-section-title"><div><span>实时态势</span><h2>现在运行到哪里</h2></div><p>地图和指标随后端数据更新；点击上方入口执行具体操作。</p></div>
         <section class="metric-strip" aria-label="运行指标"><div><span>当前订单</span><strong>{{ orders.orders.length }}</strong><small>{{ activeCount }} 条进行中</small></div><div><span>已完成任务</span><strong>{{ completedCount }}</strong><small>按后端订单状态统计</small></div><div><span>任务无人机电量</span><strong>{{ battery === null ? '--' : `${battery}%` }}</strong><small>{{ currentTask?.droneId || missionDrone?.uavId || '暂无遥测' }}</small></div><div><span>运行告警</span><strong :class="{ 'value-alert': alerts.items.length }">{{ alerts.items.length }}</strong><small>{{ alerts.items.length ? '请查看事件流' : '当前无告警' }}</small></div></section>
         <section class="overview-panels"><StatsPanel :source="source"/><RealtimeStatusPanel :order-id="current?.orderId || ''"/></section>
+        <details class="weather-disclosure"><summary>风况标尺与气象注入</summary><div class="weather-panels" aria-label="气象监控与注入"><WeatherScalePanel :drone-id="currentTask?.droneId || ''"/><WeatherInjectPanel :source="source"/></div></details>
         <section class="dashboard-layout">
           <section class="map-panel"><div class="panel-head"><div><h2>任务地图</h2><p>实测与预测对照、置信椭圆、无人机位置和会面点</p></div><div class="map-legend"><span><i class="legend-line ship"></i>船舶</span><span><i class="legend-dot drone"></i>无人机</span><span><i class="legend-target"></i>会面点</span><span v-if="nests.items.length"><i class="legend-nest">⌂</i>后端机巢</span></div></div><MapView :drone-id="currentTask?.droneId || ''" :order-id="current?.orderId || ''" :connection-error="source === 'live' ? connection.error : ''"/><div class="map-summary"><div><span>当前船舶</span><strong>{{ selectedShip?.shipName || selectedShip?.mmsi || '等待实时帧' }}</strong><select v-if="ship.ships.length > 1" :value="ship.selectedMmsi" aria-label="选择船舶" @change="ship.select($event.target.value)"><option v-for="vessel in ship.ships" :key="vessel.mmsi" :value="vessel.mmsi">{{ vessel.shipName || vessel.mmsi }} · {{ vessel.mmsi }}</option></select></div><div><span>飞行阶段</span><strong>{{ phase }}</strong></div><div><span>会面点</span><strong>{{ meetingLabel }}</strong></div><div><span>95% 预测范围</span><strong>{{ uncertaintyLabel }}</strong></div></div></section>
           <aside class="mission-column"><PredictionPanel :source="source"/><PlanTrackPanel :source="source"/><section class="mission-panel"><div class="panel-head compact"><div><h2>当前任务</h2><p>{{ current?.orderId || '暂无订单' }}</p></div><span class="state-chip" :class="{ success: isTerminal && current?.orderStatus === '已完成', danger: ['失败', '异常终止'].includes(current?.orderStatus) }">{{ current?.orderStatus || '等待任务' }}</span></div><template v-if="showDemoProgress"><div class="mission-progress"><div class="progress-head"><span>演示步骤</span><strong>{{ stageIndex }} / {{ DEMO_STAGES.length }}</strong></div><div class="progress-track"><span :style="{ width: progressPercent }"></span></div></div><ol class="stage-list"><li v-for="(stage, index) in DEMO_STAGES" :key="stage" :class="stageClass(index)"><span class="stage-number">{{ index + 1 }}</span><span>{{ stage }}</span><b v-if="index < stageIndex">完成</b><b v-else-if="index === stageIndex - 1">进行中</b></li></ol></template><div v-else class="live-order-summary"><span>后端订单状态</span><strong>{{ current?.orderStatus || '暂无订单' }}</strong><p>{{ current ? '完整状态变化请到调度台查看。' : '从“船员下单”创建订单，或开始完整演示。' }}</p></div><div class="mission-facts"><div><span>无人机</span><strong>{{ currentTask?.droneId || missionDrone?.uavId || '待分配' }}</strong></div><div><span>电量</span><strong>{{ battery === null ? '--' : `${battery}%` }}</strong></div><div><span>会面点</span><strong>{{ orders.rendezvous?.locked ? '已锁定' : '动态评估中' }}</strong></div><div><span>{{ showDemoProgress ? '演示阶段' : '订单状态' }}</span><strong>{{ showDemoProgress ? stageTitle : (current?.orderStatus || '待开始') }}</strong></div></div><section v-if="candidate" class="candidate-panel" aria-label="候选评估"><div class="candidate-head"><div><span>候选评估</span><strong>评估 {{ candidate.count }} 个 · 淘汰 {{ candidate.rejectedCount }} 个</strong></div><b v-if="candidate.chosenNestId">中选 {{ candidate.chosenNestId }}</b></div><div v-if="candidate.rows.length" class="candidate-cards"><article v-for="row in candidate.rows" :key="row.key" :class="{ selected: row.selected || row.nestId === candidate.chosenNestId, rejected: !row.feasible || row.reasons.length }"><span>{{ row.nestId || row.droneId || row.model || '候选' }}</span><strong>{{ row.distKm === null ? '距离待回传' : `${row.distKm.toFixed(2)} km` }}</strong><small>{{ row.selected || row.nestId === candidate.chosenNestId ? '已中选' : (!row.feasible || row.reasons.length ? '已落选' : '可用') }}</small><ul v-if="row.reasons.length" class="candidate-row-reasons"><li v-for="reason in row.reasons" :key="reason">{{ reason }}</li></ul></article></div><p v-if="candidate.occupancy" class="candidate-result">占位：{{ candidate.occupancy.slotId ? `${candidate.occupancy.objectId || '对象未记录'} · ${candidate.occupancy.status || '状态未知'}` : '占位未登记' }}</p><p v-if="candidate.stagger" class="candidate-result">{{ candidate.stagger.applied ? `错峰 +${candidate.stagger.shiftMs / 1000} 秒 · ${candidate.stagger.reason || ''}` : '未触发错峰' }}</p><ul v-if="!candidate.rows.length && candidate.reasons.length" class="candidate-reasons"><li v-for="reason in candidate.reasons" :key="reason">{{ reason }}</li></ul><p v-if="!candidate.rows.length && !candidate.reasons.length && !candidate.occupancy && !candidate.stagger" class="candidate-empty">本轮没有候选被淘汰。</p></section><button class="button-secondary full-button" @click="go('console')">打开调度台</button></section><details class="dashboard-events" open><summary>最新事件与告警</summary><EventStream /></details></aside>

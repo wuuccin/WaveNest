@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import L from 'leaflet'
-import { useShipStore, useDroneStore, useOrderStore, useAlertStore, useNestStore, useFleetStore, useAirspaceStore, usePredictionStore, usePlanTrackStore } from '../stores'
+import { useShipStore, useDroneStore, useOrderStore, useAlertStore, useNestStore, useFleetStore, useAirspaceStore, usePredictionStore, usePlanTrackStore, useWeatherStore } from '../stores'
 import { drawShip } from '../layers/shipLayer'
 import { drawMeeting } from '../layers/meetingLayer'
 import { drawDrone } from '../layers/droneTrackLayer'
@@ -12,12 +12,15 @@ import { drawNests } from '../layers/nestLayer'
 import { drawFleet, drawStaticFeatures } from '../layers/staticFeatureLayer'
 import { systemMapPoint, toMapLatLng } from '../map/coordinates'
 import { candidateAssessment } from '../realtime/candidateAssessment'
+import { drawWeatherScale } from '../layers/weatherScaleLayer'
+import { resolveThresholds } from '../api/weather'
 
 const props = defineProps({ comparison: { type: Object, default: null }, branchRoute: { type: Object, default: null }, focusRoute: { type: Boolean, default: false }, droneId: { type: String, default: '' }, orderId: { type: String, default: '' }, connectionError: { type: String, default: '' } })
 const ship = useShipStore(), drone = useDroneStore(), order = useOrderStore(), alert = useAlertStore(), nest = useNestStore(), fleet = useFleetStore(), airspace = useAirspaceStore(), prediction = usePredictionStore(), planTrack = usePlanTrackStore()
+const weather = useWeatherStore()
 const selectedShip = computed(() => ship.byId[ship.selectedMmsi] || null)
 const selectedTrack = computed(() => ship.tracks[ship.selectedMmsi] || [])
-let map, staticGroup, comparisonGroup, shipGroup, meetingGroup, droneGroup, branchGroup, alertGroup, nestGroup, fleetGroup, debugReferenceGroup, predictionGroup, planTrackGroup
+let map, staticGroup, comparisonGroup, shipGroup, meetingGroup, droneGroup, branchGroup, alertGroup, nestGroup, fleetGroup, debugReferenceGroup, predictionGroup, planTrackGroup, weatherGroup
 /** 容器尺寸观察器：flex 布局下地图高度随栅格行高变化，不伴随窗口 resize 事件（2026-11-08） */
 let resizeObserver = null
 let lastOverlaidMmsi = ''
@@ -286,6 +289,7 @@ const update = () => {
   drawNests(nestGroup, displayNests.value, assessment.value, debugEnabled)
   drawFleet(fleetGroup, fleet.items, displayNests.value)
   drawStaticFeatures(staticGroup, displayAirspace.value)
+  drawWeatherScale(weatherGroup, weather.points, resolveThresholds(), { worst: weather.worstPoint })
   drawBranchRoute()
   drawAlerts(map, alertGroup, alert.items, order.orders, visibleDrone.value, selectedShip.value)
   drawPredictionOverlay()
@@ -321,6 +325,7 @@ onMounted(() => {
   L.control.zoom({ position: 'bottomright' }).addTo(map)
   comparisonGroup = L.layerGroup().addTo(map)
   staticGroup = L.layerGroup().addTo(map)
+  weatherGroup = L.layerGroup().addTo(map)
   shipGroup = L.layerGroup().addTo(map)
   meetingGroup = L.layerGroup().addTo(map)
   branchGroup = L.layerGroup().addTo(map)
@@ -358,7 +363,7 @@ onMounted(() => {
 })
 watch([() => ship.byId, () => ship.tracks, () => drone.byId, () => selectedShip.value, () => selectedTrack.value, () => visibleDrone.value, () => order.rendezvous, () => alert.items.length,
   () => order.previousRendezvous, () => order.orders, () => props.comparison, () => props.branchRoute, () => props.droneId, () => props.orderId, () => nest.items,
-  () => fleet.items, () => airspace.items, () => prediction.overlay,
+  () => fleet.items, () => airspace.items, () => weather.byPoint, () => prediction.overlay,
   () => planTrack.byOrder, () => planTrack.highlightKind], update, { deep: true })
 onUnmounted(() => { clearTimeout(fallbackTimer); resizeObserver?.disconnect(); resizeObserver = null; if (map && debugEnabled) map.off('click', pickMapPoint); cancelFit(); map?.remove(); map = null; activeBaseLayer = null; fallbackLayer = null; baseLayerControl = null; debugReferenceGroup = null; predictionGroup = null; planTrackGroup = null; lastOverlaidMmsi = ''; lastPlanOrderId = '' })
 </script>

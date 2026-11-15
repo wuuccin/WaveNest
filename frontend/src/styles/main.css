@@ -399,6 +399,10 @@ h1, h2, p { margin: 0; }
 .order-filters label { display: grid; gap: 5px; color: var(--muted); font-size: 11px; }
 .order-filters select { min-width: 130px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 6px; color: var(--ink); background: #fff; }
 .overview-panels { display: grid; grid-template-columns: minmax(260px, .7fr) minmax(0, 1.3fr); gap: 14px; margin: 14px 0; }
+.weather-disclosure { margin: 0 0 12px; border: 1px solid #d7e6e2; border-radius: 8px; background: #f7fbf9; }
+.weather-disclosure > summary { padding: 8px 13px; color: #234d54; font-size: 12px; font-weight: 700; cursor: pointer; }
+.weather-panels { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; padding: 0 10px 10px; }
+@media (max-width: 1100px) { .weather-panels { grid-template-columns: 1fr; } }
 .stats-panel, .realtime-panel { min-width: 0; padding: 15px; border: 1px solid var(--line); border-radius: 9px; background: #fff; }
 .stats-panel .kpis { display: flex; gap: 16px; justify-content: space-between; margin: 14px 0; }
 .stats-panel .kpis div { display: grid; gap: 4px; }
