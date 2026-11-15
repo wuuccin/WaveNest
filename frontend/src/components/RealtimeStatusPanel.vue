@@ -6,6 +6,9 @@ const ship = useShipStore()
 const selectedShip = computed(() => ship.byId[ship.selectedMmsi] || null)
 const drone = useDroneStore()
 const orders = useOrderStore()
+const props = defineProps({ orderId: { type: String, default: '' } })
+const selectedOrder = computed(() => orders.byId[props.orderId] || orders.orders[0])
+const aircraft = computed(() => Object.values(drone.byId).filter(item => item.activeOrderId === selectedOrder.value?.orderId))
 const alerts = useAlertStore()
 
 const shipPosition = computed(() => selectedShip.value?.points?.[0] || selectedShip.value)
@@ -22,9 +25,9 @@ const coordinate = point => Number.isFinite(point?.lon) && Number.isFinite(point
     <div class="realtime-cards">
       <article>
         <span class="frame-tag">order_state</span>
-        <strong>{{ orders.orders[0]?.orderId || '等待订单状态' }}</strong>
-        <p>{{ orders.orders[0]?.orderStatus || '暂无订单' }}</p>
-        <small>状态版本 {{ orders.orders[0]?.stateVersion ?? '--' }}</small>
+        <strong>{{ selectedOrder?.orderId || '等待订单状态' }}</strong>
+        <p>{{ selectedOrder?.orderStatus || '暂无订单' }}</p>
+        <small>状态版本 {{ selectedOrder?.stateVersion ?? '--' }}</small>
       </article>
       <article>
         <span class="frame-tag ship">ship_traj</span>
@@ -34,9 +37,9 @@ const coordinate = point => Number.isFinite(point?.lon) && Number.isFinite(point
       </article>
       <article>
         <span class="frame-tag drone">drone_state</span>
-        <strong>{{ drone.current?.uavId || '无人机机位' }}</strong>
-        <p>{{ coordinate(drone.current) }}</p>
-        <small>电量 {{ Number.isFinite(drone.current?.battery) ? `${drone.current.battery.toFixed(0)}%` : '--' }} · {{ drone.current?.flightPhase || '阶段待更新' }}</small>
+        <strong>{{ aircraft.length ? aircraft.map(item => item.uavId).join('、') : (drone.current?.uavId || '无人机机位') }}</strong>
+        <p>{{ coordinate(aircraft[0] || drone.current) }}</p>
+        <small>当前收到 {{ Object.keys(drone.byId).length }} 架无人机状态帧</small>
       </article>
       <article>
         <span class="frame-tag meeting">rendezvous</span>

@@ -35,6 +35,7 @@ export const api = {
   weatherStatus: (options = {}) => request('/sim/weather', options),
   // 复位：清除注入偏置，自产风回到基准海况（演示结束后必做，否则下一场不可复现）
   clearWeatherBias: (options = {}) => request('/sim/weather/bias', { ...options, method: 'DELETE' }),
+  resetWeather: (options = {}) => request('/sim/weather/bias', { ...options, method: 'DELETE' }),
   tasks: () => request('/api/monitor/tasks'),
   records: taskId => request(`/api/monitor/tasks/${encodeURIComponent(taskId)}/records`),
   stats: () => request('/api/monitor/statistics'),

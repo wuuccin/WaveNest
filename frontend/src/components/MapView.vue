@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import L from 'leaflet'
-import { useShipStore, useDroneStore, useOrderStore, useAlertStore, useNestStore, useFleetStore, useAirspaceStore, usePredictionStore, usePlanTrackStore } from '../stores'
+import { useShipStore, useDroneStore, useOrderStore, useAlertStore, useNestStore, useFleetStore, useAirspaceStore, usePredictionStore, usePlanTrackStore, useWeatherStore } from '../stores'
 import { drawShip } from '../layers/shipLayer'
 import { drawMeeting } from '../layers/meetingLayer'
 import { drawDrone } from '../layers/droneTrackLayer'
@@ -12,12 +12,15 @@ import { drawNests } from '../layers/nestLayer'
 import { drawFleet, drawStaticFeatures } from '../layers/staticFeatureLayer'
 import { systemMapPoint, toMapLatLng } from '../map/coordinates'
 import { candidateAssessment } from '../realtime/candidateAssessment'
+import { drawWeatherScale } from '../layers/weatherScaleLayer'
+import { resolveThresholds } from '../api/weather'
 
 const props = defineProps({ comparison: { type: Object, default: null }, branchRoute: { type: Object, default: null }, focusRoute: { type: Boolean, default: false }, droneId: { type: String, default: '' }, orderId: { type: String, default: '' }, connectionError: { type: String, default: '' } })
 const ship = useShipStore(), drone = useDroneStore(), order = useOrderStore(), alert = useAlertStore(), nest = useNestStore(), fleet = useFleetStore(), airspace = useAirspaceStore(), prediction = usePredictionStore(), planTrack = usePlanTrackStore()
+const weather = useWeatherStore()
 const selectedShip = computed(() => ship.byId[ship.selectedMmsi] || null)
 const selectedTrack = computed(() => ship.tracks[ship.selectedMmsi] || [])
-let map, staticGroup, comparisonGroup, shipGroup, meetingGroup, droneGroup, branchGroup, alertGroup, nestGroup, fleetGroup, debugReferenceGroup, predictionGroup, planTrackGroup
+let map, staticGroup, comparisonGroup, shipGroup, meetingGroup, droneGroup, branchGroup, alertGroup, nestGroup, fleetGroup, debugReferenceGroup, predictionGroup, planTrackGroup, weatherGroup
 /** 容器尺寸观察器：flex 布局下地图高度随栅格行高变化，不伴随窗口 resize 事件（2026-11-08） */
 let resizeObserver = null
 let lastOverlaidMmsi = ''
@@ -27,6 +30,7 @@ let activeBaseLayer = null, activeBaseType = 'imagery', fallbackLayer = null
 let tileFailure = false, fallbackTimer = null, baseLayerControl = null
 const valid = point => point && Number.isFinite(point.lat) && Number.isFinite(point.lon)
 const visibleDrone = computed(() => props.droneId ? (drone.byId[props.droneId] || null) : drone.current)
+const visibleDrones = computed(() => props.focusRoute && visibleDrone.value ? [visibleDrone.value] : Object.values(drone.byId))
 const displayNests = computed(() => nest.items.filter(item => inServiceArea(item)))
 const displayAirspace = computed(() => airspace.items.filter(item => item.kind !== 'bridge' || inServiceArea(item.center)))
 const assignedNestId = computed(() => {
@@ -105,7 +109,7 @@ const mapDataNotice = computed(() => {
   if (nest.loaded && !nest.items.length) return '后端暂未返回有效机巢坐标，因此不显示占位机巢。'
   const outsideNestCount = nest.items.length - displayNests.value.length
   if (outsideNestCount > 0) return `${outsideNestCount} 个机巢坐标超出赣江南昌段视野，未绘制；请核对后端场景坐标。`
-  const outsideLivePoint = [selectedShip.value, visibleDrone.value, order.rendezvous].some(point => valid(point) && !inServiceArea(point))
+  const outsideLivePoint = [...ship.ships, ...visibleDrones.value, order.rendezvous].some(point => valid(point) && !inServiceArea(point))
   if (outsideLivePoint) return '有实时位置超出赣江南昌段视野；请核对仿真坐标。视野保持在当前作业区。'
   return ''
 })
@@ -277,12 +281,15 @@ function drawPlanTrackOverlay() {
 const update = () => {
   if (!map) return
   drawComparison()
-  drawShip(map, shipGroup, selectedShip.value, selectedTrack.value, debugEnabled)
+  shipGroup.clearLayers()
+  for (const vessel of ship.ships) drawShip(map, shipGroup, vessel, ship.tracks[vessel.mmsi] || [], debugEnabled, false)
   drawMeeting(map, meetingGroup, order.rendezvous)
-  drawDrone(map, droneGroup, visibleDrone.value, props.orderId || order.rendezvous?.orderId || '', debugEnabled)
+  droneGroup.clearLayers()
+  for (const aircraft of visibleDrones.value) drawDrone(map, droneGroup, aircraft, aircraft.activeOrderId || '', debugEnabled, false)
   drawNests(nestGroup, displayNests.value, assessment.value, debugEnabled)
   drawFleet(fleetGroup, fleet.items, displayNests.value)
   drawStaticFeatures(staticGroup, displayAirspace.value)
+  drawWeatherScale(weatherGroup, weather.points, resolveThresholds(), { worst: weather.worstPoint })
   drawBranchRoute()
   drawAlerts(map, alertGroup, alert.items, order.orders, visibleDrone.value, selectedShip.value)
   drawPredictionOverlay()
@@ -318,6 +325,7 @@ onMounted(() => {
   L.control.zoom({ position: 'bottomright' }).addTo(map)
   comparisonGroup = L.layerGroup().addTo(map)
   staticGroup = L.layerGroup().addTo(map)
+  weatherGroup = L.layerGroup().addTo(map)
   shipGroup = L.layerGroup().addTo(map)
   meetingGroup = L.layerGroup().addTo(map)
   branchGroup = L.layerGroup().addTo(map)
@@ -353,9 +361,9 @@ onMounted(() => {
   // 有规划航迹时就让它说了算（重新触发一次 update，借 invalidateSize 后的正确尺寸重画）。
   setTimeout(() => { if (map) { map.invalidateSize(); if (!planTrack.count) fitServiceArea(); update() } }, 100)
 })
-watch([() => selectedShip.value, () => selectedTrack.value, () => visibleDrone.value, () => order.rendezvous, () => alert.items.length,
+watch([() => ship.byId, () => ship.tracks, () => drone.byId, () => selectedShip.value, () => selectedTrack.value, () => visibleDrone.value, () => order.rendezvous, () => alert.items.length,
   () => order.previousRendezvous, () => order.orders, () => props.comparison, () => props.branchRoute, () => props.droneId, () => props.orderId, () => nest.items,
-  () => fleet.items, () => airspace.items, () => prediction.overlay,
+  () => fleet.items, () => airspace.items, () => weather.byPoint, () => prediction.overlay,
   () => planTrack.byOrder, () => planTrack.highlightKind], update, { deep: true })
 onUnmounted(() => { clearTimeout(fallbackTimer); resizeObserver?.disconnect(); resizeObserver = null; if (map && debugEnabled) map.off('click', pickMapPoint); cancelFit(); map?.remove(); map = null; activeBaseLayer = null; fallbackLayer = null; baseLayerControl = null; debugReferenceGroup = null; predictionGroup = null; planTrackGroup = null; lastOverlaidMmsi = ''; lastPlanOrderId = '' })
 </script>
@@ -386,6 +394,7 @@ onUnmounted(() => { clearTimeout(fallbackTimer); resizeObserver?.disconnect(); r
       <span v-if="fleet.items.length"><i class="map-symbol map-symbol-fleet">机</i> 后端机队</span>
       <span v-if="displayAirspace.some(item => item.kind === 'bridge')"><i class="map-symbol map-symbol-bridge">桥</i> 桥梁净空</span>
       <span v-if="displayAirspace.some(item => item.kind === 'waterway') || displayAirspace.filter(item => item.kind === 'bridge').length >= 2"><i class="map-line map-line-waterway"></i> 航道参考</span>
+      <span v-if="displayAirspace.some(item => ['forbidden', 'no_fly', '禁飞区'].includes(item.kind))">▧ 禁飞区样例</span>
       <span v-if="branchRoute"><i class="map-line" :class="branchRoute.type === 'continue' ? 'map-line-continue' : 'map-line-abandon'"></i> {{ branchRoute.type === 'continue' ? '原机改道续送' : '原机带货返航' }}</span>
       <span v-if="prediction.overlay"><i class="map-line" :class="prediction.overlay.premise === 'VALID' ? 'map-line-ship' : 'map-line-change'"></i> 预测看台 · {{ prediction.overlay.mmsi }}</span>
       <span v-if="planTrack.count"><i class="map-line map-line-plan-transfer"></i> 空机转场</span>

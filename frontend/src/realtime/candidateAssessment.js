@@ -32,13 +32,15 @@ export function candidateAssessment(frame, assignedNestId = null) {
   const reasons = Array.isArray(frame.rejectionReasons) ? frame.rejectionReasons.map(text).filter(Boolean) : []
   const countValue = Number(frame.candidateCount)
   const count = Number.isInteger(countValue) && countValue >= 0 ? countValue : (rows.length || null)
-  if (count === null && !reasons.length && !rows.length) return null
+  if (count === null && !reasons.length && !rows.length && !frame.occupancy && !frame.stagger) return null
   const chosenNestId = text(frame.chosenNestId) ?? rows.find(row => row.selected)?.nestId ?? text(assignedNestId)
   return {
     count: count ?? rows.length,
     rejectedCount: rows.length ? rows.filter(row => !row.feasible || row.reasons.length).length : reasons.length,
     reasons,
     chosenNestId,
-    rows
+    rows,
+    occupancy: frame.occupancy ?? null,
+    stagger: frame.stagger ?? null
   }
 }

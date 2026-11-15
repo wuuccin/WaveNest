@@ -14,6 +14,7 @@ lombok = "1.18.48"
 mysql-connector = "9.7.0"
 # Jackson 3 的注解包：tools.jackson:jackson-bom 3.1.5 的统一约束值为 2.21，此处与之对齐
 jackson-annotations = "2.21"
+mockito = "5.21.0"
 
 [libraries]
 # Spring Boot 4.x 三处差异：starter 名 webmvc（非 web）、Jackson 3 包名 tools.jackson、
@@ -31,6 +32,7 @@ lombok = { module = "org.projectlombok:lombok", version.ref = "lombok" }
 # Jackson 3 的枚举中文取值注解（契约 §3.4 要求 getValue() 中文上线）；包名仍是 com.fasterxml.jackson.annotation
 jackson-annotations = { module = "com.fasterxml.jackson.core:jackson-annotations", version.ref = "jackson-annotations" }
 mysql-connector-j = { module = "com.mysql:mysql-connector-j", version.ref = "mysql-connector" }
+mockito-core = { module = "org.mockito:mockito-core", version.ref = "mockito" }
 
 [bundles]
 # 业务模块通用件：Web 层 + 校验 + Lombok，全组共用一份，避免各模块各写一遍。

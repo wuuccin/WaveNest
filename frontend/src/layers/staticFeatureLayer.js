@@ -12,10 +12,18 @@ const validPoint = point => {
 
 export function drawStaticFeatures(group, features) {
   group.clearLayers()
+  if (!Array.isArray(features)) return
   const bridges = features.filter(feature => feature.kind === 'bridge' && validPoint(feature.center))
   const waterways = features.filter(feature => feature.kind === 'waterway' && Array.isArray(feature.points))
+  const forbidden = features.filter(feature => feature.kind === 'forbidden' || feature.kind === 'no_fly' || feature.kind === '禁飞区')
 
   for (const waterway of waterways) drawWaterway(group, waterway.points.filter(validPoint), waterway.name || '航道')
+  for (const area of forbidden) {
+    const points = (area.points || area.polygon || []).filter(validPoint)
+    if (points.length < 3) continue
+    L.polygon(points.map(toMapLatLng), { color: '#bb4d55', weight: 2, fillColor: '#d95f68', fillOpacity: .18, dashArray: '6 4' })
+      .bindTooltip(escapeHtml(area.name || '禁飞区'), { sticky: true }).addTo(group)
+  }
 
   // The schema currently has no authoritative waterway-GIS table. Until it is
   // supplied, the bridge-centre records provide a transparent, data-only
