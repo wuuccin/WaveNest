@@ -1,0 +1,211 @@
+/* ===========================================================================
+   气象标尺与注入面板样式（11-14 任务 2-7 · 杨添爻）
+   只新增 .weather-* 类名，不改动 main.css 既有规则；
+   颜色一律取既有变量（--ink／--teal／--orange／--red／--line／--paper）。
+   =========================================================================== */
+
+.weather-scale-panel,
+.weather-inject-panel {
+  padding: 15px 17px 13px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  box-shadow: var(--shadow);
+}
+
+.weather-scale-panel .panel-head,
+.weather-inject-panel .panel-head { margin-bottom: 12px; }
+
+.weather-state {
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .4px;
+  white-space: nowrap;
+  color: var(--muted);
+  background: #eef3f4;
+  border: 1px solid var(--line);
+}
+.weather-state.normal { color: var(--teal-dark); background: var(--teal-soft); border-color: #b9e0d8; }
+.weather-state.warning { color: #8a5b13; background: #fdf2df; border-color: #eed7ac; }
+.weather-state.critical { color: #8d2f36; background: #fbe9ea; border-color: #eec4c7; }
+
+/* ---- 标尺 ---- */
+.weather-scale { margin: 20px 0 6px; }
+
+.weather-track {
+  position: relative;
+  height: 14px;
+  border-radius: 7px;
+  background: linear-gradient(90deg, #eaf3f1 0%, #f2f0e6 62%, #f7e6e7 100%);
+  border: 1px solid var(--line);
+}
+
+.weather-fill {
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  border-radius: 7px 3px 3px 7px;
+  background: #7fc9bd;
+  transition: width .25s ease;
+}
+.weather-fill.warning { background: #e0ad62; }
+.weather-fill.critical { background: #c4696f; }
+
+.weather-line {
+  position: absolute;
+  top: -5px; bottom: -5px;
+  width: 2px;
+  transform: translateX(-50%);
+  background: var(--ink);
+  opacity: .55;
+}
+.weather-line b {
+  position: absolute;
+  top: -15px; left: 50%;
+  transform: translateX(-50%);
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 700;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.weather-line.warning { background: var(--orange); opacity: .85; }
+.weather-line.warning b { color: #95601a; }
+.weather-line.limit { background: var(--blue); opacity: .85; }
+.weather-line.limit b { color: #2d5f8a; }
+.weather-line.critical { background: var(--red); opacity: .9; }
+.weather-line.critical b { color: #97373d; }
+
+.weather-pointer {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: grid;
+  place-items: center;
+  min-width: 30px;
+  height: 22px;
+  padding: 0 5px;
+  border-radius: 6px;
+  background: var(--ink);
+  color: #f3fbfa;
+  font-size: 10px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  box-shadow: 0 2px 6px rgba(23, 52, 68, .28);
+  transition: left .25s ease;
+}
+.weather-pointer b { font-style: normal; }
+.weather-pointer.alert { background: var(--orange); }
+.weather-pointer.danger { background: var(--red); }
+
+.weather-axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 9px;
+  color: var(--subtle);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- 数值条 ---- */
+.weather-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px 14px;
+  margin-top: 12px;
+  padding-top: 11px;
+  border-top: 1px solid var(--line);
+}
+.weather-facts div { min-width: 0; }
+.weather-facts span { display: block; color: var(--subtle); font-size: 9px; line-height: 1.4; }
+.weather-facts strong { display: block; margin-top: 2px; color: var(--ink); font-size: 13px; font-variant-numeric: tabular-nums; }
+.weather-facts strong.alert { color: #95601a; }
+.weather-facts strong.danger { color: #97373d; }
+
+.weather-note {
+  margin-top: 10px;
+  color: var(--subtle);
+  font-size: 9px;
+  line-height: 1.55;
+}
+
+/* ---- 注入表单 ---- */
+.weather-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 14px;
+}
+.weather-form label { display: block; min-width: 0; }
+.weather-form span { display: block; color: var(--muted); font-size: 10px; margin-bottom: 4px; }
+.weather-form input[type="number"],
+.weather-form input[type="range"] { width: 100%; }
+.weather-form input[type="number"] {
+  height: 30px;
+  padding: 0 8px;
+  color: var(--ink);
+  background: #fff;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+}
+.weather-form input[type="number"]:focus { border-color: var(--teal); outline: none; }
+.weather-form input[type="range"] { accent-color: var(--teal); }
+.weather-switch { grid-column: 1 / -1; display: flex; align-items: center; gap: 7px; }
+.weather-switch span { margin: 0; color: var(--muted); font-size: 10px; }
+.weather-switch input { accent-color: var(--teal); }
+
+.weather-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+.weather-actions button { min-height: 30px; padding: 0 13px; }
+.weather-meta { color: var(--subtle); font-size: 9px; font-variant-numeric: tabular-nums; }
+
+.weather-feedback {
+  margin-top: 10px;
+  padding: 7px 9px;
+  color: #4c6a5f;
+  background: #f1f8f5;
+  border-left: 3px solid var(--teal);
+  border-radius: 0 6px 6px 0;
+  font-size: 10px;
+  line-height: 1.5;
+}
+.weather-feedback.danger { color: #8d2f36; background: #fbeff0; border-left-color: var(--red); }
+
+/* ---- 地图风场图钉（divIcon 类名在全局，故与本文件同放） ---- */
+.weather-pin {
+  display: grid;
+  place-items: center;
+  width: 40px; height: 40px;
+  border-radius: 50%;
+  background: #ffffffd9;
+  border: 1px solid var(--line-strong);
+  box-shadow: 0 2px 7px rgba(30, 66, 75, .18);
+  color: var(--teal-dark);
+}
+.weather-pin span { font-size: 15px; line-height: 1; display: block; }
+.weather-pin b {
+  position: absolute;
+  bottom: -7px;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  font-size: 9px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+.weather-pin.warning { color: #95601a; border-color: #eed7ac; }
+.weather-pin.critical { color: #97373d; border-color: #eec4c7; }
+.weather-pin.worst { border-width: 2px; border-color: var(--ink); }
+.weather-tip { font-size: 11px; }
+
+@media (max-width: 560px) {
+  .weather-form { grid-template-columns: 1fr; }
+  .weather-facts { grid-template-columns: 1fr; }
+}
