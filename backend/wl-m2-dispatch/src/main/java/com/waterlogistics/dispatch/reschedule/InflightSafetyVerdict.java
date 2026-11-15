@@ -17,12 +17,15 @@ import java.util.Optional;
  *   <tr><th>结论</th><th>含义</th><th>订单状态</th><th>广播</th></tr>
  *   <tr><td>{@link Verdict#CONTINUE}</td><td>告警已解除，不构成在飞风险</td><td>不动</td><td>不发</td></tr>
  *   <tr><td>{@link Verdict#ADJUST}</td><td>警告级，按 C-11 走调整档</td><td>不动</td><td>发</td></tr>
- *   <tr><td>{@link Verdict#TERMINATE}</td><td>严重级，本次任务作废，交功能 10 定落点</td><td>不动</td><td>发</td></tr>
+ *   <tr><td>{@link Verdict#TERMINATE}</td><td>严重级，本次任务作废，交功能 10 定落点</td><td>有可执行落点时回写「返航中」；迫降野外由功能 10 置「失败」；功能 10 返回空则不动</td><td>发</td></tr>
  * </table>
  *
- * <p><b>终止档为什么不动订单状态</b>：《23》§3 约束 2「飞行中途的 6b 意图变更、风速突变、
- * 临时禁飞不新增任务状态，只触发调度侧重跑；状态仍停在去程中」。会话作废的落点由
- * 功能 10 判定后写无人机状态，订单状态继续由 {@code FlightPhaseAdvancer} 推进。
+ * <p><b>终止档为什么回写订单状态</b>：《23》§4 约束 2 原写「风速突变不新增任务状态、
+ * 状态仍停在去程中」，本次加中止返航例外并在 §8 登记「订单 去程中 → 返航中」。
+ * 不回写时 {@code FlightPhaseAdvancer} 不看无人机是否已中止，仍按 {@code meet_time}
+ * 时间轴把订单推成「末段交接中」，{@code task_log} 会多出一条没发生的交接迁移。
+ * 判档与回写分离：本类只出结论，状态落库由 {@code InflightSafetyService} 在
+ * 功能 10 返回可执行落点后完成。
  *
  * @param verdict     三值结论
  * @param eventId     告警事件标识（回指原始告警）
@@ -50,7 +53,7 @@ public record InflightSafetyVerdict(
         /** 警告级；按 C-11 走调整档，留痕并广播，不改状态 */
         ADJUST("调整", "在飞安全复核-调整"),
 
-        /** 严重级；本次任务作废，交功能 10 定落点，留痕并广播 */
+        /** 严重级；C-11 例外句构成返航可行性否决，留痕并广播，落点交功能 10 定 */
         TERMINATE("终止", "在飞安全复核-终止");
 
         private final String value;
@@ -96,10 +99,17 @@ public record InflightSafetyVerdict(
      * <ol>
      *   <li>{@code cleared} 为真 → 继续（《86》§扩.3 第 4 条迟滞清除：连续
      *       {@code weatherClearDebounce} 点低于预警阈值且无突变）；</li>
-     *   <li>级别为「严重」→ 终止（C-11 的「持续恶化」在《86》§扩.3 第 6 条已判成严重，
-     *       M2 不另设时长阈值键）；</li>
+     *   <li>级别为「严重」→ 终止。《29》§5 C-11 例外句：G 判定的严重档视为已构成
+     *       返航可行性否决，功能 9 可出终止档，落点仍交功能 10 三级判定。严重档依据是
+     *       《86》§扩.3 第 2 条（风速绝对值达严重阈值 14.0 m／s，高于机队最高抗风上限
+     *       12.0）与第 6 条（突变触发），M4 {@code WeatherViolationDetector} 已按此实现；
+     *       不是「持续恶化」的结论。</li>
      *   <li>其余（级别为「警告」）→ 调整（C-11「默认档位＝调整，不直通、不直达终止」）。</li>
      * </ol>
+     *
+     * <p><b>{@code durationSec} 不参与判档</b>：它只用于构造时把负数归零，本方法不读它。
+     * 「持续时长／持续恶化」由 M4 检测器按迟滞采样点判完并折叠进 {@code alertLevel}，
+     * M2 不另设时长阈值键，也不在这里二次判定。
      *
      * <p><b>本方法不查库</b>：订单是否存在、是否处于去程中／末段交接中（前置 P1、P2）
      * 由调用方在传入前保证——本层是纯判档，便于单测钉死三条判档与六类失败。
@@ -152,8 +162,9 @@ public record InflightSafetyVerdict(
                 return "警告级风速 " + wind + " m/s：按《29》§5 C-11 默认档位＝调整，"
                         + "不直通、不直达终止，状态不动";
             case TERMINATE:
-                return "严重级风速 " + wind + " m/s：按《86》§扩.3 第 6 条已判成严重，"
-                        + "本次任务作废，交功能 10 定落点，订单状态不动";
+                return "严重级风速 " + wind + " m/s：风速达严重阈值或突变触发"
+                        + "（《86》§扩.3 第 2、6 条），按《29》§5 C-11 例外句"
+                        + "视为已构成返航可行性否决，本次任务作废，落点交功能 10 三级判定";
             default:
                 // 枚举加值时不静默兜底：判档说明缺失会让 task_log 出现空备注
                 throw new IllegalStateException("未覆盖的复核结论：" + verdict);

@@ -1,12 +1,16 @@
 package com.waterlogistics.dispatch.reschedule;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.waterlogistics.algo.inflight.HomecomingDecision;
 import com.waterlogistics.algo.inflight.HomecomingInput;
 import com.waterlogistics.algo.inflight.HomecomingParams;
+import com.waterlogistics.algo.inflight.HomecomingTier;
+import com.waterlogistics.contract.order.OrderView;
 import com.waterlogistics.contract.rest.GeoPoint;
 import com.waterlogistics.contract.state.OrderStatus;
 import com.waterlogistics.dispatch.alert.HomecomingInputAssembler;
+import com.waterlogistics.dispatch.order.OrderStateChangedEvent;
 import com.waterlogistics.storage.entity.DroneEntity;
 import com.waterlogistics.storage.entity.OrderTaskEntity;
 import com.waterlogistics.storage.entity.TaskLogEntity;
@@ -31,9 +35,10 @@ import org.springframework.transaction.support.TransactionTemplate;
 /**
  * 在飞安全复核的<b>生产接线</b>：告警快照 → 查单 → 判档 → 留痕 → 终止档交功能 10 → 广播。
  *
- * <p>与 {@link RescheduleService#evaluateInflightSafety} 的分工：那一个是<b>纯判档</b>（无 IO，
- * 单测钉三条判档与六类失败），本类是<b>编排</b>（查库、写 {@code task_log}、调功能 10、发事件）。
- * 判据不在这里重写——一律调 {@link InflightSafetyVerdict#judge}，改判档只改一处。
+ * <p>判档的唯一源是 {@link InflightSafetyVerdict#judge}（纯函数、无 IO），本类是<b>编排</b>
+ * （查库、写 {@code task_log}、回写订单状态、调功能 10、发事件）。
+ * 1-1 曾在 {@code RescheduleService} 挂过一个判档外壳，本批已删除：
+ * 生产入口只有本类的 {@link #review}，留两个入口会让下游跳过订单存在性与在飞状态前置。
  *
  * <p><b>为什么不塞进 {@code RescheduleService}</b>：那会让它的构造器从 3 参变 6 参，
  * 连带 7 处单测构造点与装配一起改；且 {@code RescheduleService} 的既有职责是「重调度」，
@@ -43,10 +48,13 @@ import org.springframework.transaction.support.TransactionTemplate;
  * <ul>
  *   <li><b>只判去程中与末段交接中</b>（《84》§3.3）。返航中的单子已经在中止返航路上，
  *       再判一次档没有可执行动作；其余状态一律空结论。</li>
- *   <li><b>终止档不写订单状态</b>（《23》§3 约束 2：风速突变不新增任务状态，状态停在原阶段）。
- *       落点由功能 10 判定后写无人机状态，订单由 {@code FlightPhaseAdvancer} 继续推进。</li>
- *   <li><b>不读阈值键、不比 8.0／14.0、不看机型抗风上限</b>——检测与分级在 M4，
- *       本层只消费告警侧给出的级别（《84》§3.3）。</li>
+ *   <li><b>终止档只在功能 10 有可执行落点时回写订单状态</b>（《23》§4 约束 2 的
+ *       中止返航例外、§8「订单 去程中 → 返航中」）。回原巢／迫停他巢写 {@code 返航中}；
+ *       迫降野外由功能 10 的 {@code settleCargoAndOrder} 置「失败」，本层不覆盖；
+ *       功能 10 返回空（缺机巢归属／会面点／电量）时只留审计，不写状态——
+ *       否则会出现「订单说返航中、实际没返航」。</li>
+ *   <li><b>不读阈值键、不比 8.0／14.0、不看机型抗风上限</b>——检测与分级在 M4
+ *       （{@code WeatherViolationDetector}），本层只消费告警侧给出的级别（《84》§3.3）。</li>
  * </ul>
  *
  * <h3>位置取哪里的（本批已知简化）</h3>
@@ -73,6 +81,9 @@ public class InflightSafetyService {
 
     /** 气象终止档的中止原因，落功能 10 输入（《84》§7.3「中止原因（细分枚举）」） */
     private static final String ABORT_REASON_WEATHER = "气象超限";
+
+    /** 中止返航迁移行的 op_type（《23》§8「订单 去程中 → 返航中」） */
+    private static final String OP_ABORT_RETURN = "在飞安全复核-中止返航";
 
     private final OrderTaskMapper orderTaskMapper;
     private final TaskLogMapper taskLogMapper;
@@ -152,17 +163,27 @@ public class InflightSafetyService {
 
         writeAudit(order, verdict);
 
-        HomecomingDecision decision = verdict.verdict() == InflightSafetyVerdict.Verdict.TERMINATE
-                ? returnHome(order, request)
-                : null;
-        log.info("在飞安全复核完成：orderId={} droneId={} 结论={} 落点={} eventId={}",
+        HomecomingDecision decision = null;
+        if (verdict.verdict() == InflightSafetyVerdict.Verdict.TERMINATE) {
+            decision = returnHome(order, request);
+            // 迫降野外时功能 10 已把订单置「失败」并写了自己的迁移行，本层不覆盖；
+            // 返回空（缺机巢归属／会面点／电量）时只留审计，不能凭审计说已返航。
+            if (decision != null && decision.tier() != HomecomingTier.EMERGENCY_LAND_FIELD) {
+                transitionToReturning(order, status);
+            }
+        }
+        log.info("在飞安全复核完成：orderId={} droneId={} 结论={} 落点={} 订单态={} eventId={}",
                 order.getOrderId(), request.droneId(), verdict.verdict().getValue(),
-                decision == null ? "不适用" : decision.tier().getValue(), request.eventId());
+                decision == null ? "不适用" : decision.tier().getValue(),
+                order.getStatus(), request.eventId());
         return Optional.of(new ReviewOutcome(verdict, order, decision));
     }
 
     /**
      * 落 {@code task_log}：<b>审计不是状态迁移</b>，from 与 to 同取当前订单状态。
+     *
+     * <p>继续档与调整档只有这一条；终止档在功能 10 有可执行落点时会再写一条
+     * {@code from → 返航中} 的迁移行，两条的 op_type 与语义不同，勿合并。
      *
      * <p>失败不吞：审计是「终止」这一动作的唯一凭证，写不进去就不该继续往功能 10 走
      * （与既有 {@code writeAudit} 的 fail-soft 口径不同——那里是复核结论的旁证，
@@ -176,6 +197,50 @@ public class InflightSafetyService {
         entry.setToStatus(order.getStatus());
         entry.setTs(LocalDateTime.ofInstant(Instant.now(), DB_ZONE));
         taskLogMapper.insert(entry);
+    }
+
+    /**
+     * 中止返航：同一事务内条件更新订单状态、写迁移行、发状态事件。
+     *
+     * <p><b>顺序不可换</b>：迁移行的 {@code logId} 必须大于 {@link #writeAudit} 的审计行——
+     * {@code FlightPhaseAdvancer.lastCyclePhase} 取「派发日志之后、toStatus 属飞行四态、
+     * logId 最大」那一条，顺序反了会读回迁移前的阶段。
+     *
+     * <p>{@code OrderStateChangedEvent} 在事务内发布：advancer 的
+     * {@code @TransactionalEventListener(AFTER_COMMIT)} 靠它给周期缓存标脏，
+     * 不发则后续每次 emit 的条件更新命中 0 行并刷 error 日志。
+     *
+     * <p>ETA 与 {@code TaskQueueService.transition} 同口径传 {@code null}：
+     * 本层不重算返航段预计送达，也不改库里的 {@code eta_ts}。
+     */
+    private void transitionToReturning(OrderTaskEntity order, OrderStatus from) {
+        int updated = orderTaskMapper.update(null,
+                Wrappers.<OrderTaskEntity>lambdaUpdate()
+                        .eq(OrderTaskEntity::getOrderId, order.getOrderId())
+                        .eq(OrderTaskEntity::getStatus, from.getValue())
+                        .set(OrderTaskEntity::getStatus, OrderStatus.RETURNING.getValue()));
+        if (updated != 1) {
+            throw new IllegalStateException("订单 " + order.getOrderId()
+                    + " 中止返航回写冲突：从 " + from.getValue() + " 流转到 "
+                    + OrderStatus.RETURNING.getValue() + " 失败");
+        }
+        order.setStatus(OrderStatus.RETURNING.getValue());
+
+        long eventTs = System.currentTimeMillis();
+        TaskLogEntity migration = new TaskLogEntity();
+        migration.setOrderId(order.getOrderId());
+        migration.setOpType(OP_ABORT_RETURN);
+        migration.setFromStatus(from.getValue());
+        migration.setToStatus(OrderStatus.RETURNING.getValue());
+        migration.setTs(LocalDateTime.ofInstant(Instant.ofEpochMilli(eventTs), DB_ZONE));
+        taskLogMapper.insert(migration);
+
+        // 与 TaskQueueService.stateVersion 同源：版本 1 留给建单帧，日志主键保证递增。
+        long version = migration.getLogId() == null ? 2L
+                : Math.max(2L, migration.getLogId() + 1L);
+        OrderView view = new OrderView(order.getOrderId(), OrderStatus.RETURNING, eventTs,
+                version, null, null, null, null, null, order.getCargoNestId());
+        eventPublisher.publishEvent(new OrderStateChangedEvent(view));
     }
 
     /**
