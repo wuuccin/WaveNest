@@ -5,6 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.waterlogistics.algo.inflight.HomecomingDecision;
 import com.waterlogistics.algo.inflight.HomecomingInput;
 import com.waterlogistics.algo.inflight.HomecomingParams;
@@ -13,6 +15,7 @@ import com.waterlogistics.algo.inflight.NestCandidate;
 import com.waterlogistics.contract.state.AlertLevel;
 import com.waterlogistics.contract.state.OrderStatus;
 import com.waterlogistics.dispatch.alert.HomecomingInputAssembler;
+import com.waterlogistics.dispatch.order.OrderStateChangedEvent;
 import com.waterlogistics.storage.entity.DroneEntity;
 import com.waterlogistics.storage.entity.OrderTaskEntity;
 import com.waterlogistics.storage.entity.TaskLogEntity;
@@ -25,6 +28,8 @@ import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import org.apache.ibatis.builder.MapperBuilderAssistant;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.ApplicationEventPublisher;
@@ -53,6 +58,16 @@ class InflightSafetyServiceTest {
     private OrderTaskEntity resolvedByDrone;
     private DroneEntity drone;
     private boolean homecomingThrows;
+    private HomecomingTier homecomingTier = HomecomingTier.RETURN_HOME_NEST;
+
+    /** 条件更新与按机号反查都用 lambda wrapper，单类独立跑时须先建 TableInfo 缓存。 */
+    @BeforeAll
+    static void initMybatisPlusLambdaCache() {
+        MapperBuilderAssistant assistant = new MapperBuilderAssistant(new MybatisConfiguration(), "");
+        TableInfoHelper.initTableInfo(assistant, OrderTaskEntity.class);
+        TableInfoHelper.initTableInfo(assistant, TaskLogEntity.class);
+        TableInfoHelper.initTableInfo(assistant, DroneEntity.class);
+    }
 
     // ───────────────────────── 三条判档 ─────────────────────────
 
@@ -85,25 +100,32 @@ class InflightSafetyServiceTest {
         assertEquals(1, logs.size());
         assertEquals("在飞安全复核-调整", logs.get(0).getOpType());
         assertEquals("末段交接中", logs.get(0).getToStatus());
-        assertEquals(1, events.size());
-        InflightSafetyDecisionEvent event = (InflightSafetyDecisionEvent) events.get(0);
+        assertEquals(1, decisionEvents().size());
+        InflightSafetyDecisionEvent event = decisionEvents().get(0);
         assertEquals(InflightSafetyVerdict.Verdict.ADJUST, event.verdict());
         assertNull(event.tier(), "调整档没有落点结论");
         assertEquals(ORDER, event.orderId());
         assertTrue(homecomingInputs.isEmpty());
-        assertEquals("末段交接中", order.getStatus(), "本类不写订单状态");
+        assertEquals("末段交接中", order.getStatus(), "调整档不写订单状态");
+        assertTrue(orderStateEvents().isEmpty());
     }
 
     @Test
-    @DisplayName("终止档：留痕、调功能 10 一次、广播带落点，仍不改订单状态")
+    @DisplayName("终止档：审计＋迁移两行日志、调功能 10、回写返航中并标脏周期缓存")
     void review_terminate_shouldCallHomecomingAndPublish() {
         order = order(OrderStatus.OUTBOUND);
         drone = drone();
 
         service().review(request(15.2, AlertLevel.CRITICAL, false));
 
-        assertEquals(1, logs.size());
+        assertEquals(2, logs.size());
         assertEquals("在飞安全复核-终止", logs.get(0).getOpType());
+        assertEquals("去程中", logs.get(0).getFromStatus());
+        assertEquals("去程中", logs.get(0).getToStatus(), "审计行 from=to，不是状态迁移");
+        assertEquals("在飞安全复核-中止返航", logs.get(1).getOpType());
+        assertEquals("去程中", logs.get(1).getFromStatus());
+        assertEquals("返航中", logs.get(1).getToStatus(),
+                "迁移行在审计行之后写，logId 更大，advancer 倒序恢复才读得到返航中");
         assertEquals(1, homecomingInputs.size());
         HomecomingInput input = homecomingInputs.get(0);
         assertEquals("空域或气象", input.triggerSource());
@@ -111,11 +133,28 @@ class InflightSafetyServiceTest {
         assertEquals("NEST-01", input.homeNestId());
         assertEquals(72.5, input.batteryPercent(), 1e-9, "电量取 drone.battery，不走低电量告警口径");
         assertTrue(input.cargoOnboard(), "订单仍在交付前，货随机返航");
-        assertEquals(1, events.size());
-        InflightSafetyDecisionEvent event = (InflightSafetyDecisionEvent) events.get(0);
+        assertEquals(1, decisionEvents().size());
+        InflightSafetyDecisionEvent event = decisionEvents().get(0);
         assertEquals(HomecomingTier.RETURN_HOME_NEST, event.tier());
         assertEquals("NEST-01", event.targetId());
-        assertEquals("去程中", order.getStatus(), "终止档不写订单状态（《23》§3 约束 2）");
+        assertEquals("返航中", order.getStatus(), "中止返航回写（《23》§4 约束 2 例外、§8）");
+        assertEquals(1, orderStateEvents().size(), "回写后须发状态事件给 advancer 标脏");
+        assertEquals(OrderStatus.RETURNING, orderStateEvents().get(0).view().orderStatus());
+    }
+
+    @Test
+    @DisplayName("终止档迫降野外：不写返航中，订单由功能 10 置失败")
+    void review_terminateFieldLanding_shouldNotWriteReturning() {
+        order = order(OrderStatus.OUTBOUND);
+        drone = drone();
+        homecomingTier = HomecomingTier.EMERGENCY_LAND_FIELD;
+
+        service().review(request(15.2, AlertLevel.CRITICAL, false));
+
+        assertEquals(1, logs.size(), "只留审计，本层不写迁移行");
+        assertEquals("去程中", order.getStatus(), "迫降野外的订单终态由功能 10 写，本层不覆盖");
+        assertTrue(orderStateEvents().isEmpty());
+        assertEquals(HomecomingTier.EMERGENCY_LAND_FIELD, decisionEvents().get(0).tier());
     }
 
     // ───────────────────────── 六类失败 ─────────────────────────
@@ -188,8 +227,9 @@ class InflightSafetyServiceTest {
 
         assertEquals(1, logs.size());
         assertTrue(homecomingInputs.isEmpty(), "无会面点则不执行功能 10");
-        assertEquals(1, events.size());
-        assertNull(((InflightSafetyDecisionEvent) events.get(0)).tier());
+        assertNull(decisionEvents().get(0).tier());
+        assertEquals("去程中", order.getStatus(), "功能 10 未执行，不能凭审计说已返航");
+        assertTrue(orderStateEvents().isEmpty());
     }
 
     @Test
@@ -203,7 +243,9 @@ class InflightSafetyServiceTest {
 
         assertEquals(1, logs.size());
         assertTrue(homecomingInputs.isEmpty());
-        assertEquals(1, events.size());
+        assertNull(decisionEvents().get(0).tier());
+        assertEquals("去程中", order.getStatus(), "电量不可得，功能 10 未执行，不回写状态");
+        assertTrue(orderStateEvents().isEmpty());
     }
 
     @Test
@@ -219,8 +261,22 @@ class InflightSafetyServiceTest {
 
         assertTrue(verdict.isPresent());
         assertEquals(InflightSafetyVerdict.Verdict.ADJUST, verdict.get().verdict());
-        assertEquals(ORDER, ((InflightSafetyDecisionEvent) events.get(0)).orderId(),
+        assertEquals(ORDER, decisionEvents().get(0).orderId(),
                 "广播用反查后的权威单号");
+    }
+
+    private List<InflightSafetyDecisionEvent> decisionEvents() {
+        return events.stream()
+                .filter(InflightSafetyDecisionEvent.class::isInstance)
+                .map(InflightSafetyDecisionEvent.class::cast)
+                .toList();
+    }
+
+    private List<OrderStateChangedEvent> orderStateEvents() {
+        return events.stream()
+                .filter(OrderStateChangedEvent.class::isInstance)
+                .map(OrderStateChangedEvent.class::cast)
+                .toList();
     }
 
     // ───────────────────────── 夹具 ─────────────────────────
@@ -268,8 +324,9 @@ class InflightSafetyServiceTest {
                 if (homecomingThrows) {
                     throw new IllegalStateException("功能 10 判定失败（单测模拟）");
                 }
-                return new HomecomingDecision(HomecomingTier.RETURN_HOME_NEST, NEST, null,
-                        false, List.of(), List.of(), "电量覆盖返程，回原巢");
+                return new HomecomingDecision(homecomingTier,
+                        homecomingTier == HomecomingTier.EMERGENCY_LAND_FIELD ? null : NEST,
+                        null, false, List.of(), List.of(), "电量覆盖返程，回原巢");
             }
         };
     }
@@ -281,6 +338,7 @@ class InflightSafetyServiceTest {
                 (proxy, method, args) -> switch (method.getName()) {
                     case "selectById" -> order;
                     case "selectOne" -> resolvedByDrone;
+                    case "update" -> 1;
                     case "toString" -> "stubOrderTaskMapper";
                     default -> null;
                 });
