@@ -23,6 +23,7 @@ import java.math.BigDecimal;
  *       {@code long} 无法表达「未设置」，所以只能用「非正即非法」表达漏传。</li>
  *   <li>{@code orderId}／{@code shipMmsi} 非空白：这两列在 {@code order_task} 是主键与
  *       非空列，空值不是「稍后补」而是直接插入失败。</li>
+ *   <li>{@code priority} 归一为枚举名（11-14 序号 2-6 · HIGH.19）：见紧凑构造器注释。</li>
  * </ul>
  *
  * @param orderId         订单号
@@ -72,6 +73,13 @@ public record OrderSubmittedEvent(
         if (submitTsMs <= 0L) {
             throw new IllegalArgumentException("下单时刻必须为正的 Unix 毫秒：" + submitTsMs);
         }
+        // HIGH.19：priority 落的就是枚举名，必须在事件边界归一，不能指望上游。
+        // 上游 OrderAdmissionService 已先过一遍枚举（HIGH.18），但本记录体是公开构造点——
+        // 重放脚本、单测、将来新增的入口都可以直接 new 一个带 " normal " 的事件，
+        // DispatchTrigger 会把那个原始串逐字写进 order_task.priority，破坏列的取值域
+        // （NORMAL/URGENT/EMERGENCY），而错误只在「按优先级取单」时以排序不对的形式出现。
+        // fromCode 已规定 null/空白→NORMAL、取值域外→抛异常，这里直接用它的口径。
+        priority = OrderPriority.fromCode(priority).name();
         // 货巢全空白视同未指定：与 OrderSubmitRequest 的归一同一口径，
         // 否则「␠」会作为一个独立的货巢值参与重复单判据，把本可判重的单放过去
         if (cargoNestId != null && cargoNestId.isBlank()) {

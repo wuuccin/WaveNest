@@ -5,6 +5,6 @@ export default defineConfig(({ mode }) => {
   const backend = env.WAVENEST_BACKEND_URL || 'http://127.0.0.1:8080'
   return {
     plugins: [vue()],
-    server: { proxy: { '/api': backend, '/sim': backend, '/ws': { target: backend, ws: true } } }
+    server: { host: '0.0.0.0', proxy: { '/api': backend, '/sim': backend, '/ws': { target: backend, ws: true } } }
   }
 })

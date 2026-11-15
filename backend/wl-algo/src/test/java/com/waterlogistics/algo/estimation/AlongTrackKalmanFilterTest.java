@@ -143,4 +143,72 @@ class AlongTrackKalmanFilterTest {
         assertEquals(180.0, AlongTrackKalmanFilter.shortestAngleDiffDeg(0.0, 180.0), 1e-9);
         assertEquals(0.0, AlongTrackKalmanFilter.shortestAngleDiffDeg(90.0, 90.0), 1e-9);
     }
+
+    /**
+     * ★ 11-14 序号 2-6 · MEDIUM.41：重锚平移只改坐标原点。
+     *
+     * <p>这条是「参考线在尾部重建时不得丢掉滤波状态」的底层依据：重建后同一个物理点在新折线上的
+     * 弧长与旧折线相差常量 Δs，于是只需把 {@code s} 平移 Δs——{@code v_s} 与 {@code P_ss}、
+     * {@code P_sv}、{@code P_vv} 都是物理量，与坐标原点无关。
+     *
+     * <p>判据写成「与未平移的孪生滤波器逐位对齐」：平移过的那条此后喂 {@code 观测 + Δs}，
+     * 两条的估计值必须只差 Δs。若实现里偷偷走了 {@code initialize()}（旧写法），协方差会回到
+     * 初值、速度按短基线重估，这条断言立刻红。
+     */
+    @Test
+    @DisplayName("★ MEDIUM.41：平移弧长原点保留速度与协方差，后续更新与未平移分支对齐")
+    void shiftAlongOrigin_shouldKeepVelocityAndCovariance() {
+        AlongTrackKalmanFilter shifted = new AlongTrackKalmanFilter(Q, SIGMA_POS, THETA_MAX, V_MAX, 2.0);
+        AlongTrackKalmanFilter twin = new AlongTrackKalmanFilter(Q, SIGMA_POS, THETA_MAX, V_MAX, 2.0);
+        shifted.initialize(0.0, 4.0, 45.0, 45.0);
+        twin.initialize(0.0, 4.0, 45.0, 45.0);
+
+        // 同一条带噪直线：真实弧长 4 m/s 增长，叠 0.3 m 的确定性抖动（避免 0 新息的退化情形）
+        for (int step = 1; step <= 120; step++) {
+            double observedS = 4.0 * step + 0.3 * Math.sin(step);
+            shifted.predict(1.0);
+            shifted.update(observedS, 0.0);
+            twin.predict(1.0);
+            twin.update(observedS, 0.0);
+        }
+
+        double sBefore = shifted.s();
+        double vBefore = shifted.vAlongMs();
+        double pSBefore = shifted.varianceS();
+        double pVBefore = shifted.varianceV();
+        double pSvBefore = shifted.covarianceSV();
+        assertTrue(pSBefore < 400.0, "前提：120 拍后协方差已明显收敛（小于 σ_pos²=400）");
+
+        double delta = -2_500.0;
+        shifted.shiftAlongOrigin(delta);
+
+        assertEquals(sBefore + delta, shifted.s(), 1e-9, "弧长整体平移");
+        assertEquals(vBefore, shifted.vAlongMs(), 1e-12, "速度是物理量，不随坐标原点改变");
+        assertEquals(pSBefore, shifted.varianceS(), 1e-12, "P_ss 不得重置——这正是重锚丢状态的病根");
+        assertEquals(pVBefore, shifted.varianceV(), 1e-12, "P_vv 同理");
+        assertEquals(pSvBefore, shifted.covarianceSV(), 1e-12, "P_sv 同理");
+
+        // 平移后继续推进：喂「原坐标观测 + Δ」，结果必须与孪生分支只差 Δ
+        double nextObs = 4.0 * 121 + 0.3 * Math.sin(121);
+        shifted.predict(1.0);
+        twin.predict(1.0);
+        shifted.update(nextObs + delta, 0.0);
+        twin.update(nextObs, 0.0);
+
+        assertEquals(twin.s() + delta, shifted.s(), 1e-9, "新息必须按新坐标算，等价于坐标整体平移");
+        assertEquals(twin.vAlongMs(), shifted.vAlongMs(), 1e-9, "速度估计不受平移影响");
+        assertEquals(twin.varianceS(), shifted.varianceS(), 1e-9, "协方差不受平移影响");
+    }
+
+    @Test
+    @DisplayName("平移原语的入参边界：未初始化与 NaN 都拒绝，不静默")
+    void shiftAlongOrigin_shouldRejectInvalidUse() {
+        assertThrows(IllegalStateException.class, () -> filter.shiftAlongOrigin(10.0),
+                "未初始化就平移说明调用顺序错了，必须炸出来");
+
+        filter.initialize(0.0, 0.0, 0.0, 0.0);
+        assertThrows(IllegalArgumentException.class, () -> filter.shiftAlongOrigin(Double.NaN));
+        assertThrows(IllegalArgumentException.class,
+                () -> filter.shiftAlongOrigin(Double.POSITIVE_INFINITY));
+    }
 }

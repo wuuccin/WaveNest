@@ -1,12 +1,20 @@
 package com.waterlogistics.app.config;
 
+import com.waterlogistics.algo.meeting.model.B_ConflictResult;
+import com.waterlogistics.algo.meeting.model.B_FlyableRoute;
+import com.waterlogistics.algo.meeting.model.B_HandoverConfirmation;
+import com.waterlogistics.algo.meeting.model.B_TakeoffTimeResult;
 import com.waterlogistics.dispatch.homecoming.HomecomingTrackPort;
 import com.waterlogistics.dispatch.plan.MissionTrackPort;
 import com.waterlogistics.dispatch.rendezvous.NestLookup;
 import com.waterlogistics.dispatch.rendezvous.RendezvousPort;
+import com.waterlogistics.dispatch.rendezvous.RendezvousVerificationPort;
+import com.waterlogistics.rendezvous.conflict.ConflictParams;
 import com.waterlogistics.rendezvous.facade.RendezvousFacade;
+import com.waterlogistics.rendezvous.handover.HandoverCommand;
 import com.waterlogistics.rendezvous.port.DroneContextPort;
 import com.waterlogistics.rendezvous.port.TrajectorySnapshotPort;
+import com.waterlogistics.rendezvous.trajectory.TakeoffTimeCommand;
 import com.waterlogistics.storage.entity.NestEntity;
 import com.waterlogistics.storage.repository.NestMapper;
 import org.springframework.context.annotation.Bean;
@@ -54,6 +62,36 @@ public class RendezvousWiring {
     @Bean
     public RendezvousPort rendezvousPort(RendezvousFacade facade) {
         return facade::solve;
+    }
+
+    /**
+     * 会面定案校验端口：起飞时刻回填、空域冲突二查、末段交接判定，实现全部转调 M3 门面。
+     *
+     * <p>与 {@link #rendezvousPort} 分开成独立 Bean：三项能力各有独立入参类型，
+     * 且由 {@code DispatchPlanVerifier} 按固定顺序调用；M2 侧不出现门面类型。
+     *
+     * @param facade 动态会面门面
+     * @return 定案校验端口的实现
+     */
+    @Bean
+    public RendezvousVerificationPort rendezvousVerificationPort(RendezvousFacade facade) {
+        return new RendezvousVerificationPort() {
+            @Override
+            public B_TakeoffTimeResult computeTakeoffTime(TakeoffTimeCommand cmd) {
+                return facade.computeTakeoffTime(cmd);
+            }
+
+            @Override
+            public B_ConflictResult detectConflict(B_FlyableRoute route, B_FlyableRoute other,
+                    ConflictParams params) {
+                return facade.detectConflict(route, other, params);
+            }
+
+            @Override
+            public B_HandoverConfirmation judgeHandover(HandoverCommand cmd) {
+                return facade.judgeHandover(cmd);
+            }
+        };
     }
 
     /**

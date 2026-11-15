@@ -14,8 +14,8 @@ function headingOf(state) {
   const north = to.lat - from.lat
   return Math.atan2(east, north) * 180 / Math.PI
 }
-export function drawDrone(map, group, state, orderId = '', debug = false) {
-  group.clearLayers()
+export function drawDrone(map, group, state, orderId = '', debug = false, clear = true) {
+  if (clear) group.clearLayers()
   if (!state || !Number.isFinite(state.lon) || !Number.isFinite(state.lat)) return
   for (const segment of state.segments || []) {
     const points = (segment.points || []).filter(p => Number.isFinite(p?.lon) && Number.isFinite(p?.lat))
@@ -24,7 +24,7 @@ export function drawDrone(map, group, state, orderId = '', debug = false) {
   const position = systemMapPoint(state)
   const heading = headingOf(state)
   const activeOrderId = state.activeOrderId || orderId
-  const label = activeOrderId ? `执行中 · ${escapeHtml(activeOrderId)}` : '无人机当前位置'
+  const label = activeOrderId ? `${escapeHtml(state.uavId)} · ${escapeHtml(activeOrderId)}` : escapeHtml(state.uavId || '无人机当前位置')
   const marker = L.marker([position.lat,position.lon], {icon: L.divIcon({className:'drone-pin',html:`<span><i style="transform:rotate(${heading.toFixed(1)}deg)">✈</i></span><b class="map-marker-label">${label}</b>`,iconSize:[48,48],iconAnchor:[24,24]})})
   if (debug) marker.bindPopup(`<strong>无人机 ${escapeHtml(state.uavId || '未知')}</strong><br>系统坐标（CGCS2000/WGS-84）<br>${position.lon.toFixed(6)}, ${position.lat.toFixed(6)}`)
   marker.addTo(group)

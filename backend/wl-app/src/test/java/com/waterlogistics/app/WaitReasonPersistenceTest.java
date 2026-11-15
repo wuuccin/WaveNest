@@ -7,10 +7,12 @@ import com.waterlogistics.contract.rest.GateSource;
 import com.waterlogistics.contract.rest.WaitReason;
 import com.waterlogistics.contract.state.OrderStatus;
 import com.waterlogistics.dispatch.gate.DispatchGateService;
+import com.waterlogistics.dispatch.order.CargoReadyService;
 import com.waterlogistics.dispatch.order.OrderAdmissionService;
 import com.waterlogistics.dispatch.order.OrderSubmitRequest;
 import com.waterlogistics.dispatch.order.OrderSubmitResponse;
 import com.waterlogistics.dispatch.prediction.PredictionService;
+import com.waterlogistics.dispatch.queue.CargoGateWaker;
 import com.waterlogistics.dispatch.queue.TaskQueueService;
 import com.waterlogistics.storage.entity.OrderTaskEntity;
 import com.waterlogistics.storage.repository.OrderTaskMapper;
@@ -31,11 +33,20 @@ import org.springframework.transaction.annotation.Transactional;
 @SpringBootTest(properties = {
         "wavenest.m2.flight-advance-enabled=false",
         // 仿真 AIS 流会覆盖手喂船位，关掉后本用例独占喂数
-        "wavenest.sim.enabled=false"})
+        "wavenest.sim.enabled=false",
+        // 货到巢关的后台轮询会与断言抢同一批订单，本类自己按需驱动放行
+        "wavenest.m2.cargo-gate-poll-enabled=false"})
 @Transactional
 class WaitReasonPersistenceTest {
 
-    private static final String SHIP = "123456789";
+    /**
+     * 测试专用船号。
+     *
+     * <p>不取演示船号 123456789：演示应用在跑时，它的仿真器每秒钟把该船号的 AIS 发到
+     * 消息队列，本测试手喂的船位快照会被覆盖，判定链读到的船位与测试预期不一致。
+     * 换成本用例独占的船号后，消息队列里演示应用的 AIS 影响不到本测试。
+     */
+    private static final String SHIP = "900000001";
 
     @Autowired
     private OrderAdmissionService admissionService;
@@ -47,18 +58,28 @@ class WaitReasonPersistenceTest {
     private DispatchGateService gateService;
     @Autowired
     private OrderTaskMapper orderTaskMapper;
+    @Autowired
+    private CargoReadyService cargoReadyService;
+    @Autowired
+    private CargoGateWaker cargoGateWaker;
 
     @Test
     void gateDeferralShouldPersistWaitReasonAndClearOnLeavingWaitState() {
         // 前置：南昌赣江演示航段船位，候选与会面求解都依赖真实预测快照
         predictionService.refresh(new AisMessage(
-                SHIP, "等待原因测试船", 115.8590, 28.6630, 5.0, 90.0,
+                SHIP, "等待原因测试船", 115.857937, 28.663776, 5.0, 90.0,
                 System.currentTimeMillis()));
 
         OrderSubmitResponse resp = admissionService.submit(new OrderSubmitRequest(
                 SHIP, 5.5, "医疗物资", System.currentTimeMillis() + 3_600_000L, "URGENT"));
         assertThat(resp.accepted()).isTrue();
         String orderId = resp.orderId();
+        // 系统下单时刻选定货巢 → 货物建行为「未就绪」→ 登记到巢并由轮询放行，首单才能到「已派发」
+        OrderTaskEntity submitted = orderTaskMapper.selectById(orderId);
+        if (submitted.getCargoNestId() != null && !submitted.getCargoNestId().isBlank()) {
+            cargoReadyService.markReady(orderId, submitted.getCargoNestId());
+            cargoGateWaker.tick();
+        }
         assertThat(orderTaskMapper.selectById(orderId).getStatus())
                 .isEqualTo(OrderStatus.DISPATCHED.getValue());
 

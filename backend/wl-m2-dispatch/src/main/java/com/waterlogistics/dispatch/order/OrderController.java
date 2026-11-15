@@ -110,12 +110,18 @@ public class OrderController {
      * <p><b>为什么是 POST 而不是 PATCH</b>：语义是「报告一个已经发生的物理事实（货到了）」，
      * 不是「把资源改成某个目标状态」。事实可以被重复报告，正好对上本端点的幂等口径。
      *
+     * <p><b>为什么请求体必须带货巢编号</b>：登记要核对货实际到达的巢与订单记的货巢，
+     * 缺巢编号就核不了，「货到了 A 巢、订单记的是 B 巢」这类错位会溜过去。
+     * 请求体缺失或巢编号空白都按业务拒绝处理（{@code accepted=false} ＋ 原因码），
+     * 不按接口故障处理。
+     *
      * <p>始终返回 200：查无货物／状态不可回退由响应体的 {@code accepted=false} ＋
      * {@code reasonCode} 表达，与 {@link OrderSubmitResponse} 的口径一致
      * （避免前端把业务拒绝当成接口故障）。
      */
     @PostMapping(ApiPath.CARGO_READY_TEMPLATE)
-    public CargoReadyResponse cargoReady(@PathVariable("orderId") String orderId) {
-        return cargoReadyService.markReady(orderId);
+    public CargoReadyResponse cargoReady(@PathVariable("orderId") String orderId,
+            @RequestBody(required = false) CargoReadyRequest request) {
+        return cargoReadyService.markReady(orderId, request == null ? null : request.cargoNestId());
     }
 }

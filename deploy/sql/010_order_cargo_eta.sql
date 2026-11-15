@@ -5,7 +5,8 @@
 -- 等待态需要落库具体等待原因供恢复与前端展示，ETA 需要由系统算出并落库
 -- （不再只放内存/视图）。
 --
---   cargo_nest_id  货物所在巢；NULL＝未指定，按离船最近巢处理（与 OrderSubmitRequest 一致）
+--   cargo_nest_id  货物所在巢；NULL＝系统未选定货巢（决策开关关闭或选不出可用巢），
+--                  由系统在下单时刻选定；已部署环境的列注释由 015_cargo_nest_decision.sql 更正
 --   wait_reason    等待原因（英文编码）：WAIT_SHIP / WAIT_CARGO / GATE_OR_DATA / WAIT_RESOURCE；
 --                  仅在「已受理待唤醒」有值，离开等待态由状态流转清空
 --   eta_ts         系统算出的预计送达时刻；NULL＝尚未算出
@@ -19,6 +20,6 @@ SET NAMES utf8mb4;
 USE `wavenest`;
 
 ALTER TABLE `order_task`
-    ADD COLUMN `cargo_nest_id` VARCHAR(64)  DEFAULT NULL COMMENT '货物所在巢；NULL＝未指定（取离船最近巢）' AFTER `ship_lat`,
+    ADD COLUMN `cargo_nest_id` VARCHAR(64)  DEFAULT NULL COMMENT '货物所在巢；NULL＝系统未选定货巢（决策开关关闭或选不出可用巢）' AFTER `ship_lat`,
     ADD COLUMN `wait_reason`   VARCHAR(32)  DEFAULT NULL COMMENT '等待原因编码：WAIT_SHIP/WAIT_CARGO/GATE_OR_DATA/WAIT_RESOURCE；仅已受理待唤醒时有值' AFTER `status`,
     ADD COLUMN `eta_ts`        DATETIME     DEFAULT NULL COMMENT '系统算出的预计送达时刻；NULL＝尚未算出' AFTER `meet_time`;

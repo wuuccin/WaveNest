@@ -22,6 +22,8 @@ import com.waterlogistics.dispatch.prediction.PredictionSnapshot;
 import com.waterlogistics.dispatch.prediction.PredictionUpdatedEvent;
 import com.waterlogistics.dispatch.rendezvous.RendezvousPlanCommittedEvent;
 import com.waterlogistics.dispatch.taskstate.FlightPhaseAdvancer;
+import com.waterlogistics.storage.entity.DroneEntity;
+import com.waterlogistics.storage.repository.DroneMapper;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -38,6 +40,9 @@ class RealtimeEventBridgeTest {
 
     @Mock
     private FlightPhaseAdvancer flightPhaseAdvancer;
+
+    @Mock
+    private DroneMapper droneMapper;
 
     private RealtimeEventBridge bridge;
 
@@ -101,6 +106,22 @@ class RealtimeEventBridgeTest {
         verify(endpoint).publish(WsFrameType.DRONE_STATE,
                 new DroneStateFrame("UAV-01", 115.91, 29.72, 83.0,
                         null, 1_700_000_000_000L, 45.0, "ORD-1"));
+    }
+
+    @Test
+    void uavTelemetry_shouldForwardRecordedDroneReturnStatus() {
+        RealtimeEventBridge bridge = new RealtimeEventBridge(endpoint, flightPhaseAdvancer, droneMapper);
+        DroneEntity drone = new DroneEntity();
+        drone.setStatus("返航中");
+        when(droneMapper.selectById("UAV-01")).thenReturn(drone);
+        when(flightPhaseAdvancer.activeOrderIdOf("UAV-01")).thenReturn("ORD-1");
+
+        bridge.onUavTelemetry(new UavTelemetry("UAV-01", 115.91, 29.72,
+                100.0, 12.0, 83.0, 45.0, 1_700_000_000_000L));
+
+        verify(endpoint).publish(WsFrameType.DRONE_STATE,
+                new DroneStateFrame("UAV-01", 115.91, 29.72, 83.0,
+                        "返航中", 1_700_000_000_000L, 45.0, "ORD-1"));
     }
 
     @Test

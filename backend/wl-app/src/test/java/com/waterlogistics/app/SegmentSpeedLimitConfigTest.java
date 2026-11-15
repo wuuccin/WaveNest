@@ -14,28 +14,29 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * 分段限速配置的「真的生效」校验（11-05 序号 1 · 吴可欣；11-07 末段上限修正 · 卢肄文）。
+ * 分段限速配置的「真的生效」校验（11-05 序号 1 · 吴可欣；11-14 同步中心线 v3 · 卢肄文）。
  *
  * <p>硬判据 7 的前半段：起服务后 {@code CenterlineSpeedLimitLookup.parse} 必须返回非
- * {@code UNBOUNDED}，且末段（4000–5778.9 m）限速低于实测 sog。
+ * {@code UNBOUNDED}，且末段（4000–6003.4 m）限速低于实测 sog。
  *
  * <p>本测试直接读 classpath 里的 {@code application.yml}：配置漏改、串写错、末段限速又调回
  * 高于实测 sog，这里立刻红——不必等到起服务才发现「限速没生效」。
  *
- * <p>末段上限 11-07 由 5780 改为 5778.9：中心线台账 v2 十三点全长 5778.9088 m
- * （{@code deploy/sql/014_centerline_v2.sql} 的 {@code s_m} 末行），写 5780 会越过总长，
- * 装配期按「限速段越过中心线总长」告警。上限必须 ≤ 5778.9088。
+ * <p>末段上限 11-14 随中心线 v3 由 5778.9 改为 6003.4：中心线台账 v3 十三点全长
+ * 6003.3510 m（{@code deploy/sql/016_centerline_v3.sql} 的 {@code s_m} 末行），配置取一位
+ * 小数 6003.4，比全长多 0.049 m；装配期按「maxCoveredS > 全长 + 1 m」告警，故上限断言与
+ * 越界断言均按 1 m 容差判定。
  */
 class SegmentSpeedLimitConfigTest {
 
-    /** 末段（4000–5778.9 m）的限速，m/s。 */
+    /** 末段（4000–6003.4 m）的限速，m/s。 */
     private static final double LAST_SEGMENT_LIMIT_MS = 2.5;
 
-    /** 末段上限，m（＝中心线台账 v2 全长 5778.9088 取一位小数，不得超过它）。 */
-    private static final double LAST_SEGMENT_TO_S = 5778.9;
+    /** 末段上限，m（＝中心线台账 v3 全长 6003.3510 m 取一位小数，容差 1 m 内）。 */
+    private static final double LAST_SEGMENT_TO_S = 6003.4;
 
-    /** 中心线台账 v2 全长，m。 */
-    private static final double CENTERLINE_V2_TOTAL_M = 5778.9088;
+    /** 中心线台账 v3 全长，m。 */
+    private static final double CENTERLINE_TOTAL_M = 6003.3510;
 
     /** 实测 sog，m/s（11-05 现场值）。 */
     private static final double MEASURED_SOG_MS = 4.12;
@@ -46,13 +47,13 @@ class SegmentSpeedLimitConfigTest {
         String spec = readSegmentSpeedLimits();
 
         assertTrue(!spec.isBlank(), "segment-speed-limits 不得为空（空＝全航段不限速）");
-        assertTrue(Pattern.compile("4000,\\s*5778\\.9,\\s*" + LAST_SEGMENT_LIMIT_MS).matcher(spec).find(),
-                "末段（4000–5778.9 m）限速必须是 " + LAST_SEGMENT_LIMIT_MS + " m/s，实读：" + spec);
+        assertTrue(Pattern.compile("4000,\\s*6003\\.4,\\s*" + LAST_SEGMENT_LIMIT_MS).matcher(spec).find(),
+                "末段（4000–6003.4 m）限速必须是 " + LAST_SEGMENT_LIMIT_MS + " m/s，实读：" + spec);
         assertTrue(LAST_SEGMENT_LIMIT_MS < MEASURED_SOG_MS,
                 "末段限速必须低于实测 sog " + MEASURED_SOG_MS + " m/s");
-        assertTrue(LAST_SEGMENT_TO_S <= CENTERLINE_V2_TOTAL_M,
-                "末段上限 " + LAST_SEGMENT_TO_S + " m 不得超过中心线 v2 全长 "
-                        + CENTERLINE_V2_TOTAL_M + " m，否则装配期会按「越界」告警");
+        assertTrue(LAST_SEGMENT_TO_S <= CENTERLINE_TOTAL_M + 1.0,
+                "末段上限 " + LAST_SEGMENT_TO_S + " m 不得超过中心线 v3 全长 "
+                        + CENTERLINE_TOTAL_M + " m ＋ 容差 1 m，否则装配期会按「越界」告警");
     }
 
     @Test
@@ -69,9 +70,9 @@ class SegmentSpeedLimitConfigTest {
                 lookup.switchPointsM(), 1e-9, "限速切换点必须齐全，预测器据此切子步");
 
         // 「启动 WARN 零命中」的可测形式：装配期只在 maxCoveredS > 全长 + 容差(1 m) 时告警
-        assertTrue(lookup.maxCoveredS() <= CENTERLINE_V2_TOTAL_M + 1.0,
-                "末段覆盖至 " + lookup.maxCoveredS() + " m，超过中心线 v2 全长 "
-                        + CENTERLINE_V2_TOTAL_M + " m ＋ 容差 1 m，装配期会打越界 WARN");
+        assertTrue(lookup.maxCoveredS() <= CENTERLINE_TOTAL_M + 1.0,
+                "末段覆盖至 " + lookup.maxCoveredS() + " m，超过中心线 v3 全长 "
+                        + CENTERLINE_TOTAL_M + " m ＋ 容差 1 m，装配期会打越界 WARN");
     }
 
     /** 从 classpath 的 {@code application.yml} 读出配置串。 */

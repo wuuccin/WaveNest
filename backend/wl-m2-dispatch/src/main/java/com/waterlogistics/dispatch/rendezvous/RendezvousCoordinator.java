@@ -100,7 +100,12 @@ public class RendezvousCoordinator {
      *
      * @param meetLon 会面点经度
      * @param meetLat 会面点纬度
-     * @param meetTime 会面时刻（组合级回填与航迹起点推算的依据）
+     * @param meetTime 会面时刻（组合级回填与航迹起点推算的依据）。
+     *                 <b>命名遗留（MEDIUM.16）</b>：本字段原名「起飞时刻」，取值实为
+     *                 {@code solution.meetTMin()}，即窗下界＝双方到达会面点的时刻；
+     *                 真正起飞时刻＝会面时刻 − 去程精算时长，由端口方法
+     *                 {@code computeTakeoffTime}（{@code DispatchPlanVerifier} 调用）另算。
+     *                 旧名已改掉，新增调用方不得再按「起飞」理解它。
      * @param solutionId 算法层解标识（留痕用）
      * @param snapshotVersion 求解所用快照版本（与 M2 常驻层一致，便于事后核对）
      * @param nestLon 求解起点机巢经度（有货物所在巢时取货物所在巢，否则取无人机当前所在巢）

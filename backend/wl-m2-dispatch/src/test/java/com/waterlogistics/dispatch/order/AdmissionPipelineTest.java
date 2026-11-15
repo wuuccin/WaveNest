@@ -398,7 +398,7 @@ class AdmissionPipelineTest {
         assertFalse(AdmissionPipeline.isValidMmsi("4138๐๐๐๐๑"), "非 ASCII 数字字符");
     }
 
-    // ───────── 11-05 序号 2：重复单判据改为「同货巢 ＋ 同货型 ＋ 时间窗」 ─────────
+    // ───────── 重复单判据：同船 ＋ 同货型 ＋ 同货巢 ＋ 时间窗 ─────────
 
     /** 带货物所在巢的下单请求（其余字段同 {@link #request()}）。 */
     private static AdmissionPipeline.OrderRequest requestAt(String mmsi, String cargoNestId) {
@@ -414,10 +414,19 @@ class AdmissionPipelineTest {
     }
 
     @Test
-    @DisplayName("★ 同货巢不同船 → 仍是重复单（判据已从「同船」改为「同货巢」）")
-    void sameNestDifferentShip_shouldBeDuplicate() {
-        assertTrue(duplicate(requestAt("413800001", "N-1"), "413800999", "N-1"),
-                "一批货被报两遍与「谁去承运」无关；按 MMSI 判会让换一条船下单就绕过判据");
+    @DisplayName("★ 同船同货巢 → 是重复单")
+    void sameShipSameNest_shouldBeDuplicate() {
+        assertTrue(duplicate(requestAt("413800001", "N-1"), "413800001", "N-1"),
+                "同一艘船在同一时间窗内不该同时接两笔同货型同重量的单");
+    }
+
+    @Test
+    @DisplayName("★ 同货巢不同船 → 不再判重（货巢由系统选定，同巢是常态而非同批货的标识）")
+    void sameNestDifferentShip_shouldNotBeDuplicate() {
+        // 货巢决策归属改造后，货巢是系统按离船距离做的物流安排，同一座巢同时服务多条船
+        // 是常态。若按巢单独判重，不同船的两笔不同订单会被判成重复，正常订单被拒。
+        assertFalse(duplicate(requestAt("413800001", "N-1"), "413800999", "N-1"),
+                "同巢不同船不是同一批货，不能判重");
     }
 
     @Test
@@ -428,7 +437,7 @@ class AdmissionPipelineTest {
     }
 
     @Test
-    @DisplayName("本单未指定货巢 → 退回按 MMSI 判（不能按 null==null 判重）")
+    @DisplayName("本单未指定货巢 → 退回按船判（不能按 null==null 判重）")
     void nullNest_shouldFallBackToMmsi() {
         assertTrue(duplicate(requestAt("413800001", null), "413800001", "N-1"),
                 "同船同货型同重量同窗口，保守判重");
@@ -448,6 +457,6 @@ class AdmissionPipelineTest {
         assertFalse(duplicate(requestAt(null, null), "413800001", "N-1"),
                 "改前 request.mmsi().equals(...) 在这里直接 NPE，把业务拒绝变成 500");
         // 货巢路径不碰 mmsi，同样不应抛
-        assertTrue(duplicate(requestAt(null, "N-1"), "413800999", "N-1"));
+        assertFalse(duplicate(requestAt(null, "N-1"), "413800999", "N-1"));
     }
 }

@@ -10,7 +10,9 @@ import com.waterlogistics.contract.rest.GateStatus;
 import com.waterlogistics.contract.state.OrderStatus;
 import com.waterlogistics.dispatch.gate.DispatchGateService;
 import com.waterlogistics.dispatch.record.TaskLogRecorder;
+import com.waterlogistics.storage.entity.OrderTaskEntity;
 import com.waterlogistics.storage.repository.GoodsMapper;
+import com.waterlogistics.storage.repository.OrderTaskMapper;
 
 import java.lang.reflect.Proxy;
 import java.util.List;
@@ -43,7 +45,7 @@ class OrderControllerTest {
         admissionService = new OrderAdmissionService(new TaskLogRecorder(), event -> { },
                 null, null, null);
         controller = new OrderController(admissionService, gateService,
-                new CargoReadyService(stubGoodsMapper()));
+                new CargoReadyService(stubGoodsMapper(), stubOrderMapper()));
     }
 
     /** 全返回 null 的货物映射器桩（本类不断言货物路径）。 */
@@ -51,6 +53,21 @@ class OrderControllerTest {
         return (GoodsMapper) Proxy.newProxyInstance(
                 GoodsMapper.class.getClassLoader(), new Class<?>[]{GoodsMapper.class},
                 (proxy, method, args) -> null);
+    }
+
+    /** 订单映射器桩：返回一行带货巢的订单，供到巢登记做巢核对。 */
+    private static OrderTaskMapper stubOrderMapper() {
+        return (OrderTaskMapper) Proxy.newProxyInstance(
+                OrderTaskMapper.class.getClassLoader(), new Class<?>[]{OrderTaskMapper.class},
+                (proxy, method, args) -> {
+                    if ("selectOne".equals(method.getName())) {
+                        OrderTaskEntity order = new OrderTaskEntity();
+                        order.setOrderId("ORD-1");
+                        order.setCargoNestId("NEST-01");
+                        return order;
+                    }
+                    return null;
+                });
     }
 
     @Test
@@ -104,13 +121,22 @@ class OrderControllerTest {
     }
 
     @Test
-    @DisplayName("11-05：cargo-ready 端点转发到 CargoReadyService（桩表全空 → 查无货物）")
+    @DisplayName("cargo-ready 端点转发到 CargoReadyService（桩表全空 → 查无货物）")
     void cargoReady_shouldDelegateToService() {
-        CargoReadyResponse response = controller.cargoReady("ORD-1");
+        CargoReadyResponse response = controller.cargoReady("ORD-1", new CargoReadyRequest("NEST-01"));
 
         assertEquals(false, response.accepted());
         assertEquals(CargoReadyResponse.Reason.GOODS_NOT_FOUND.name(), response.reasonCode());
         assertEquals("ORD-1", response.orderId(), "订单号要回显，便于前端对号");
+    }
+
+    @Test
+    @DisplayName("cargo-ready 端点：请求体缺货巢编号按业务拒绝处理，不是接口故障")
+    void cargoReady_withoutRequestBody_shouldRejectAsBusiness() {
+        CargoReadyResponse response = controller.cargoReady("ORD-1", null);
+
+        assertEquals(false, response.accepted());
+        assertEquals(CargoReadyResponse.Reason.CARGO_NEST_REQUIRED.name(), response.reasonCode());
     }
 
     // ───────── 11-05 序号 2：两个评审项的守门用例 ─────────

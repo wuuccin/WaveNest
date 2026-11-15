@@ -14,6 +14,9 @@ import com.waterlogistics.dispatch.prediction.PredictionUpdatedEvent;
 import com.waterlogistics.dispatch.rendezvous.RendezvousPlanCommittedEvent;
 import com.waterlogistics.dispatch.taskstate.FlightPhaseAdvancer;
 import com.waterlogistics.dispatch.taskstate.FlightPhaseChangedEvent;
+import com.waterlogistics.storage.entity.DroneEntity;
+import com.waterlogistics.storage.repository.DroneMapper;
+import com.waterlogistics.monitor.store.ShipPredictionReplayStore;
 import org.springframework.amqp.core.ExchangeTypes;
 import org.springframework.amqp.rabbit.annotation.Exchange;
 import org.springframework.amqp.rabbit.annotation.Queue;
@@ -24,6 +27,8 @@ import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * 已确认业务结果到 WebSocket 契约帧的接线层。
@@ -33,21 +38,36 @@ import org.springframework.transaction.event.TransactionalEventListener;
  */
 @Component
 public final class RealtimeEventBridge {
+    private static final Logger log = LoggerFactory.getLogger(RealtimeEventBridge.class);
 
     private final WsPushEndpoint endpoint;
 
     /** 可为 null：单元测试按旧签名构造时不查在飞订单，{@code activeOrderId} 取 null。 */
     private final FlightPhaseAdvancer flightPhaseAdvancer;
+    private final DroneMapper droneMapper;
+    private final ShipPredictionReplayStore predictionReplay;
 
     public RealtimeEventBridge(WsPushEndpoint endpoint) {
-        this(endpoint, null);
+        this(endpoint, null, null, null);
+    }
+
+    public RealtimeEventBridge(WsPushEndpoint endpoint,
+            FlightPhaseAdvancer flightPhaseAdvancer) {
+        this(endpoint, flightPhaseAdvancer, null, null);
+    }
+
+    public RealtimeEventBridge(WsPushEndpoint endpoint,
+            FlightPhaseAdvancer flightPhaseAdvancer, DroneMapper droneMapper) {
+        this(endpoint, flightPhaseAdvancer, droneMapper, null);
     }
 
     @Autowired
-    public RealtimeEventBridge(WsPushEndpoint endpoint,
-            FlightPhaseAdvancer flightPhaseAdvancer) {
+    public RealtimeEventBridge(WsPushEndpoint endpoint, FlightPhaseAdvancer flightPhaseAdvancer,
+            DroneMapper droneMapper, ShipPredictionReplayStore predictionReplay) {
         this.endpoint = endpoint;
         this.flightPhaseAdvancer = flightPhaseAdvancer;
+        this.droneMapper = droneMapper;
+        this.predictionReplay = predictionReplay;
     }
 
     /** 等状态事务提交后再发送已确认的订单视图；本层只转发。 */
@@ -65,6 +85,14 @@ public final class RealtimeEventBridge {
     /** M2 已完成预测与契约投影，本层只转发。 */
     @EventListener
     public void onPredictionUpdated(PredictionUpdatedEvent event) {
+        if (predictionReplay != null) {
+            try {
+                predictionReplay.append(event.frame());
+            } catch (RuntimeException error) {
+                log.warn("预测回放归档失败，实时帧继续发送：mmsi={} version={}",
+                        event.frame().mmsi(), event.frame().version(), error);
+            }
+        }
         endpoint.publish(WsFrameType.SHIP_TRAJ, event.frame());
     }
 
@@ -91,9 +119,10 @@ public final class RealtimeEventBridge {
                     durable = "true"),
             key = TopicName.DATA_UAV_TELEMETRY))
     public void onUavTelemetry(UavTelemetry telemetry) {
+        DroneEntity drone = droneMapper == null ? null : droneMapper.selectById(telemetry.uavId());
         endpoint.publish(WsFrameType.DRONE_STATE, new DroneStateFrame(
                 telemetry.uavId(), telemetry.lon(), telemetry.lat(), telemetry.battery(),
-                null, telemetry.ts(), telemetry.heading(), activeOrderIdOf(telemetry.uavId())));
+                drone == null ? null : drone.getStatus(), telemetry.ts(), telemetry.heading(), activeOrderIdOf(telemetry.uavId())));
     }
 
     /** C5 告警产出走 alert.event；本层只做字段投影与提示语拼装。 */

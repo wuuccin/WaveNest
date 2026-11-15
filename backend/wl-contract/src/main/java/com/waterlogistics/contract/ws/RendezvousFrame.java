@@ -23,6 +23,14 @@ import java.util.List;
  * @param chosenDroneId   中选无人机；未选出时为 {@code null}
  * @param candidates      本轮<b>全部</b>候选（含中选者，中选者 {@code selected=true}）；
  *                        候选链未产出时为 {@code null}
+ * @param occupancy       占位结果（时隙号、占用对象、时窗、状态）；未登记时为 {@code null}，
+ *                        字段口径见 {@link OccupancySlotView}
+ * @param stagger         错峰结果（是否错峰、平移毫秒、时移前后会面时刻、可读原因）；
+ *                        未进入定案校验时为 {@code null}，字段口径见 {@link StaggerResultView}
+ *
+ * <p><b>第三次扩字段（11-14 序号 1-2 · 占位与错峰可视化）</b>：末尾两项均为可空成分，
+ * 既有十项的顺序与含义不变；队列侧与重算路径不填即 {@code null}，前端按空值显示「未登记」。
+ * 帧归属只在本帧，不新增 {@code WsFrameType}。
  *
  * <p><b>T1-1 之后的第二次扩字段（10-29 候选可观测性第二步）</b>：在中选机巢／中选无人机／逐条候选三项。
  * 前三项与 {@code rejectionReasons} <b>并存不替换</b>——{@code rejectionReasons} 是<b>只有落选项</b>
@@ -49,7 +57,23 @@ public record RendezvousFrame(
 
         String chosenDroneId,
 
-        List<CandidateView> candidates) {
+        List<CandidateView> candidates,
+
+        OccupancySlotView occupancy,
+
+        StaggerResultView stagger) {
+
+    /**
+     * 兼容构造器：保留第三次扩字段前的十参签名，占位与错峰两项留空。
+     */
+    public RendezvousFrame(String orderId, double meetLon, double meetLat,
+                           boolean locked, Integer candidateCount,
+                           List<String> rejectionReasons, Long etaTs,
+                           String chosenNestId, String chosenDroneId,
+                           List<CandidateView> candidates) {
+        this(orderId, meetLon, meetLat, locked, candidateCount, rejectionReasons,
+                etaTs, chosenNestId, chosenDroneId, candidates, null, null);
+    }
 
     /**
      * 兼容构造器：保留 T1-1 之前的四参签名，新字段留空。
@@ -59,7 +83,7 @@ public record RendezvousFrame(
      */
     public RendezvousFrame(String orderId, double meetLon, double meetLat,
                            boolean locked) {
-        this(orderId, meetLon, meetLat, locked, null, null, null, null, null, null);
+        this(orderId, meetLon, meetLat, locked, null, null, null, null, null, null, null, null);
     }
 
     /**
@@ -69,6 +93,6 @@ public record RendezvousFrame(
                            boolean locked, Integer candidateCount,
                            List<String> rejectionReasons, Long etaTs) {
         this(orderId, meetLon, meetLat, locked, candidateCount, rejectionReasons,
-                etaTs, null, null, null);
+                etaTs, null, null, null, null, null);
     }
 }

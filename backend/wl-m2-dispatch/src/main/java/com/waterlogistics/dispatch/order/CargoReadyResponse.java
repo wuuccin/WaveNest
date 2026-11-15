@@ -19,7 +19,9 @@ import com.waterlogistics.contract.state.GoodsStatus;
  * @param changed     本次调用是否真的改了库（{@code false} ＝ 幂等命中）
  * @param updatedRows 本次更新的货物行数（多货行订单下可能 &gt;1）
  * @param reasonCode  幂等或拒绝的原因码：{@code ALREADY_READY}／{@code GOODS_NOT_FOUND}／
- *                    {@code ORDER_ID_MISSING}／{@code GOODS_STATE_FROZEN}；正常改动时为 {@code null}
+ *                    {@code ORDER_ID_MISSING}／{@code GOODS_STATE_FROZEN}／
+ *                    {@code CARGO_NEST_REQUIRED}／{@code CARGO_NEST_MISSING_ON_ORDER}／
+ *                    {@code CARGO_NEST_MISMATCH}／{@code ORDER_NOT_FOUND}；正常改动时为 {@code null}
  * @param message     原因说明（中文，供前端直接展示）
  */
 public record CargoReadyResponse(
@@ -59,6 +61,18 @@ public record CargoReadyResponse(
 
         /** 货物已进入不可回退的状态（已装机／已交付／已回收／灭失） */
         GOODS_STATE_FROZEN,
+
+        /** 请求体缺少货巢编号 */
+        CARGO_NEST_REQUIRED,
+
+        /** 订单本身没有指定货巢，没有比对基准 */
+        CARGO_NEST_MISSING_ON_ORDER,
+
+        /** 货物实际到达的巢与订单记的货巢不一致 */
+        CARGO_NEST_MISMATCH,
+
+        /** 订单不存在 */
+        ORDER_NOT_FOUND,
 
         /** 幂等命中：已是「已就绪」 */
         ALREADY_READY

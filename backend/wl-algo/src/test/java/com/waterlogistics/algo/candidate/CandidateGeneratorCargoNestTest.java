@@ -10,12 +10,12 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * 11-05 序号 1 · 硬判据 1 的「脏货巢」语义（对照卢肄文 11-05 字段表原话）。
+ * 候选生成在「货巢已定」下的语义测试。
  *
  * <h3>为什么单独一个类</h3>
- * <p>{@link CandidateInput} 里「货点可用／不可用」有两种成因，11-05 之前只有
+ * <p>{@link CandidateInput} 里「货点可用／不可用」有两种成因，此前只有
  * {@link CandidateInput#hasCargoPoint()} 一个判断，两者被合并成同一个分支
- * 「退回船位口径」。但卢肄文 11-05 字段表明确：
+ * 「退回船位口径」。但货巢字段表明确：
  * <blockquote>
  *   脏货巢查不到坐标时应<b>不提供该组合</b>，不要退化到「无人机所在巢」，
  *   否则货巢≠机巢的空机转场段会凭空消失。
@@ -26,6 +26,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *   <li>{@code cargoNestId != null && 坐标非有限} → 脏货巢，<b>一个组合都不产出</b>。</li>
  * </ul>
  * 本类钉住第二档，以及「第一档没有被误伤」。
+ *
+ * <h3>货巢已定分支</h3>
+ * <p>货巢由系统在下单时刻选定并落库后，组合固定为「已定货巢 ＋ 任一空闲机」，
+ * 距离语义是「机归属巢到装货点」。本类同时钉住这一分支：装货巢不得被换成机所在的巢，
+ * 跨巢体现在「机从别的巢飞来」。
  */
 class CandidateGeneratorCargoNestTest {
 
@@ -109,8 +114,8 @@ class CandidateGeneratorCargoNestTest {
     // ───────────── 正常货巢：按货点算距离 ─────────────
 
     @Test
-    @DisplayName("11-05-1 · 货巢坐标齐全时距离基准是货点，不是船位")
-    void resolvedCargoNest_usesCargoPointAsDistanceBase() {
+    @DisplayName("货巢坐标齐全但该巢不在本轮可用巢列表里时，一个组合都不产出")
+    void cargoNestOutsideAvailableNests_yieldsNoCombos() {
         CandidateInput input = new CandidateInput(PICKUP_LON, PICKUP_LAT, PAYLOAD_KG,
                 List.of(nest("NEST-01", 115.848, 28.642)),
                 List.of(drone("UAV-01", "NEST-01")),
@@ -121,12 +126,11 @@ class CandidateGeneratorCargoNestTest {
         assertEquals(115.867, input.distanceBaseLon(), 1e-9);
         assertEquals(28.698, input.distanceBaseLat(), 1e-9);
 
-        // 实算：NEST-01 → NEST-02 直线 6.50 km（> 默认半径 5 km），
-        // 而 NEST-01 → 船位只有 2.96 km（< 5 km）。
-        // 所以「按货点算」⇒ 0 条，「误退回船位」⇒ 1 条，两者可区分。
+        // 货巢已定分支的外层只枚举已定货巢这一个巢；该巢不在可用巢列表里时无巢可枚举，
+        // 于是不产出任何组合——不能退而选别的巢，那会让装货点与订单记的货巢不一致。
         assertEquals(List.of(),
                 generator.generate(input, CandidateGenerator.Params.defaults()),
-                "距离必须按货点算（6.50 km 超半径 ⇒ 不产出）；若产出说明退回了船位口径（2.96 km）");
+                "货巢不在可用巢列表时不产出任何组合，不得改选别的巢");
     }
 
     @Test
@@ -146,32 +150,79 @@ class CandidateGeneratorCargoNestTest {
         assertEquals("M30T", combo.type());
     }
 
-    // ───────────── 跨巢：硬判据 1 本体 ─────────────
+    // ───────────── 货巢已定：组合固定为装货巢 ─────────────
 
     @Test
-    @DisplayName("11-05-1 · 候选中出现「非无人机当前所在巢」的组合（硬判据 1 本体）")
-    void crossNestComboIsProduced() {
-        // 两巢两机，货点在两巢中间（离各自约 3.3 km，均在默认 5 km 半径内）：
-        // 期望 4 条（2 巢 × 2 机全组合），其中「UAV-N 从 NEST-S 出发」「UAV-S 从 NEST-N 出发」
-        // 两条跨巢组合正是硬判据 1 要求旧实现产不出的那两条。
+    @DisplayName("货巢已定：组合固定为装货巢，机可来自其它巢（跨巢转场）")
+    void fixedCargoNest_producesCombosForDronesFromOtherNests() {
+        // 装货点固定在 NEST-MID，两架机分别停在 NEST-S 与 NEST-N：
+        // 期望两条组合，装货巢都是 NEST-MID，机各一台——跨巢体现在「机从别的巢飞来」，
+        // 而不是「组合的装货巢被换掉」。
         CandidateInput input = new CandidateInput(PICKUP_LON, PICKUP_LAT, PAYLOAD_KG,
-                List.of(nest("NEST-S", 115.848, 28.642), nest("NEST-N", 115.867, 28.698)),
+                List.of(nest("NEST-MID", 115.8575, 28.670),
+                        nest("NEST-S", 115.848, 28.642),
+                        nest("NEST-N", 115.867, 28.698)),
                 List.of(drone("UAV-S", "NEST-S"), drone("UAV-N", "NEST-N")),
                 "NEST-MID", 115.8575, 28.670);
 
         List<CandidateGenerator.CandidateCombo> combos =
                 generator.generate(input, CandidateGenerator.Params.defaults());
 
-        assertEquals(4, combos.size(),
-                "两巢都在 5 km 半径内，巢×机应出 4 条；实际：" + combos.size());
-        assertEquals(1, combos.stream()
-                .filter(c -> "UAV-N".equals(c.droneId()) && "NEST-S".equals(c.nestId()))
-                .count(),
-                "北巢的机从南巢出发的组合必须出现——这正是旧实现 nestMap.get(d.nestId()) 产不出的");
-        assertEquals(1, combos.stream()
-                .filter(c -> "UAV-S".equals(c.droneId()) && "NEST-N".equals(c.nestId()))
-                .count(),
-                "南巢的机从北巢出发的组合必须出现");
+        assertEquals(2, combos.size(),
+                "两架机各产出一个组合，实际：" + combos.size());
+        assertTrue(combos.stream().allMatch(c -> "NEST-MID".equals(c.nestId())),
+                "组合的装货巢必须恒为已定货巢 NEST-MID，不得被换成机所在的巢");
+        assertEquals(1, combos.stream().filter(c -> "UAV-N".equals(c.droneId())).count(),
+                "北巢的机必须能到装货巢装货");
+        assertEquals(1, combos.stream().filter(c -> "UAV-S".equals(c.droneId())).count(),
+                "南巢的机必须能到装货巢装货");
+    }
+
+    @Test
+    @DisplayName("货巢已定：距离是「机归属巢到装货点」，远的机排在后面而不是被剔除")
+    void fixedCargoNest_distanceIsHomeNestToCargoNest() {
+        // 装货点 NEST-CARGO 在两巢中间；UAV-NEAR 距装货点约 3.3 公里，
+        // UAV-FAR 距装货点几十公里。两台机都参与组合——能不能赶到由会面求解判定、
+        // 够不够电由电量闸判定，候选生成不另设距离闸；远的排在后面。
+        CandidateInput input = new CandidateInput(PICKUP_LON, PICKUP_LAT, PAYLOAD_KG,
+                List.of(nest("NEST-CARGO", 115.8575, 28.670),
+                        nest("NEST-NEAR", 115.848, 28.642),
+                        nest("NEST-FAR", 116.5, 29.5)),
+                List.of(drone("UAV-NEAR", "NEST-NEAR"), drone("UAV-FAR", "NEST-FAR")),
+                "NEST-CARGO", 115.8575, 28.670);
+
+        List<CandidateGenerator.CandidateCombo> combos =
+                generator.generate(input, CandidateGenerator.Params.defaults());
+
+        assertEquals(2, combos.size(),
+                "两台机各产出一个组合，实际：" + combos.size());
+        assertTrue(combos.stream().allMatch(c -> "NEST-CARGO".equals(c.nestId())),
+                "组合的装货巢必须恒为已定货巢");
+        assertEquals("UAV-NEAR", combos.get(0).droneId(),
+                "离装货点近的机排在前面");
+        assertEquals("UAV-FAR", combos.get(1).droneId(),
+                "离装货点远的机排在后面");
+        assertTrue(combos.get(0).distKm() > 0.0 && combos.get(0).distKm() < 5.0,
+                "距离是机归属巢到装货点的距离，实际：" + combos.get(0).distKm());
+        assertTrue(combos.get(1).distKm() > combos.get(0).distKm(),
+                "排序必须按机归属巢到装货点的距离升序");
+    }
+
+    @Test
+    @DisplayName("货巢已定：机归属巢坐标查不到时该机不参与组合")
+    void fixedCargoNest_skipsDroneWithUnknownHomeNest() {
+        // UAV-ORPHAN 的归属巢不在本轮可用巢台账里：算不出空机转场距离，
+        // 产出一个距离为零的假组合会让电量闸与时限闸失去依据，因此不产出。
+        CandidateInput input = new CandidateInput(PICKUP_LON, PICKUP_LAT, PAYLOAD_KG,
+                List.of(nest("NEST-CARGO", 115.8575, 28.670)),
+                List.of(drone("UAV-ORPHAN", "NEST-GONE")),
+                "NEST-CARGO", 115.8575, 28.670);
+
+        List<CandidateGenerator.CandidateCombo> combos =
+                generator.generate(input, CandidateGenerator.Params.defaults());
+
+        assertEquals(List.of(), combos,
+                "归属巢查不到坐标的机不参与组合——距离为假的组合会骗过电量闸");
     }
 
     @Test

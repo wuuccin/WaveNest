@@ -1,10 +1,10 @@
 import { reactive } from 'vue'
 
-export const DEMO_STAGES = ['下单与预计会面', '首架无人机去程', '船舶变向，重评会面方案', '本例预设原机返航', '演示落巢回收并重入队', '演示重派并与船舶交接']
+export const DEMO_STAGES = ['下单与预计会面', '首架无人机去程', '等待气象超限事件与无人机返航状态', '演示落巢回收并重入队', '演示重派并与船舶交接']
 
 // Only real backend frames confirm progress; missing transitions stop the runner.
 export function createDemoRunner({ api, subscribe, connected, timeoutMs = 30000 }) {
-  const state = reactive({ running: false, step: 0, error: '', orderId: null })
+  const state = reactive({ running: false, step: 0, completed: false, error: '', orderId: null })
   let controller
   function cancel() { controller?.abort(); controller = undefined; state.running = false }
   async function run() {
@@ -13,29 +13,26 @@ export function createDemoRunner({ api, subscribe, connected, timeoutMs = 30000 
     const runController = new AbortController()
     controller = runController
     const signal = runController.signal
-    Object.assign(state, { running: true, step: 0, error: '', orderId: null })
-    const seen = { meet: false, outbound: false, shipVersion: null, turned: false, firstDrone: null, original: null, returning: false, requeued: false, replacement: false, handover: false, finalReturn: false, completed: false }
+    Object.assign(state, { running: true, step: 0, completed: false, error: '', orderId: null })
+    const seen = { meet: false, outbound: false, firstDrone: null, original: null, weatherExceeded: false, returning: false, requeued: false, replacement: false, handover: false, completed: false }
     const pending = []
     let wake = () => {}
     function observe(frame) {
-      const d = frame.data
+      const d = frame.data || {}
       if (frame.type === 'order_state' && d.orderId === state.orderId) {
         if (d.orderStatus === '去程中') { seen.outbound = true; seen.original ||= seen.firstDrone }
-        if (d.orderStatus === '返航中' && seen.turned) seen.returning = true
         if (d.orderStatus === '待调度' && seen.returning) seen.requeued = true
         if (d.orderStatus === '末段交接中' && seen.requeued) seen.handover = true
-        if (d.orderStatus === '返航中' && seen.handover) seen.finalReturn = true
-        if (d.orderStatus === '已完成' && seen.handover && seen.finalReturn) seen.completed = true
+        if (d.orderStatus === '已完成' && seen.handover) seen.completed = true
       }
       if (frame.type === 'rendezvous' && d.orderId === state.orderId) seen.meet = true
-      if (frame.type === 'ship_traj' && Number.isFinite(d.version)) {
-        if (seen.shipVersion == null || !seen.outbound) seen.shipVersion = d.version
-        else if (d.version > seen.shipVersion) seen.turned = true
-      }
+      if (frame.type === 'alarm' && (d.orderId === state.orderId || (seen.original && (d.targetId === seen.original || d.target === seen.original)))
+        && (d.alarmType === '气象超限' || d.alertType === '气象超限')) seen.weatherExceeded = true
       if (frame.type === 'drone_state') {
-        if (!seen.firstDrone && !seen.requeued) seen.firstDrone = d.uavId
-        if (!seen.original && seen.outbound) seen.original = d.uavId
-        if (seen.requeued && seen.original && d.uavId && d.uavId !== seen.original && (!d.orderId || d.orderId === state.orderId)) seen.replacement = true
+        if (!seen.firstDrone && !seen.requeued && (d.activeOrderId === state.orderId || d.orderId === state.orderId)) seen.firstDrone = d.uavId
+        if (!seen.original && seen.outbound && (d.activeOrderId === state.orderId || d.orderId === state.orderId)) seen.original = d.uavId
+        if (seen.original && d.uavId === seen.original && ['返航中', '返航'].includes(d.flightPhase || d.phase)) seen.returning = true
+        if (seen.requeued && seen.original && d.uavId && d.uavId !== seen.original && (d.activeOrderId === state.orderId || d.orderId === state.orderId)) seen.replacement = true
       }
       wake()
     }
@@ -62,13 +59,18 @@ export function createDemoRunner({ api, subscribe, connected, timeoutMs = 30000 
       if (!created.accepted || !created.orderId) throw new Error(created.message || '后端未接收演示订单')
       state.orderId = created.orderId
       for (const frame of pending) observe(frame)
-      const checks = [() => seen.meet, () => seen.outbound && !!seen.original, () => seen.turned,
-        () => seen.returning, () => seen.requeued, () => seen.replacement && seen.handover && seen.finalReturn && seen.completed]
-      for (let i = 0; i < checks.length; i++) {
-        state.step = i + 1
-        if (i === 2) await api.turnShip(45, { signal })
-        await waitFor(checks[i], i + 1)
-      }
+      state.step = 1
+      await waitFor(() => seen.meet, 1)
+      state.step = 2
+      await waitFor(() => seen.outbound && !!seen.original, 2)
+      state.step = 3
+      await api.injectWeather({ windSpeedMs: 16 }, { signal })
+      await waitFor(() => seen.weatherExceeded && seen.returning, 3)
+      state.step = 4
+      await waitFor(() => seen.requeued, 4)
+      state.step = 5
+      await waitFor(() => seen.replacement && seen.handover && seen.completed, 5)
+      state.completed = true
     } catch (error) { if (!signal.aborted) state.error = error.message }
     finally {
       unsubscribe()

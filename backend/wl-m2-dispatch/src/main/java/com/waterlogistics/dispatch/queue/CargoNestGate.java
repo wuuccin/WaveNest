@@ -23,8 +23,10 @@ import org.springframework.stereotype.Component;
  *   <li>终态按 order_id 释放（既有 releaseByOrder 链路，本类不管）。</li>
  * </ol>
  *
- * <p><b>无货巢指定的订单（cargoNestId 为空）不经本关</b>，直接放行——
- * 旧链路（未选货巢）行为保持不变，门关只对显式指定货巢的订单生效。</p>
+ * <p><b>订单没有货巢时不经本关</b>，直接放行。货巢来源有两种：客户端显式指定，
+ * 或系统在下单时刻决策；两者都落进 {@code order_task.cargo_nest_id}，
+ * 门关只认订单上有没有货巢，不区分来源。系统未选定货巢（决策开关关闭或选不出可用巢）
+ * 与客户端未填是同一种情形：订单不经门关，按旧口径处理。</p>
  *
  * <p>锁幂等：同一订单重复评估（首派、唤醒重派）时，
  * 已有有效占位则复用，不重复 tryReserve——否则本单自己的锁会占住容量。</p>
@@ -67,7 +69,8 @@ public class CargoNestGate {
      * 评估订单能否过货到巢关。
      *
      * @param orderId     订单号
-     * @param cargoNestId 货物所在巢；为空时不启用门关，直接 {@link Decision#PROCEED}
+     * @param cargoNestId 货物所在巢；为空表示订单上没有货巢（系统未选定或客户端未填），
+     *                    此时不启用门关，直接 {@link Decision#PROCEED}
      */
     public Decision evaluate(String orderId, String cargoNestId) {
         if (cargoNestId == null || cargoNestId.isBlank()) {

@@ -7,7 +7,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.waterlogistics.contract.mq.GoodsRecycleConfirmation;
 import com.waterlogistics.contract.state.GoodsStatus;
+import com.waterlogistics.contract.state.OrderStatus;
 import com.waterlogistics.dispatch.goods.GoodsLifecycleService;
+import com.waterlogistics.dispatch.queue.TaskQueueService;
 import com.waterlogistics.storage.entity.OrderTaskEntity;
 import com.waterlogistics.storage.entity.TaskLogEntity;
 import com.waterlogistics.storage.repository.OrderTaskMapper;
@@ -59,7 +61,10 @@ class GoodsRecycleHandlerTest {
 
     private final List<TaskLogEntity> logs = new ArrayList<>();
     private final StubLifecycle lifecycle = new StubLifecycle();
+    /** 记录 {@code requeue} 调用（回收后订单回待调度的唯一动作）。 */
+    private final List<String> requeued = new ArrayList<>();
     private boolean orderExists = true;
+    private String orderStatus = OrderStatus.RETURNING.getValue();
 
     private GoodsRecycleHandler handler() {
         OrderTaskMapper orderMapper = (OrderTaskMapper) Proxy.newProxyInstance(
@@ -67,7 +72,13 @@ class GoodsRecycleHandlerTest {
                 new Class<?>[]{OrderTaskMapper.class},
                 (proxy, method, args) -> {
                     if ("selectById".equals(method.getName())) {
-                        return orderExists ? new OrderTaskEntity() : null;
+                        if (!orderExists) {
+                            return null;
+                        }
+                        OrderTaskEntity entity = new OrderTaskEntity();
+                        entity.setOrderId(ORDER);
+                        entity.setStatus(orderStatus);
+                        return entity;
                     }
                     if ("toString".equals(method.getName())) {
                         return "stubOrderTaskMapper";
@@ -87,7 +98,17 @@ class GoodsRecycleHandlerTest {
                     }
                     return null;
                 });
-        return new GoodsRecycleHandler(lifecycle, orderMapper, logMapper);
+        return new GoodsRecycleHandler(lifecycle, orderMapper, logMapper, queueService());
+    }
+
+    /** 只验证「是否发起重入队」，状态迁移本身由 {@code TaskQueueService} 自己的用例覆盖。 */
+    private TaskQueueService queueService() {
+        return new TaskQueueService(null, null, null) {
+            @Override
+            public void requeue(String orderId) {
+                requeued.add(orderId);
+            }
+        };
     }
 
     private static GoodsRecycleConfirmation message(String nestId) {
@@ -144,6 +165,24 @@ class GoodsRecycleHandlerTest {
         assertEquals(GoodsRecycleHandler.ERR_ORDER_NOT_FOUND, handler().confirm(message(NEST)));
         assertEquals(0, lifecycle.recycleCalls);
         assertTrue(logs.isEmpty());
+    }
+
+    @Test
+    @DisplayName("中止返航后回收：订单回待调度，重派闭环走得通")
+    void confirm_shouldRequeueOrderAfterRecycle() {
+        orderStatus = OrderStatus.RETURNING.getValue();
+
+        assertEquals(GoodsRecycleHandler.OK, handler().confirm(message(NEST)));
+        assertEquals(List.of(ORDER), requeued, "回收确认后必须重入队，否则重派前置永远不过");
+    }
+
+    @Test
+    @DisplayName("正常交付后回收（已完成）：不动订单，不回待调度")
+    void confirm_shouldNotRequeueFinishedOrder() {
+        orderStatus = OrderStatus.FINISHED.getValue();
+
+        assertEquals(GoodsRecycleHandler.OK, handler().confirm(message(NEST)));
+        assertTrue(requeued.isEmpty(), "已完成单子不因回收回到待调度");
     }
 
     @Test

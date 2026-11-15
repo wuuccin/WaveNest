@@ -24,6 +24,9 @@ import com.waterlogistics.contract.state.OrderStatus;
  *                              与 {@code wakeEtaTs} 区分：那是「预计唤醒」，本字段是「预计送达」；
  *                              由 ETA 计算给出（{@code EtaLowerBound} 的时长下界换算），
  *                              前端只格式化展示，不据此改订单状态
+ * @param cargoNestId           货物所在巢；为 null 表示系统未选定货巢，订单不经货到巢关。
+ *                              该值可能来自系统在下单时刻的决策，也可能来自运营显式指定，
+ *                              下游只按「有没有货巢」处理，不区分来源
  */
 public record OrderView(
 
@@ -43,7 +46,9 @@ public record OrderView(
 
         String handoverPhase,
 
-        Long etaTs) {
+        Long etaTs,
+
+        String cargoNestId) {
 
     /**
      * 兼容旧构造点：预计送达时刻尚未算出时传 {@code null}。
@@ -64,6 +69,30 @@ public record OrderView(
             WaitReason waitReason, Long wakeEtaTs, GeoPoint emergencyLandingPoint,
             String handoverPhase) {
         this(orderId, orderStatus, eventTs, stateVersion, waitReason, wakeEtaTs,
-                emergencyLandingPoint, handoverPhase, null);
+                emergencyLandingPoint, handoverPhase, null, null);
+    }
+
+    /**
+     * 兼容旧构造点：货物所在巢留空。
+     *
+     * <p>为什么保留：与上面同一理由——订单视图在多处被构造，新增字段不应强迫
+     * 这些调用点同时改。货巢为 {@code null} 时订单不经货到巢关，对这些构造点而言
+     * 与改造前行为一致。
+     *
+     * @param orderId              订单标识
+     * @param orderStatus          订单状态
+     * @param eventTs              最近一次状态变化时刻，Unix 毫秒
+     * @param stateVersion         订单态版本号
+     * @param waitReason           等待原因；非「已受理待唤醒」时为 null
+     * @param wakeEtaTs            预计唤醒时刻，Unix 毫秒；无法估计时为 null
+     * @param emergencyLandingPoint 失败时实际迫降坐标；缺失时为 null
+     * @param handoverPhase        末段子阶段
+     * @param etaTs                预计送达时刻，Unix 毫秒；未算出时为 null
+     */
+    public OrderView(String orderId, OrderStatus orderStatus, long eventTs, long stateVersion,
+            WaitReason waitReason, Long wakeEtaTs, GeoPoint emergencyLandingPoint,
+            String handoverPhase, Long etaTs) {
+        this(orderId, orderStatus, eventTs, stateVersion, waitReason, wakeEtaTs,
+                emergencyLandingPoint, handoverPhase, etaTs, null);
     }
 }

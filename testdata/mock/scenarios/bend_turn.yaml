@@ -1,0 +1,33 @@
+# =====================================================================
+# 场景家族 2/6：bend_turn（弯道航段）
+# 用途：20 min 离线子段，覆盖中心线 v3 的弯道段（seq 5→9，s 约 2020—4059 m，
+#       南昌大桥前后航向由约 340° 折向约 23°），考察弯道处横向误差与预测有效期。
+# 航迹：与 normal 同三段限速；s = 1000 起跑，1200 s 终点约 5333.3 m（契约 §2），
+#       覆盖全部弯道顶点；不到八一大桥，不承担会面闭环。
+# 复跑：同 seed 复跑会撞唯一键，先清表或换 pred_version（契约 §9）。
+# =====================================================================
+family: bend_turn
+seed: 2
+mode: offline
+t0_ms: 1794268800000
+path_start_m: 1000.0          # 20 min 子段口径（契约 §2）
+duration_sec: 1200            # 20 min 子段
+speed_limits_ms: "0,2000,4.5;2000,4000,4.5;4000,6003.4,2.5"   # normal 家族三段值
+speed_profile: normal
+tick_millis: 1000
+truth_source: truth/bend_turn.csv
+noise_deg: 0.00005
+mmsi: "T2"                    # 离线夹具口径：T 前缀 + seed（契约 §3／§10）
+pred_version: 11090002
+param_sources:
+  sog_ms: design_assumption
+  speed_limits_ms: design_assumption
+  speed_profile: design_assumption
+  noise_deg: design_assumption
+  sigmaEM: design_assumption
+  tauESec: design_assumption
+  alphaAlongMs: design_assumption
+  tick_millis: design_assumption
+  path_start_m: design_assumption    # s = 1000 为 20 min 子段口径设定值
+  中心线十三点: measured
+  风突变幅度: design_assumption       # 002_sys_param 头注「尚无上游风况分布可依」

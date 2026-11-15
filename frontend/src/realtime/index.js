@@ -3,15 +3,16 @@ import { reactive } from 'vue'
 import { normalizeOrders, normalizeFrame, isRenderableFrame } from '../api/adapter'
 import { droneIdForOrder, normalizeReplayTasks } from '../replay/model'
 import { SCENES } from './mock'
-import { useShipStore, useDroneStore, useAlertStore, useEventStore, useOrderStore, usePlanTrackStore } from '../stores'
+import { useShipStore, useDroneStore, useAlertStore, useEventStore, useOrderStore, usePlanTrackStore, useWeatherStore } from '../stores'
 
 export function createRealtime() {
   const ship = useShipStore(), drone = useDroneStore(), alert = useAlertStore(), events = useEventStore(), orders = useOrderStore()
   const planTrack = usePlanTrackStore()
+  const weather = useWeatherStore()
   let ws, sse, poll, retry, scriptTimer, generation = 0, buffered = [], priming = false, mockStep = 0
   const status = reactive({ mode: 'live', connection: '未连接', error: '' })
   const listeners = new Set(), recording = []
-  const clearLiveMap = () => { ship.apply(null); drone.apply(null); orders.applyRendezvous(null); planTrack.reset(); alert.clear() }
+  const clearLiveMap = () => { ship.apply(null); drone.apply(null); orders.applyRendezvous(null); planTrack.reset(); alert.clear(); weather.reset() }
   const subscribe = fn => { listeners.add(fn); return () => listeners.delete(fn) }
   const emit = (type, data, replay = false) => {
     if (priming && !replay) { buffered.push({ type, data }); return }
@@ -22,6 +23,9 @@ export function createRealtime() {
     else if (type === 'drone_state') drone.apply(data)
     else if (type === 'rendezvous') orders.applyRendezvous(data)
     else if (type === 'alarm') alert.apply(data)
+    // 气象帧（11-14 任务 2-7）：六类业务帧之外的第七类实时输入，按网格点入气象仓库。
+    // 归一失败（缺坐标或风速非法）即丢弃，计数留在 store 的 frames 里供核对，不静默。
+    else if (type === 'weather') { if (!weather.apply(data)) return }
     else if (type === 'order_state') { if (!orders.apply(data)) return }
     else if (type === 'plan_track') {
       // 规划航迹按订单分槽：同一订单重派会产新 routeId，后到覆盖先到。
@@ -45,7 +49,7 @@ export function createRealtime() {
       const droneId = droneIdForOrder(normalizeReplayTasks(taskResult), orderId)
       if (droneId) {
         try {
-          const history = await api.replay(droneId)
+          const history = await api.replay(orderId)
           const latest = new Map()
           for (const frame of history.frames || []) {
             if (frame.type === 'ship_traj' && frame.data?.mmsi) latest.set(`ship_traj:${frame.data.mmsi}`, frame)

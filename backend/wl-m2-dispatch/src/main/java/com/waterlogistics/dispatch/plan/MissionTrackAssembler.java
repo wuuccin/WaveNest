@@ -54,10 +54,29 @@ public class MissionTrackAssembler {
      * @return 规划航迹帧
      */
     public PlanTrackFrame assemble(String orderId, String comboId, MeetPlan plan) {
+        return assemble(orderId, comboId, plan, "");
+    }
+
+    /**
+     * 装配规划航迹并投影成规划航迹帧（带航迹版本）。
+     *
+     * <p>《1112-接口约定》§2.2「版本保留」：重规划产生新 {@code route_id}，
+     * 旧 {@code route_id} 行保留供复盘；{@code uk_plan_point} 含 {@code route_id}，
+     * 故重派（同一订单再走一次编排）必须换号，否则批量落点会撞唯一键。
+     *
+     * @param orderId      订单号
+     * @param comboId      候选组合标识
+     * @param plan         会面方案
+     * @param routeVersion 航迹版本后缀；空串表示不带版本（兼容既有装配单测）
+     * @return 规划航迹帧
+     */
+    public PlanTrackFrame assemble(String orderId, String comboId, MeetPlan plan,
+            String routeVersion) {
         double cruiseAltM = sysParamLoader.getDouble(CRUISE_ALT_KEY, DEFAULT_CRUISE_ALT_M);
         int waypoints = clampWaypoints(
                 sysParamLoader.getInt(WAYPOINTS_PER_LEG_KEY, DEFAULT_WAYPOINTS_PER_LEG));
-        String routeId = "RT-" + orderId;
+        String routeId = "RT-" + orderId
+                + (routeVersion == null || routeVersion.isBlank() ? "" : "-" + routeVersion);
 
         long meetMs = plan.meetTime().atZone(DB_ZONE).toInstant().toEpochMilli();
         double transferDistanceM = GeoApprox.distanceM(

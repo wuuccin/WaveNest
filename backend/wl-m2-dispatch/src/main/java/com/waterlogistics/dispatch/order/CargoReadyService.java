@@ -3,11 +3,14 @@ package com.waterlogistics.dispatch.order;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.waterlogistics.contract.state.GoodsStatus;
 import com.waterlogistics.storage.entity.GoodsEntity;
+import com.waterlogistics.storage.entity.OrderTaskEntity;
 import com.waterlogistics.storage.repository.GoodsMapper;
+import com.waterlogistics.storage.repository.OrderTaskMapper;
 import java.util.List;
 import java.util.Locale;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 /**
@@ -55,9 +58,12 @@ public class CargoReadyService {
             GoodsStatus.LOST.getValue());
 
     private final GoodsMapper goodsMapper;
+    private final OrderTaskMapper orderTaskMapper;
 
-    public CargoReadyService(GoodsMapper goodsMapper) {
+    @Autowired
+    public CargoReadyService(GoodsMapper goodsMapper, OrderTaskMapper orderTaskMapper) {
         this.goodsMapper = goodsMapper;
+        this.orderTaskMapper = orderTaskMapper;
     }
 
     /**
@@ -67,10 +73,50 @@ public class CargoReadyService {
      * @return 登记结果；重复调用回 {@code changed=false}
      */
     public CargoReadyResponse markReady(String orderId) {
+        return markReady(orderId, null);
+    }
+
+    /**
+     * 登记「货物已到巢」，并核对货物实际到达的巢与订单记的货巢是否一致。
+     *
+     * <p><b>为什么必须核对</b>：货到巢登记报告的是一个已经发生的物理事实。
+     * 若订单记的是 B 巢而货实际到了 A 巢，货物行会停在错误的位置上等待，
+     * 且没有任何环节能发现这个错位。核对在此处拦下，并回明确的拒绝原因。
+     *
+     * @param orderId    订单标识（首尾空白容忍，内部 trim）
+     * @param cargoNestId 货物实际到达的巢编号；空白视为缺失
+     * @return 登记结果；重复调用回 {@code changed=false}
+     */
+    public CargoReadyResponse markReady(String orderId, String cargoNestId) {
         String id = orderId == null ? null : orderId.trim();
         if (id == null || id.isEmpty()) {
             return CargoReadyResponse.rejected(null, CargoReadyResponse.Reason.ORDER_ID_MISSING,
                     "订单标识缺失");
+        }
+        String nestId = cargoNestId == null ? null : cargoNestId.trim();
+        if (nestId == null || nestId.isEmpty()) {
+            return CargoReadyResponse.rejected(id, CargoReadyResponse.Reason.CARGO_NEST_REQUIRED,
+                    "需要货巢编号：请求体 cargoNestId 必填，用于核对货到了哪个巢");
+        }
+
+        OrderTaskEntity order = orderTaskMapper.selectOne(
+                new LambdaQueryWrapper<OrderTaskEntity>().eq(OrderTaskEntity::getOrderId, id));
+        if (order == null) {
+            log.warn("货物到巢登记失败：orderId={} 查无订单", id);
+            return CargoReadyResponse.rejected(id, CargoReadyResponse.Reason.ORDER_NOT_FOUND,
+                    "该订单不存在");
+        }
+        String orderNestId = order.getCargoNestId();
+        if (orderNestId == null || orderNestId.isBlank()) {
+            log.warn("货物到巢登记失败：orderId={} 订单未指定货巢，没有比对基准", id);
+            return CargoReadyResponse.rejected(id, CargoReadyResponse.Reason.CARGO_NEST_MISSING_ON_ORDER,
+                    "订单未指定货巢，没有比对基准，无法确认货物到的是哪个巢");
+        }
+        if (!orderNestId.trim().equals(nestId)) {
+            log.warn("货物到巢登记被拒：orderId={} 订单货巢={} 货物实际到达={}", id, orderNestId, nestId);
+            return CargoReadyResponse.rejected(id, CargoReadyResponse.Reason.CARGO_NEST_MISMATCH,
+                    String.format(Locale.ROOT, "货巢不一致：订单记的是 %s，货物实际到达 %s",
+                            orderNestId.trim(), nestId));
         }
 
         List<GoodsEntity> rows = goodsMapper.selectList(
@@ -102,12 +148,13 @@ public class CargoReadyService {
                 continue;
             }
             row.setStatus(READY);
+            row.setLocation(nestId);
             goodsMapper.updateById(row);
             updated++;
         }
 
         if (updated > 0) {
-            log.info("货物到巢登记：orderId={} 更新 {} 行 → {}", id, updated, READY);
+            log.info("货物到巢登记：orderId={} 货巢={} 更新 {} 行 → {}", id, nestId, updated, READY);
             return CargoReadyResponse.updated(id, READY, updated);
         }
         if (frozen > 0) {
@@ -116,7 +163,7 @@ public class CargoReadyService {
                             "货物已进入后续状态（%d 行），不能回退为「已就绪」", frozen));
         }
         // 全部已是「已就绪」：幂等命中
-        log.info("货物到巢登记：orderId={} 已是「{}」，本次零写入", id, READY);
+        log.info("货物到巢登记：orderId={} 货巢={} 已是「{}」，本次零写入", id, nestId, READY);
         return CargoReadyResponse.alreadyReady(id);
     }
 }

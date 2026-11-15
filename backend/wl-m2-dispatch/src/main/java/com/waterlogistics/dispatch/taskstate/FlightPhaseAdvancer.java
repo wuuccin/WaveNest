@@ -152,6 +152,9 @@ public class FlightPhaseAdvancer {
     /** 缺执行机上下文的告警去重键：orderId@meetMs，每周期只告警一次。 */
     private final Set<String> warnedMissingContext = ConcurrentHashMap.newKeySet();
 
+    /** 已告警过「货巢查无坐标」的订单（orderId@meetMs），避免每拍重复告警。 */
+    private final Set<String> warnedMissingCargoNest = ConcurrentHashMap.newKeySet();
+
     /** resolve 失败退避：orderId → 允许重试的时刻（毫秒），避免每拍两次查库（MEDIUM.10）。 */
     private final Map<String, Long> contextRetryAfterMs = new ConcurrentHashMap<>();
 
@@ -350,6 +353,10 @@ public class FlightPhaseAdvancer {
         double meetLon = order.getMeetLon().doubleValue();
         double meetLat = order.getMeetLat().doubleValue();
         NestPosition start = resolveStartNest(order, drone);
+        if (start == null) {
+            warnMissingCargoNest(orderId, meetMs, order.getCargoNestId());
+            return;
+        }
         double transferM = GeoApprox.distanceM(
                 drone.nestLon(), drone.nestLat(), start.lon(), start.lat());
         double outboundM = transferM + GeoApprox.distanceM(
@@ -577,9 +584,10 @@ public class FlightPhaseAdvancer {
                     : fallbackVersions.computeIfAbsent(order.getOrderId(), ignored -> new AtomicLong(1L))
                             .incrementAndGet();
             try {
+                // 货巢必须带上：飞行阶段帧同样并入订单视图，不带会把建单时选定的货巢抹成空
                 eventPublisher.publishEvent(new FlightPhaseChangedEvent(new OrderView(
                         order.getOrderId(), to, tsMs, version, null, null, null, null,
-                        effectiveEtaTs)));
+                        effectiveEtaTs, order.getCargoNestId())));
             } catch (Exception e) {
                 // 审计已落库，推送失败只告警；下一拍不会重发同一阶段，避免重复刷屏
                 log.warn("飞行阶段广播失败（task_log 已落库）：orderId={} status={} err={}",
@@ -719,6 +727,7 @@ public class FlightPhaseAdvancer {
         fallbackVersions.remove(orderId);
         contextRetryAfterMs.remove(orderId);
         warnedMissingContext.removeIf(key -> key.startsWith(orderId + "@"));
+        warnedMissingCargoNest.removeIf(key -> key.startsWith(orderId + "@"));
     }
 
     /**
@@ -756,6 +765,21 @@ public class FlightPhaseAdvancer {
         }
     }
 
+    /**
+     * 货巢台账查无坐标时告警一次，飞行阶段本轮不推进，等台账修好再继续。
+     *
+     * <p>每个会面周期只告警一次：推进轮询每拍都跑，不抑制的话同一单会反复刷同一条告警。
+     */
+    private void warnMissingCargoNest(String orderId, long meetMs, String cargoNestId) {
+        if (warnedMissingCargoNest.size() >= WARN_KEY_CAPACITY) {
+            warnedMissingCargoNest.clear();
+        }
+        if (warnedMissingCargoNest.add(warnKey(orderId, meetMs))) {
+            log.warn("订单 {} 货物所在巢 {} 台账查无坐标，飞行阶段推进本轮跳过："
+                    + "不得拿无人机当前巢当起点，否则空机转场段会被凭空抹掉", orderId, cargoNestId);
+        }
+    }
+
     private static String warnKey(String orderId, long meetMs) {
         return orderId + "@" + meetMs;
     }
@@ -783,7 +807,10 @@ public class FlightPhaseAdvancer {
     /**
      * 飞行阶段时间轴的起点：有货物所在巢时取货物所在巢，否则取无人机当前所在巢。
      *
-     * <p>时间轴只用于估算阶段切换，货巢查无坐标时回落当前巢并记警告，不阻断推进。
+     * <p>货巢已定但台账查无坐标时返回 {@code null}，表示本轮拒绝推进。
+     * 与会面求解的口径一致：两处都不用错误起点继续。
+     * 回落无人机当前巢会把「货在北巢、机在南巢」的空机转场段凭空抹掉，
+     * 现场只看得到「机飞早了」，看不出起点取错。
      */
     private NestPosition resolveStartNest(OrderTaskEntity order, DroneContext drone) {
         String cargoNestId = order.getCargoNestId();
@@ -792,9 +819,7 @@ public class FlightPhaseAdvancer {
         }
         NestPosition cargo = nestLookup.find(cargoNestId.trim());
         if (cargo == null) {
-            log.warn("订单 {} 货物所在巢 {} 台账查无坐标，飞行阶段时间轴回落无人机当前巢",
-                    order.getOrderId(), cargoNestId);
-            return new NestPosition(drone.currentNestId(), drone.nestLon(), drone.nestLat());
+            return null;
         }
         return cargo;
     }

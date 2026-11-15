@@ -55,9 +55,19 @@ public class TaskQueueService {
     /** 真实投放回执的交付凭证操作类型（D-02；写进 task_log 供审计与幂等核查）。 */
     public static final String OP_TYPE_DELIVERY_RECEIPT = "投放回执-交付确认";
 
+    /**
+     * 可回退到「待调度」的状态集合。
+     *
+     * <p><b>为什么含飞行三态</b>（2026-11-14 补）：这三个状态只由<b>落巢回收确认</b>
+     * （{@code GoodsRecycleHandler}）在货物已「已回收」之后调用，是《21》§8
+     * 「落巢回收 → 重派」的唯一入口；外部重派入口（{@code RescheduleService}）另有
+     * {@code requireNotInFlight} 前置，不会因为本集合放宽而误放飞行中的单子。
+     * 不扩这三个状态，「中止返航 → 回收 → 重派」到这一步必抛，闭环走不完。
+     */
     private static final Set<OrderStatus> REQUEUEABLE = EnumSet.of(
             OrderStatus.DISPATCHED, OrderStatus.DISPATCHING,
-            OrderStatus.WAIT_DISPATCH, OrderStatus.ACCEPTED_WAIT_WAKE);
+            OrderStatus.WAIT_DISPATCH, OrderStatus.ACCEPTED_WAIT_WAKE,
+            OrderStatus.OUTBOUND, OrderStatus.HANDOVER, OrderStatus.RETURNING);
 
     private final OrderTaskMapper orderTaskMapper;
     private final TaskLogMapper taskLogMapper;
@@ -385,8 +395,10 @@ public class TaskQueueService {
         taskLogMapper.insert(log);
 
         long version = stateVersion(order.getOrderId(), log.getLogId());
+        // 货巢必须带上：状态流转帧是订单视图的增量来源，不带就会把建单时选定的货巢抹成空，
+        // 前端据此显示「未指定货巢」，登记货物到巢的入口也随之消失
         OrderView view = new OrderView(order.getOrderId(), to, eventTs, version,
-                effectiveWaitReason, null, null, null);
+                effectiveWaitReason, null, null, null, null, order.getCargoNestId());
         eventPublisher.publishEvent(new OrderStateChangedEvent(view));
 
         // MEDIUM.54：订单进入终态/已完成后移除 fallback 键，防 map 无限增长

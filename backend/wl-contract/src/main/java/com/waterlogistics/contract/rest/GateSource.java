@@ -1,5 +1,8 @@
 package com.waterlogistics.contract.rest;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonValue;
+
 /**
  * 熔断来源——依据《22-接口契约》v1.2 §3.2。
  *
@@ -20,7 +23,8 @@ public enum GateSource {
         this.value = value;
     }
 
-    /** 返回传输用的中文取值 */
+    /** 返回传输用的中文取值（《1112》§3.4：响应体写“人工冻结／自动熔断”，不写枚举名） */
+    @JsonValue
     public String getValue() {
         return value;
     }
@@ -33,5 +37,22 @@ public enum GateSource {
             }
         }
         throw new IllegalArgumentException("未知熔断来源：" + value);
+    }
+
+    /**
+     * JSON 入参兼容两种写法：枚举名 {@code MANUAL}（《1112》§3.1 表头写法）与中文取值
+     * {@code 人工冻结}。出参统一走 {@link #getValue()}，见 {@link #getValue()} 上的 {@code @JsonValue}。
+     */
+    @JsonCreator
+    public static GateSource fromJson(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        for (GateSource source : values()) {
+            if (source.name().equalsIgnoreCase(raw) || source.value.equals(raw)) {
+                return source;
+            }
+        }
+        throw new IllegalArgumentException("未知熔断来源：" + raw);
     }
 }

@@ -1,10 +1,19 @@
 package com.waterlogistics.dispatch.prediction;
 
+import jakarta.annotation.PreDestroy;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -14,6 +23,22 @@ import org.springframework.stereotype.Component;
 
 /**
  * {@link RecomputeRequester} 的默认实现：<b>收到信号即真触发一版重算</b>（M2 · 卢肄文）。
+ *
+ * <h3>11-14 序号 2-6 · MEDIUM.2：重算搬离调用方线程</h3>
+ * <p>此前 {@code requestRecompute} 在调用线程上同步跑完整重算。而它就在
+ * {@link PredictionService#refresh} 的同步路径上——每条 AIS 观测都可能触发一次，
+ * 于是 MQ 消费线程／HTTP 线程的时延被「重算耗时 × 触发次数」直接放大，多船同时跳变时串行叠加。
+ * 现在改为<b>有界队列 ＋ 单线程 worker</b>：
+ * <ul>
+ *   <li>单线程而非线程池：重算会改同一份预测状态并递增版本，并发只会让版本先后变成竞态；</li>
+ *   <li>队列有界（{@value #QUEUE_CAPACITY}）：宁可丢新信号，也不让积压无限增长——
+ *       被丢的那条在下一拍 1 Hz 观测里还会再来；</li>
+ *   <li>同船合并：同一条船已经有一次重算在排队或执行时，新的信号直接并掉，
+ *       因为最终产出的都是「同一份最新状态的一版预测」；</li>
+ *   <li>入口计数与留痕不变：{@link #receivedRequestCount()}／{@link #requestCount()}
+ *       记的是「收到过多少条」，与是否被合并、丢弃无关，否则重算风暴在指标上看不见。</li>
+ * </ul>
+ * <p>测试与停机用 {@link #flush(long)} 等一个明确的「已处理完」点，不靠 sleep 猜时长。
  *
  * <p><b>F3「重算链接通」（10-23 任务清单 §三 卢肄文段）</b>：本类原先只打日志 ＋ 内存留痕，
  * 信号到舱门为止；现在把它接到 {@link PredictionService#recompute(String)}，
@@ -61,6 +86,15 @@ public class LoggingRecomputeRequester implements RecomputeRequester {
     static final int LOG_EVERY_N = 20;
 
     /**
+     * 待处理重算队列容量（MEDIUM.2）。
+     *
+     * <p>取 256：单次重算是毫秒级，256 条足够吸收一分钟量级的抖动；再大只会把「系统已经
+     * 跟不上」这件事藏得更久——队列越深，故障从「信号被丢」变成「重算结果严重滞后」，
+     * 后者更难发现（版本号在涨，但涨的都是旧时刻的预测）。
+     */
+    static final int QUEUE_CAPACITY = 256;
+
+    /**
      * 当前线程的重算深度（重入闸门）。
      *
      * <p>用 {@link ThreadLocal} 而不是全局原子标志：本类会被多船的输入线程并发调用，
@@ -81,8 +115,53 @@ public class LoggingRecomputeRequester implements RecomputeRequester {
     /** 因重入被断开而丢弃的条数（出现非 0 即说明有监听方在回调里摸预测）。 */
     private final AtomicLong recursionDropped = new AtomicLong();
 
+    /**
+     * 待处理重算队列（MEDIUM.2）。
+     *
+     * <p><b>为什么要移除调用方线程</b>：{@code requestRecompute} 处在
+     * {@link PredictionService#refresh} 的同步路径上，每来一条 AIS 观测就可能走一次；
+     * 而一次重算是「算法计算 ＋ 断言网 ＋ 事件广播」的完整过程。同步执行等于把
+     * MQ 消费线程／HTTP 线程的时延按重算耗时线性拉长，多船同时跳变时还会串行叠加。
+     *
+     * <p><b>为什么是单线程而不是线程池</b>：重算改的是同一份预测状态并按版本广播，
+     * 并发重算只会把「版本先后」变成竞态。单线程天然串行，顺序与信号到达顺序一致；
+     * 队列有界，积压即丢新信号（丢掉的那条下一拍 1 Hz 观测还会再来，不会永久失效）。
+     */
+    private final BlockingQueue<RecomputeRequest> queue = new ArrayBlockingQueue<>(QUEUE_CAPACITY);
+
+    /**
+     * 已在队列或正在执行的船号 —— 同船合并的依据。
+     *
+     * <p>为什么按船号去重而不是按整条请求：同一船短时间内连发多次重算，最终只会产生
+     * 同一份「最新状态的一版预测」，中间几次是纯浪费；不同船之间不能合并。
+     */
+    private final Set<String> inFlightMmsi = ConcurrentHashMap.newKeySet();
+
+    /** 待处理（含正在执行）的条数，供 {@link #flush} 与优雅停机判定。 */
+    private final AtomicInteger pending = new AtomicInteger();
+
+    /** 被同船合并掉的条数。 */
+    private final AtomicLong coalescedCount = new AtomicLong();
+
+    /** 队列满或已停机的丢弃条数。 */
+    private final AtomicLong droppedCount = new AtomicLong();
+
+    /** 单线程执行器：只做「取一条、算一条」，异常一律在 {@link #execute} 内部吞掉。 */
+    private final ExecutorService worker = Executors.newSingleThreadExecutor(runnable -> {
+        Thread thread = new Thread(runnable, "prediction-recompute-worker");
+        thread.setDaemon(true);
+        return thread;
+    });
+
+    /** 停机标志：停机后到达的信号只留痕不处理（避免 shutdown 后再往线程池里塞任务）。 */
+    private volatile boolean running = true;
+
     /** 闭环回跳点；装配完成前为 {@code null}（此时退化为「只留痕」，不抛异常）。 */
     private volatile PredictionService predictionService;
+
+    public LoggingRecomputeRequester() {
+        worker.execute(this::runWorker);
+    }
 
     /**
      * 注入重算落点。<b>刻意不加 {@code @Autowired(required = true)} 的构造器版本</b>，
@@ -100,7 +179,9 @@ public class LoggingRecomputeRequester implements RecomputeRequester {
             return;
         }
 
-        // ① 重入闸门：同线程再次进入说明是事件监听方回调引起的自激
+        // ① 重入闸门：同线程再次进入说明是事件监听方回调引起的自激。判在入口，
+        // 因为监听方回调就跑在执行业务的那个线程上——异步化之后是 worker 线程，
+        // 而 worker 在执行期间会把深度置 1（见 execute）。
         int depth = RECOMPUTE_DEPTH.get();
         if (depth > 0) {
             long dropped = recursionDropped.incrementAndGet();
@@ -110,6 +191,126 @@ public class LoggingRecomputeRequester implements RecomputeRequester {
             return;
         }
 
+        // 计数与留痕在入口完成：信号「收到过」这件事与后面是否被合并、是否被丢弃无关，
+        // 否则「重算风暴」在指标上会看不见。
+        long sequence = receivedCount.incrementAndGet();
+        record(request);
+        logRequest(sequence, request);
+
+        if (!running) {
+            droppedCount.incrementAndGet();
+            log.warn("重算器已停机，信号只留痕：mmsi={}", request.mmsi());
+            return;
+        }
+
+        // ② 同船合并：队列里已有这船的重算，再排一条只会算出同一份结果
+        if (!inFlightMmsi.add(request.mmsi())) {
+            long coalesced = coalescedCount.incrementAndGet();
+            if (log.isDebugEnabled()) {
+                log.debug("重算信号与在途重算合并：mmsi={} 版本={} 累计合并={}",
+                        request.mmsi(), request.snapshotVersion(), coalesced);
+            }
+            return;
+        }
+
+        pending.incrementAndGet();
+        if (!queue.offer(request)) {
+            // 队列满：撤回占位。丢掉的是「这一次信号」，不是「这船的重算」——
+            // 下一拍观测若仍满足跳变条件会再来，且此前那版快照仍在库里可用。
+            inFlightMmsi.remove(request.mmsi());
+            pending.decrementAndGet();
+            long dropped = droppedCount.incrementAndGet();
+            log.warn("重算队列已满（上限 {}），本次信号丢弃：mmsi={} 累计丢弃={}",
+                    QUEUE_CAPACITY, request.mmsi(), dropped);
+        }
+    }
+
+    /**
+     * 等待在途重算全部完成（单测与优雅停机用）。
+     *
+     * <p><b>为什么需要它</b>：异步化之后，「调用后立刻断言」不再成立。测试与停机都要一个
+     * 明确的「现在已经处理完」的点，而不是 sleep 一个拍脑袋的时长。
+     *
+     * @param timeoutMs 最长等待，ms
+     * @return 是否在超时前清空
+     */
+    public boolean flush(long timeoutMs) {
+        long deadline = System.currentTimeMillis() + Math.max(0L, timeoutMs);
+        while (pending.get() > 0) {
+            if (System.currentTimeMillis() >= deadline) {
+                return false;
+            }
+            try {
+                Thread.sleep(1L);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return pending.get() <= 0;
+            }
+        }
+        return true;
+    }
+
+    /** 优雅停机：不再接新信号，中断在等队列的 worker。容器关闭时由 Spring 调用。 */
+    @PreDestroy
+    public void shutdown() {
+        running = false;
+        worker.shutdownNow();
+        try {
+            worker.awaitTermination(2L, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    /** 被同船合并掉的条数（稳定运行时应远小于收到条数）。 */
+    public long coalescedCount() {
+        return coalescedCount.get();
+    }
+
+    /** 因队列满或停机被丢弃的条数。 */
+    public long droppedCount() {
+        return droppedCount.get();
+    }
+
+    /** worker 主循环：取一条、算一条；异常不外溢。 */
+    private void runWorker() {
+        while (running) {
+            RecomputeRequest request;
+            try {
+                request = queue.poll(200L, TimeUnit.MILLISECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+            if (request == null) {
+                continue;
+            }
+            try {
+                execute(request);
+            } finally {
+                inFlightMmsi.remove(request.mmsi());
+                pending.decrementAndGet();
+            }
+        }
+    }
+
+    /**
+     * 真正执行一次重算（在 worker 线程上）。
+     *
+     * <p>重入闸门在这里再设一次：{@code recompute} 内部会 {@code publishEvent}，而 Spring 的
+     * {@code @EventListener} 默认在<b>发布线程同步执行</b>；监听方在回调里再请求一次重算时，
+     * 那次请求就跑在本线程上，必须被入口的深度检查挡下，否则会无限入队。
+     *
+     * @param request 重算请求
+     */
+    private void execute(RecomputeRequest request) {
+        int depth = RECOMPUTE_DEPTH.get();
+        if (depth > 0) {
+            long dropped = recursionDropped.incrementAndGet();
+            log.warn("重算信号构成递归，已断开：mmsi={} 版本={} 深度={} 累计断开={}",
+                    request.mmsi(), request.snapshotVersion(), depth, dropped);
+            return;
+        }
         RECOMPUTE_DEPTH.set(depth + 1);
         try {
             doRequestRecompute(request);
@@ -124,11 +325,8 @@ public class LoggingRecomputeRequester implements RecomputeRequester {
         }
     }
 
-    private void doRequestRecompute(RecomputeRequest request) {
-        long sequence = receivedCount.incrementAndGet();
-        record(request);
-
-        // ② 日志采样：首条与每 N 条记 info，其余 debug
+    /** 日志采样：首条与每 N 条记 info，其余 debug。 */
+    private void logRequest(long sequence, RecomputeRequest request) {
         if (sequence == 1L || sequence % LOG_EVERY_N == 0L) {
             log.info("重算请求（第 {} 条）：mmsi={} 版本={} 航向 {}° → {}°（变化 {}°，原因={}）",
                     sequence, request.mmsi(), request.snapshotVersion(),
@@ -140,7 +338,9 @@ public class LoggingRecomputeRequester implements RecomputeRequester {
             log.debug("重算请求（第 {} 条）：mmsi={} 版本={} 变化 {}°",
                     sequence, request.mmsi(), request.snapshotVersion(), request.courseDeltaDeg());
         }
+    }
 
+    private void doRequestRecompute(RecomputeRequest request) {
         PredictionService driver = this.predictionService;
         if (driver == null) {
             log.warn("重算落点未装配，信号仅留痕：mmsi={}", request.mmsi());

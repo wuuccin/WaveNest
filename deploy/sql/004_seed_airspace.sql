@@ -22,7 +22,8 @@
 --     spanWidthM       通航孔宽度（米）
 --   解析口径：标准 JSON 解析器直读；key 全集如上，缺 key 视为格式错误。
 --
--- 取值说明：桥梁中心坐标取自 73 §3 航段标定；净空高与通航孔宽为**演示标定值**
+-- 取值说明：桥梁中心坐标取 2026-11-09 天地图影像河心重取值（WGS-84），
+--   与 application.yml 的 centerline/segment-vertices 同源；净空高与通航孔宽为**演示标定值**
 --   （非官方通航数据），答辩被问时答「演示标定，以海事公告落地后为准」。
 --
 -- 可重复执行：INSERT ... ON DUPLICATE KEY UPDATE，重跑只刷新不报错。
@@ -40,13 +41,13 @@ USE `wavenest`;
 INSERT INTO `airspace_restriction`
     (`restriction_id`, `type`, `scope`, `effective_start`, `effective_end`, `source`, `status`) VALUES
 ('BRIDGE-CHAOYANG', '限高',
- '{"kind":"bridge","center":{"lon":115.852,"lat":28.646},"clearanceHeightM":12.0,"spanWidthM":80.0}',
+ '{"kind":"bridge","center":{"lon":115.844393,"lat":28.645998},"clearanceHeightM":12.0,"spanWidthM":80.0}',
  NULL, NULL, '演示标定：73-赣江场景说明 §3（朝阳大桥）', '生效'),
 ('BRIDGE-NANCHANG', '限高',
- '{"kind":"bridge","center":{"lon":115.859,"lat":28.663},"clearanceHeightM":10.0,"spanWidthM":60.0}',
+ '{"kind":"bridge","center":{"lon":115.857937,"lat":28.663776},"clearanceHeightM":10.0,"spanWidthM":60.0}',
  NULL, NULL, '演示标定：73-赣江场景说明 §3（南昌大桥）', '生效'),
 ('BRIDGE-BAYI',     '限高',
- '{"kind":"bridge","center":{"lon":115.879,"lat":28.692},"clearanceHeightM":14.0,"spanWidthM":100.0}',
+ '{"kind":"bridge","center":{"lon":115.872180,"lat":28.692014},"clearanceHeightM":14.0,"spanWidthM":100.0}',
  NULL, NULL, '演示标定：73-赣江场景说明 §3（八一大桥）', '生效')
 ON DUPLICATE KEY UPDATE
     `type` = VALUES(`type`), `scope` = VALUES(`scope`),

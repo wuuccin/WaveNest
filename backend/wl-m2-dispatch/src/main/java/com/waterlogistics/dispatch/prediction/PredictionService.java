@@ -704,6 +704,15 @@ public class PredictionService {
             premiseLastTsMs.remove(mmsi);
             lastPremiseVerdicts.remove(mmsi);
         }
+        // MEDIUM.3：引擎侧状态同样要清。上面八张 Map 只是「服务层看着干净」，
+        // 精算引擎里每船还留着一个观测窗口（最多 300 条 AisMessage）、两个滤波器、
+        // 一条参考折线与探针队列——不清等于没清，内存仍随船数单调增长。
+        PrecisePredictionEngine engine = profile == null ? null : profile.engine();
+        if (engine != null) {
+            for (String mmsi : stale) {
+                engine.evict(mmsi);
+            }
+        }
         log.info("清理失联船舶预测状态：{} 条（{}），剩余在跟踪 {} 条",
                 stale.size(), stale, latestSnapshots.size());
         return stale.size();

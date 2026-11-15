@@ -74,6 +74,28 @@ public class SysParamLoader implements InitializingBean {
         }
     }
 
+    /**
+     * 读取布尔值；无此键或取值无法判定时返回默认值。
+     *
+     * <p>取值口径：去掉首尾空白后字符串等于 {@code true}（忽略大小写）为真，
+     * 其余非空字符串为假。数字形态的 {@code 1}／{@code 0} 不作真值解释，
+     * 布尔开关在参数表里一律写 {@code true}／{@code false}。
+     *
+     * @param key          参数键（camelCase，见《37》§5.14.1）
+     * @param defaultValue 键缺失或取值空白时的兜底
+     */
+    public boolean getBoolean(String key, boolean defaultValue) {
+        String v = cache.get(key);
+        if (v == null) {
+            return defaultValue;
+        }
+        String trimmed = v.trim();
+        if (trimmed.isEmpty()) {
+            return defaultValue;
+        }
+        return Boolean.parseBoolean(trimmed);
+    }
+
     /** 只读快照（不可变） */
     public Map<String, String> all() {
         return Map.copyOf(cache);
