@@ -12,12 +12,10 @@ import com.waterlogistics.algo.inflight.HomecomingInput;
 import com.waterlogistics.algo.inflight.HomecomingParams;
 import com.waterlogistics.algo.inflight.HomecomingTier;
 import com.waterlogistics.algo.inflight.NestCandidate;
-import com.waterlogistics.contract.order.SafetyReview;
 import com.waterlogistics.contract.state.AlertLevel;
 import com.waterlogistics.contract.state.OrderStatus;
 import com.waterlogistics.dispatch.alert.HomecomingInputAssembler;
 import com.waterlogistics.contract.order.OrderStateChangedEvent;
-import com.waterlogistics.dispatch.queue.TaskQueueService;
 import com.waterlogistics.storage.entity.DroneEntity;
 import com.waterlogistics.storage.entity.OrderTaskEntity;
 import com.waterlogistics.storage.entity.TaskLogEntity;
@@ -27,9 +25,6 @@ import com.waterlogistics.storage.repository.OrderTaskMapper;
 import com.waterlogistics.storage.repository.TaskLogMapper;
 import java.lang.reflect.Proxy;
 import java.math.BigDecimal;
-import java.time.Instant;
-import java.time.LocalDateTime;
-import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -54,8 +49,6 @@ class InflightSafetyServiceTest {
     private static final String DRONE = "UAV-01";
     private static final String NEST = "NEST-01";
     private static final long OBSERVED_AT = 1_764_000_000_000L;
-    private static final long ETA_AT = 1_764_000_600_000L;
-    private static final ZoneId DB_ZONE = ZoneId.of("Asia/Shanghai");
 
     private final List<TaskLogEntity> logs = new ArrayList<>();
     private final List<Object> events = new ArrayList<>();
@@ -92,14 +85,7 @@ class InflightSafetyServiceTest {
         assertEquals("在飞安全复核-继续", logs.get(0).getOpType());
         assertEquals("去程中", logs.get(0).getFromStatus());
         assertEquals("去程中", logs.get(0).getToStatus(), "审计不是状态迁移，from 与 to 同为当前状态");
-        assertTrue(decisionEvents().isEmpty(), "继续档不发 InflightSafetyDecisionEvent 广播");
-        assertEquals(1, orderStateEvents().size(), "继续档也随 order_state 带出复核结论");
-        SafetyReview review = orderStateEvents().get(0).view().safetyReview();
-        assertEquals("继续", review.verdict());
-        assertEquals("在飞安全复核-继续", review.opType());
-        assertTrue(review.eventTs() > 0, "eventTs 取审计行 ts 换算，不能为 0");
-        assertEquals(ETA_AT, orderStateEvents().get(0).view().etaTs().longValue(),
-                "复核帧须带出订单已有 etaTs，按 DB_ZONE 反解，抹空会把前端「预计送达」清空");
+        assertTrue(events.isEmpty(), "继续档不发广播");
         assertTrue(homecomingInputs.isEmpty(), "继续档不进功能 10");
     }
 
@@ -121,10 +107,7 @@ class InflightSafetyServiceTest {
         assertEquals(ORDER, event.orderId());
         assertTrue(homecomingInputs.isEmpty());
         assertEquals("末段交接中", order.getStatus(), "调整档不写订单状态");
-        assertEquals(1, orderStateEvents().size(), "调整档随 order_state 带出复核结论");
-        SafetyReview review = orderStateEvents().get(0).view().safetyReview();
-        assertEquals("调整", review.verdict());
-        assertEquals("在飞安全复核-调整", review.opType());
+        assertTrue(orderStateEvents().isEmpty());
     }
 
     @Test
@@ -156,21 +139,9 @@ class InflightSafetyServiceTest {
         assertEquals(HomecomingTier.RETURN_HOME_NEST, event.tier());
         assertEquals("NEST-01", event.targetId());
         assertEquals("返航中", order.getStatus(), "中止返航回写（《23》§4 约束 2 例外、§8）");
-        assertEquals(2, orderStateEvents().size(),
-                "迁移帧（AFTER_COMMIT 先到、版本大）＋ 复核帧（后到、版本小），两帧都带复核三值");
+        assertEquals(1, orderStateEvents().size(), "回写后须发状态事件给 advancer 标脏");
         assertEquals(OrderStatus.RETURNING, orderStateEvents().get(0).view().orderStatus());
         assertEquals("应急药品", orderStateEvents().get(0).view().goodsType(), "气象复核回写的状态帧必须带上配送品类，否则界面把已展示的品类退回「未记录」");
-        assertEquals(ETA_AT, orderStateEvents().get(0).view().etaTs().longValue(),
-                "迁移帧须带出 etaTs，抹空会把前端「预计送达」清空");
-        assertEquals(ETA_AT, orderStateEvents().get(1).view().etaTs().longValue(),
-                "复核帧同样带出 etaTs");
-        assertEquals("终止", orderStateEvents().get(0).view().safetyReview().verdict(),
-                "迁移帧自身必须携带复核三值：它先到且版本更大，复核帧随后到会被严格递增判据丢弃");
-        assertEquals("终止", orderStateEvents().get(1).view().safetyReview().verdict(),
-                "复核帧也带同一份三值");
-        assertTrue(orderStateEvents().get(0).view().stateVersion()
-                >= orderStateEvents().get(1).view().stateVersion(),
-                "迁移帧用迁移日志主键算版本，不小于复核帧的审计日志主键版本");
     }
 
     @Test
@@ -184,8 +155,7 @@ class InflightSafetyServiceTest {
 
         assertEquals(1, logs.size(), "只留审计，本层不写迁移行");
         assertEquals("去程中", order.getStatus(), "迫降野外的订单终态由功能 10 写，本层不覆盖");
-        assertEquals(1, orderStateEvents().size(), "无迁移帧，只发复核帧");
-        assertEquals("终止", orderStateEvents().get(0).view().safetyReview().verdict());
+        assertTrue(orderStateEvents().isEmpty());
         assertEquals(HomecomingTier.EMERGENCY_LAND_FIELD, decisionEvents().get(0).tier());
     }
 
@@ -261,8 +231,7 @@ class InflightSafetyServiceTest {
         assertTrue(homecomingInputs.isEmpty(), "无会面点则不执行功能 10");
         assertNull(decisionEvents().get(0).tier());
         assertEquals("去程中", order.getStatus(), "功能 10 未执行，不能凭审计说已返航");
-        assertEquals(1, orderStateEvents().size(), "无迁移帧，只发复核帧");
-        assertEquals("终止", orderStateEvents().get(0).view().safetyReview().verdict());
+        assertTrue(orderStateEvents().isEmpty());
     }
 
     @Test
@@ -278,8 +247,7 @@ class InflightSafetyServiceTest {
         assertTrue(homecomingInputs.isEmpty());
         assertNull(decisionEvents().get(0).tier());
         assertEquals("去程中", order.getStatus(), "电量不可得，功能 10 未执行，不回写状态");
-        assertEquals(1, orderStateEvents().size(), "无迁移帧，只发复核帧");
-        assertEquals("终止", orderStateEvents().get(0).view().safetyReview().verdict());
+        assertTrue(orderStateEvents().isEmpty());
     }
 
     @Test
@@ -317,12 +285,7 @@ class InflightSafetyServiceTest {
 
     private InflightSafetyService service() {
         return new InflightSafetyService(orderMapper(), taskLogMapper(), droneMapper(),
-                rescheduleStub(), assembler(), eventPublisher(), null, taskQueueService());
-    }
-
-    /** 只借 stateVersion(orderId, logId)：mapper 传 null，不改行、不读库。 */
-    private static TaskQueueService taskQueueService() {
-        return new TaskQueueService(null, null, null);
+                rescheduleStub(), assembler(), eventPublisher(), null);
     }
 
     private static InflightSafetyRequest request(double wind, AlertLevel level, boolean cleared) {
@@ -337,7 +300,6 @@ class InflightSafetyServiceTest {
         entity.setStatus(status.getValue());
         entity.setMeetLon(new BigDecimal("115.8600"));
         entity.setMeetLat(new BigDecimal("28.6700"));
-        entity.setEtaTs(LocalDateTime.ofInstant(Instant.ofEpochMilli(ETA_AT), DB_ZONE));
         return entity;
     }
 
@@ -390,12 +352,7 @@ class InflightSafetyServiceTest {
                 new Class<?>[]{TaskLogMapper.class},
                 (proxy, method, args) -> switch (method.getName()) {
                     case "insert" -> {
-                        TaskLogEntity entry = (TaskLogEntity) args[0];
-                        // 模拟 MyBatis-Plus 对 AUTO 主键的回填：真实库里审计行 logId < 迁移行 logId，
-                        // 两帧 stateVersion 据此算出迁移帧版本更大。不回填则会双双走 null fallback，
-                        // 版本顺序反转，测不出真实时序。
-                        entry.setLogId((long) (logs.size() + 1));
-                        logs.add(entry);
+                        logs.add((TaskLogEntity) args[0]);
                         yield 1;
                     }
                     case "toString" -> "stubTaskLogMapper";

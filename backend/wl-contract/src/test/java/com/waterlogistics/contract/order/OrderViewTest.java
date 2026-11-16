@@ -18,19 +18,17 @@ import org.junit.jupiter.api.Test;
 class OrderViewTest {
 
     @Test
-    @DisplayName("字段集：十二个组件，末位是复核三值 safetyReview")
-    void components_shouldBeTwelveWithSafetyReviewLast() {
+    @DisplayName("字段集：十一个组件，末位是配送品类 goodsType")
+    void components_shouldBeElevenWithGoodsTypeLast() {
         RecordComponent[] components = OrderView.class.getRecordComponents();
 
-        assertEquals(12, components.length, "订单视图组件数必须是十二，末位为复核三值");
+        assertEquals(11, components.length, "订单视图组件数必须是十一，末位为配送品类");
         assertEquals("etaTs", components[8].getName());
         assertEquals(Long.class, components[8].getType(), "etaTs 可空，用包装类型 Long");
         assertEquals("cargoNestId", components[9].getName());
         assertEquals(String.class, components[9].getType(), "货巢编号是字符串，可空");
         assertEquals("goodsType", components[10].getName());
         assertEquals(String.class, components[10].getType(), "配送品类是字符串，可空");
-        assertEquals("safetyReview", components[11].getName());
-        assertEquals(SafetyReview.class, components[11].getType(), "复核三值可空，用对象类型");
     }
 
     @Test
@@ -75,19 +73,5 @@ class OrderViewTest {
 
         assertEquals("应急药品", view.goodsType());
         assertEquals("NEST-02", view.cargoNestId());
-    }
-
-    @Test
-    @DisplayName("复核三值：12 参主构造原样携带 verdict／opType／eventTs")
-    void constructor_shouldCarrySafetyReview() {
-        SafetyReview review = new SafetyReview("继续", "在飞安全复核-继续", 1_760_000_123_456L);
-
-        OrderView view = new OrderView("ORD-5", OrderStatus.OUTBOUND, 1000L, 4L,
-                null, null, null, null, null, "NEST-02", "应急药品", review);
-
-        assertEquals(review, view.safetyReview());
-        assertEquals("继续", view.safetyReview().verdict());
-        assertEquals("在飞安全复核-继续", view.safetyReview().opType());
-        assertEquals(1_760_000_123_456L, view.safetyReview().eventTs());
     }
 }

@@ -408,8 +408,7 @@ public class TaskQueueService {
         }
     }
 
-    /** 供同模块复核帧复用：必须带上 fallbackVersions 记忆位，勿自行写 Math.max。 */
-    public long stateVersion(String orderId, Long logId) {
+    private long stateVersion(String orderId, Long logId) {
         AtomicLong published = fallbackVersions.computeIfAbsent(orderId,
                 ignored -> new AtomicLong(1L));
         if (logId != null) {
