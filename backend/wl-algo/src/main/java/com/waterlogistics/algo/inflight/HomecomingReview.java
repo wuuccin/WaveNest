@@ -66,7 +66,8 @@ public final class HomecomingReview {
         double margin = previousTier == HomecomingTier.RETURN_HOME_NEST
                 ? params.batteryReleaseMarginPct()
                 : params.batterySafetyMarginPct();
-        double homeRequired = homewardEnergyRequired(input, params, previousTier);
+        ReturnBaseline baseline = homewardEnergyRequired(input, params, previousTier);
+        double homeRequired = baseline.requiredPercent();
         boolean firstTierOk = firstTierFeasibleByReserve(input.batteryPercent(), homeRequired, margin);
         // 《84》§2.2 A5 兜底：低电量绝对阈值与 2.1 取更保守者，两者必须并存
         boolean firstTierOkAll = firstTierOk && aboveAbsoluteFloor(input.batteryPercent(), params);
@@ -74,8 +75,8 @@ public final class HomecomingReview {
             return new HomecomingDecision(HomecomingTier.RETURN_HOME_NEST, input.homeNestId(), null, false,
                     List.of(), riskFlags,
                     "第一级命中：回原巢（电量 " + input.batteryPercent() + "% ≥ 返程基线需求 "
-                            + round2(homeRequired) + "% ＋ 裕度 " + round2(margin) + "%"
-                            + floorNote(params) + "）");
+                            + round2(homeRequired) + "%（" + baseline.tierLabel() + "）＋ 裕度 "
+                            + round2(margin) + "%" + floorNote(params) + "）");
         }
 
         // ── 第二级：迫停他巢——逐个候选走 可达性 C3 → 容量 D2 → 时隙 D1/D5 ──
@@ -105,7 +106,7 @@ public final class HomecomingReview {
         String why = firstTierOk
                 ? "第一级电量高于 A5 低电量绝对阈值兜底线"
                 : "第一级不可回（电量 " + input.batteryPercent() + "% 不足基线 " + round2(homeRequired)
-                        + "% ＋ 裕度 " + round2(margin) + "%）";
+                        + "%（" + baseline.tierLabel() + "）＋ 裕度 " + round2(margin) + "%）";
         // §7.6 第 7 步：迫降点 ID 由本组 L4 迫降点层（台账候选 → 否决筛除 → 可达性）出。
         // 本轮未接 L4 台账，故 targetId/targetPosition 留空，不臆造迫降点。
         return new HomecomingDecision(HomecomingTier.EMERGENCY_LAND_FIELD, null, null, false, audit, riskFlags,
@@ -114,27 +115,51 @@ public final class HomecomingReview {
     }
 
     /**
-     * 返程基线需求：<b>仅在无风况快照时才乘固定裕度系数 k</b>。
+     * 返程基线需求的三档判档链（《84》§2.3，与功能 17 的 {@code cov} 三档同构）：
+     * <ol>
+     *   <li><b>有分布 → A3 机会约束档</b>（§2.3 ①）：需上游给风况分布与 {@code e10AlphaFailProb}。
+     *       <b>本批不实现</b>——alpha 未灌、无分布形态，故装配层不会注入，档位仅在此声明占位，不臆造概率公式；</li>
+     *   <li><b>只有范围 → A4 鲁棒档</b>（§2.3 ②）：{@code v_robust = 区间上界 + Δv}
+     *       （{@code e10RobustWindOffsetMs}，m/s）。<b>基线由装配层按 {@code v_robust} 调同一套返程能量计算得到</b>，
+     *       本类只做「用哪条基线」的档位选择，<b>不乘系数、不加百分点</b>——在算法层另造倍率会把风况变成
+     *       第二个入口，撞 §7.7 硬约束 2，且 B 组精算接入后变重复计数。<b>现实</b>：装配层
+     *       {@code reservePct()} 当前取 {@code e10ReserveRatio×100} 占位，A4 今天无处施力，
+     *       真实基线待 B 组精算接入后才有实际效果，故此处仅标档位与 {@code v_robust}，基线原样带出；</li>
+     *   <li><b>都没有 → 固定系数 k 兜底档</b>（§2.3 ③）：无风况快照时按 {@code e10MarginK} 放大基线。
+     *       <b>风况侧迟滞两值沿用 develop 既有实现</b>（2026-11-16 迟滞比率口径，{@code windMarginFactorExit}）：
+     *       上一轮已在第一级时走退出侧 {@link HomecomingParams#windMarginFactorExit()}（1.2×0.6＝0.72），
+     *       否则走进入侧 {@link HomecomingParams#windMarginFactor()}（1.2）；本类不另写第二版 k。</li>
+     * </ol>
      *
      * <p>依据《84》§7.7 硬约束 2「风况只经返程基线进入判定，不得单独成维或单独调阈值」：
      * 有风况快照时基线已是风况相关精算结果（§2.1 不等式里的 {@code E_return}），
      * 再乘 k 是重复计数；无风况快照时上游既不给分布也不给范围，按 §2.3 ③ 固定系数 k 兜底放大基线。
      *
-     * <p><b>k 也分进入／退出两值</b>（2026-11-16 迟滞比率口径）：上一轮已在第一级时走
-     * {@link HomecomingParams#windMarginFactorExit()}，否则走进入侧
-     * {@link HomecomingParams#windMarginFactor()}——只改电量裕度一侧，无风况档的判定线不随迟滞移动。
+     * <p>有点估计但无完整区间的快照走 A4 与兜底之间的点估计档：基线已含风况，不乘 k（§7.7 硬约束 2）。
      */
-    private static double homewardEnergyRequired(HomecomingInput input, HomecomingParams params,
+    private static ReturnBaseline homewardEnergyRequired(HomecomingInput input, HomecomingParams params,
             HomecomingTier previousTier) {
-        double k;
-        if (input.windSnapshot() != null) {
-            k = 1.0;
-        } else {
-            k = previousTier == HomecomingTier.RETURN_HOME_NEST
-                    ? params.windMarginFactorExit()
-                    : params.windMarginFactor();
+        WindSnapshot wind = input.windSnapshot();
+        double base = input.homewardEnergyBaselinePercent();
+        if (wind != null && wind.hasWindRange() && params.robustWindOffsetMs() != null) {
+            // 档② A4：算法层只标档位、不乘系数；基线由装配层按 v_robust 精算注入（当前为占位）
+            double vRobust = wind.windSpeedMaxMs() + params.robustWindOffsetMs();
+            return new ReturnBaseline(base, "A4鲁棒档(区间上界+Δv=" + round2(vRobust)
+                    + "m/s，真实基线待B组精算接入)");
         }
-        return input.homewardEnergyBaselinePercent() * k;
+        if (wind != null) {
+            // 点估计档：基线已含风况，不乘 k；A3 因 alpha 未灌、无分布形态本批不实现
+            return new ReturnBaseline(base, "点估计档(基线已含风况；A3 机会约束档待分布与 α 接入)");
+        }
+        // 档③ 固定 k 兜底；进入／退出两值沿用 develop 的 windMarginFactor / windMarginFactorExit
+        boolean exiting = previousTier == HomecomingTier.RETURN_HOME_NEST;
+        double k = exiting ? params.windMarginFactorExit() : params.windMarginFactor();
+        return new ReturnBaseline(base * k, "固定系数k兜底档(k=" + round2(k)
+                + (exiting ? "，退出侧" : "，进入侧") + ")");
+    }
+
+    /** 三档判档链的返回：返程基线需求（百分点）＋写进 reason 的档位标签。 */
+    private record ReturnBaseline(double requiredPercent, String tierLabel) {
     }
 
     /**

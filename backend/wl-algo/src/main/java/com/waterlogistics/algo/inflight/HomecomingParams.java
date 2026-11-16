@@ -44,6 +44,12 @@ package com.waterlogistics.algo.inflight;
  * @param slotBufferMs 4.4 时隙重叠判定近进缓冲（窗口下界），毫秒（对应 {@code e10_slot_buffer}×1000）；须 ≥ 0
  * @param arrivalEtaMs 预计到达时刻，Unix 毫秒（第二级时隙判定用）；可空则时隙判据不可算
  * @param slotHoldMs 归巢时隙占用时长，毫秒（D5 占用时长估计）；须 &gt; 0
+ * @param robustWindOffsetMs A4 鲁棒档风速轴偏移 Δv，<b>米每秒（m/s）</b>，对应
+ *                       {@code e10RobustWindOffsetMs}（建议 3，2–5 中值）；可空＝未注入 A4 档。
+ *                       {@code Ms} 此处是 m/s，不是毫秒（本库 {@code slotBufferMs} 才是毫秒）。
+ *                       算法层只据此识别 A4 档，不乘系数——{@code v_robust = 上界 + 该偏移} 由装配层算
+ * @param alphaFailProb A3 机会约束允许失败概率 α，无量纲，对应 {@code e10AlphaFailProb}；
+ *                      可空，<b>本批不灌、无默认值</b>（等风况分布形态）——故 A3 档只留结构、暂不可达
  */
 public record HomecomingParams(
         double batterySafetyMarginPct,
@@ -54,7 +60,9 @@ public record HomecomingParams(
         double windMarginFactorExit,
         long slotBufferMs,
         Long arrivalEtaMs,
-        long slotHoldMs) {
+        long slotHoldMs,
+        Double robustWindOffsetMs,
+        Double alphaFailProb) {
 
     /**
      * 《84》§4.3 {@code e10_reserve_ratio} = 0.20（无量纲比率），换算成百分点得 20.0。
@@ -78,6 +86,14 @@ public record HomecomingParams(
     public static final long SUGGESTED_SLOT_BUFFER_MS = 58_000L;
 
     /**
+     * 《84》§4.3 {@code e10RobustWindOffsetMs} = 3 m/s（参考区间 2–5 m/s 的中值）。
+     *
+     * <p><b>仅供单测与仿真起步</b>；生产取值须由模块层从 {@code sys_param} 读出后注入，本类不设生产默认值。
+     * 单位是<b>米每秒</b>，不是毫秒。
+     */
+    public static final double SUGGESTED_ROBUST_WIND_OFFSET_MS = 3.0;
+
+    /**
      * 《84》§4.3 {@code e10_margin_k} = 1.2 是「固定裕度系数 k」的<b>建议初值</b>。
      *
      * <p><b>本类刻意不给 k 的默认值</b>：§7.7 硬约束 2「风况只经返程基线进入判定，不得单独成维或单独调阈值」
@@ -86,10 +102,30 @@ public record HomecomingParams(
      */
     public static HomecomingParams suggested(double nestAvailFactor, double windMarginFactor,
             long arrivalEtaMs, long slotHoldMs) {
+        return suggested(nestAvailFactor, windMarginFactor, arrivalEtaMs, slotHoldMs, null);
+    }
+
+    /**
+     * 带 A4 风速偏移的建议构造（单测钉死三档判档链用）。{@code robustWindOffsetMs} 为空时即不提供 A4 档。
+     */
+    public static HomecomingParams suggested(double nestAvailFactor, double windMarginFactor,
+            long arrivalEtaMs, long slotHoldMs, Double robustWindOffsetMs) {
         return new HomecomingParams(SUGGESTED_BATTERY_SAFETY_MARGIN_PCT,
                 SUGGESTED_BATTERY_SAFETY_MARGIN_PCT, null,
                 nestAvailFactor, windMarginFactor, windMarginFactor, SUGGESTED_SLOT_BUFFER_MS,
-                arrivalEtaMs, slotHoldMs);
+                arrivalEtaMs, slotHoldMs, robustWindOffsetMs, null);
+    }
+
+    /**
+     * 九参兼容构造器：develop 既有调用方（2-1 迟滞两值读键已落）不传 A4／A3 两字段时视为未注入。
+     * A4 档由 {@link #suggested(double, double, long, long, Double)} 或 11 参规范构造器显式注入。
+     */
+    public HomecomingParams(double batterySafetyMarginPct, double batteryReleaseMarginPct,
+            Double batteryAbsoluteFloorPct, double nestAvailFactor, double windMarginFactor,
+            double windMarginFactorExit, long slotBufferMs, Long arrivalEtaMs, long slotHoldMs) {
+        this(batterySafetyMarginPct, batteryReleaseMarginPct, batteryAbsoluteFloorPct,
+                nestAvailFactor, windMarginFactor, windMarginFactorExit, slotBufferMs,
+                arrivalEtaMs, slotHoldMs, null, null);
     }
 
     /** A5 低电量兜底是否已接入（未接入时第一级只有 A1 一条判据，属降级运行） */
@@ -133,6 +169,16 @@ public record HomecomingParams(
         }
         if (arrivalEtaMs != null && arrivalEtaMs < 0) {
             throw new IllegalArgumentException("预计到达时刻不可为负，实测=" + arrivalEtaMs);
+        }
+        if (robustWindOffsetMs != null
+                && (!Double.isFinite(robustWindOffsetMs) || robustWindOffsetMs < 0)) {
+            throw new IllegalArgumentException("A4 风速轴偏移 Δv 须为非负有限值（m/s），实测="
+                    + robustWindOffsetMs);
+        }
+        if (alphaFailProb != null && (!Double.isFinite(alphaFailProb)
+                || alphaFailProb <= 0 || alphaFailProb >= 1)) {
+            throw new IllegalArgumentException("A3 允许失败概率 α 须为 (0,1) 区间有限值，实测="
+                    + alphaFailProb);
         }
     }
 
