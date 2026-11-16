@@ -264,7 +264,7 @@ public class HomecomingService {
         long eta = Math.max(0L, System.currentTimeMillis() + travelMs);
         return new HomecomingParams(params.batterySafetyMarginPct(), params.batteryReleaseMarginPct(),
                 params.batteryAbsoluteFloorPct(), params.nestAvailFactor(), params.windMarginFactor(),
-                params.slotBufferMs(), eta, params.slotHoldMs());
+                params.windMarginFactorExit(), params.slotBufferMs(), eta, params.slotHoldMs());
     }
 
     // ───────────────────────── 第二级占位 ─────────────────────────

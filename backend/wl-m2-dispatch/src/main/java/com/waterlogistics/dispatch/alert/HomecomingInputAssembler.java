@@ -142,29 +142,33 @@ public class HomecomingInputAssembler {
 
     /**
      * 阈值参数：能落键的从 {@code sys_param} 读，无键的用 {@code HomecomingParams}
-     * 建议值并在上表注明（不臆造换算，见 {@code e10HystExitRatio} 待拍板记录）。
+     * 建议值并在上表注明。
      *
      * <ul>
-     *   <li>{@code e10ReserveRatio}(0.20 比率) ×100 → 储备裕度 20.0 百分点；</li>
-     *   <li>解除裕度取同值＝等价「不迟滞」（退出＝进入，迟滞语义未被键覆盖）；</li>
+     *   <li>{@code e10ReserveRatio}(0.20 比率) ×100 → 储备基准 20.0 百分点；</li>
+     *   <li>迟滞两值（2026-11-16 裁定取比率语义）：进入裕度＝基准 × {@code e10HystEnterRatio}(1.0)
+     *       ＝20.0，退出裕度＝基准 × {@code e10HystExitRatio}(0.6)＝12.0——0.4 倍死区防乒乓；</li>
      *   <li>A5 兜底 {@code lowBatteryTrigger}(20)——2026-10-18 口径：与 G 组告警共用一键；</li>
-     *   <li>{@code e10MarginK}(1.2) 固定裕度系数（仅无风况快照时生效）；</li>
-     *   <li>{@code e10NestAvailFactor}(0.8)／{@code e10SlotBuffer}(58000)／{@code e10SlotHold}(58000)
-     *       已落键（011），此处从 {@code sys_param} 读，读不到时取同名建议值；</li>
+     *   <li>{@code e10MarginK}(1.2) 固定裕度系数（仅无风况快照时生效），
+     *       退出侧取 {@code e10MarginK}×{@code e10HystExitRatio}＝0.72，与电量裕度同口径；</li>
+     *   <li>{@code e10NestAvailFactor}(0.8)／{@code e10SlotBuffer}(58000 ms 近进缓冲)／
+     *       {@code e10SlotHold}(300000 ms 落位后作业占用) 已落键（011／018），此处从 {@code sys_param} 读；</li>
      *   <li>{@code arrivalEtaMs} 传 null——由 {@code HomecomingService} 按「当前位置 → 原巢」
      *       距离／巡航速度补齐；补不齐则第二级时隙判据不可算（不谎报冲突）。</li>
      * </ul>
      */
     public HomecomingParams params() {
-        double marginPct = reservePct();
+        double baseMarginPct = reservePct();
+        double enterRatio = sysParamLoader.getDouble("e10HystEnterRatio", 1.0);
+        double exitRatio = sysParamLoader.getDouble("e10HystExitRatio", 0.6);
         double marginK = sysParamLoader.getDouble("e10MarginK", 1.2);
         Double batteryFloor = sysParamLoader.getDouble("lowBatteryTrigger", 20.0);
         double nestAvailFactor = sysParamLoader.getDouble("e10NestAvailFactor",
                 HomecomingParams.SUGGESTED_NEST_AVAIL_FACTOR);
         long slotBufferMs = sysParamLoader.getInt("e10SlotBuffer", 58_000);
-        long slotHoldMs = sysParamLoader.getInt("e10SlotHold", 58_000);
-        return new HomecomingParams(marginPct, marginPct, batteryFloor,
-                nestAvailFactor, marginK, slotBufferMs, null, slotHoldMs);
+        long slotHoldMs = sysParamLoader.getInt("e10SlotHold", 300_000);
+        return new HomecomingParams(baseMarginPct * enterRatio, baseMarginPct * exitRatio, batteryFloor,
+                nestAvailFactor, marginK, marginK * exitRatio, slotBufferMs, null, slotHoldMs);
     }
 
     /**

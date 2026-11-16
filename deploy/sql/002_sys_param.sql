@@ -9,9 +9,10 @@
 --     rhoTh / vStopMs / mOfN / rotWindowFrames 已在 A 组段内，不重复灌）
 -- 未灌入（取值未定，报组长后补）：
 --   · C/D/F/G 组参数：83/82/85/86 只列名目、未给取值
---   · E 组 3 项待定：lenOverGroundM（按船型参数化）／e10HystExitRatio（换算口径待
---     拍板，见 53 §2 第 18 项）／e10RobustWindOffsetMs 与 e10AlphaFailProb 对应的
---     ②鲁棒裕度档、①机会约束档尚无上游风况分布可依，只灌 ③ 固定系数档
+--   · E 组待定：lenOverGroundM（按船型参数化）／e10RobustWindOffsetMs 与 e10AlphaFailProb
+--     对应的 ②鲁棒裕度档、①机会约束档尚无上游风况分布可依，只灌 ③ 固定系数档。
+--     e10HystEnterRatio／e10HystExitRatio 已于 2026-11-16 按比率语义定值，由 018 灌入，
+--     不再列入本文件的待定项
 -- =====================================================================
 
 USE `wavenest`;
@@ -125,11 +126,11 @@ INSERT INTO `sys_param` (`param_key`, `param_value`, `category`, `description`) 
 
 -- ---------------- 未灌入的 E 组 3 项（取值未定，不臆造） ----------------
 --   lenOverGroundM      ：停车位移阈值（一船长），值为「按船型参数化」，无具体米数
---   e10HystExitRatio    ：第一级边界迟滞退出裕度；1.2 若直读会使退出比进入更保守，与迟滞语义
---                        矛盾，换算口径待拍板（53 §2 第 18 项）
 --   e10RobustWindOffsetMs / e10AlphaFailProb
 --                       ：分别对应 84 §2.3 ② 鲁棒裕度档与 ① 机会约束档，须上游给风况
 --                        分布／范围表达才可判档；首版只实现 ③ 固定系数档（e10MarginK）
+--   注：e10HystEnterRatio／e10HystExitRatio 的取值已于 2026-11-16 裁定（1.0／0.6），
+--       由 018_e10_hyst_slot_landing.sql 灌入，不在此段、也不计入本段 3 项
 
 -- ---------------- 10-16 序4 灌库（档D + 候选生成参数；张睿哲） ----------------
 -- 档 D：全项目低电量阈值（2026-10-18 口径修正：统一 lowBatteryTrigger=20）

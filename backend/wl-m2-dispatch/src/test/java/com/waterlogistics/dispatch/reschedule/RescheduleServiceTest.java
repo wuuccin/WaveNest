@@ -54,7 +54,7 @@ class RescheduleServiceTest {
     /** 6b 第 4 步：原机放弃本次会面并返航 → 返航复核给出三级落点结论 */
     @Test
     void abandonMeet_shouldDelegateToHomecomingReview() {
-        HomecomingParams params = new HomecomingParams(20.0, 20.0, null, 0.8, 1.0, 0L, 1_000L, 2_000L);
+        HomecomingParams params = new HomecomingParams(20.0, 20.0, null, 0.8, 1.0, 1.0, 0L, 1_000L, 2_000L);
 
         HomecomingDecision home = service.abandonMeetAndReturnHome(input(80.0), params, List.of());
         HomecomingDecision field = service.abandonMeetAndReturnHome(input(30.0), params, List.of());
