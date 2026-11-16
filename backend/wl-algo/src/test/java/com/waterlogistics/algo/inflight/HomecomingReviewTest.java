@@ -90,6 +90,35 @@ class HomecomingReviewTest {
         assertTrue(d.reason().contains("无候选他巢"));
     }
 
+    /** 第三级回填（2-2）：有可用迫降点 → targetId/坐标非空、告警语义不变 */
+    @Test
+    void thirdTier_withUsableLandingPoint_shouldFillTarget() {
+        EmergencyLandingCandidate usable = new EmergencyLandingCandidate("ELP-OK",
+                new GeoPoint(115.85, 28.65), 300.0, EmergencyLandingCandidate.SURFACE_WATER, true);
+        HomecomingDecision d = HomecomingReview.review(input(30.0), params(1_000L), List.of(),
+                null, List.of(usable), 500.0);
+
+        assertEquals(HomecomingTier.EMERGENCY_LAND_FIELD, d.tier());
+        assertEquals("ELP-OK", d.targetId(), "有可用点须回填非空迫降点标识");
+        assertEquals(new GeoPoint(115.85, 28.65), d.targetPosition(), "坐标随之回填");
+        assertFalse(d.needSlotRequest(), "第三级仍不出占位请求");
+        assertTrue(d.reason().contains("迫降点 ELP-OK"), "reason 须点明选中的迫降点：" + d.reason());
+    }
+
+    /** 第三级回填（2-2）：无可用点 → targetId/坐标 null + reason，不得踩「非第三级须有 targetId」约束 */
+    @Test
+    void thirdTier_withoutUsableLandingPoint_shouldStayNullWithReason() {
+        EmergencyLandingCandidate land = new EmergencyLandingCandidate("ELP-LAND",
+                new GeoPoint(115.85, 28.65), 100.0, EmergencyLandingCandidate.SURFACE_LAND, true);
+        HomecomingDecision d = HomecomingReview.review(input(30.0), params(1_000L), List.of(),
+                null, List.of(land), 500.0);
+
+        assertEquals(HomecomingTier.EMERGENCY_LAND_FIELD, d.tier());
+        assertNull(d.targetId(), "陆地否决后无可用点，保持 null");
+        assertNull(d.targetPosition());
+        assertTrue(d.reason().contains("无可用迫降点"), "reason 须说明未出点：" + d.reason());
+    }
+
     /** 第二级：跳过不可达候选，取首个准入他巢，落巢即回收（不给卸货点） */
     @Test
     void secondTier_shouldStopAtOtherNestAndRequestSlot() {
@@ -284,6 +313,84 @@ class HomecomingReviewTest {
         assertEquals(HomecomingTier.EMERGENCY_LAND_FIELD,
                 HomecomingReview.review(inputWithoutWind(65.0), k12, List.of()).tier(),
                 "无快照时按固定系数 k 放大基线");
+    }
+
+    /** 区间风速输入：A4 鲁棒档用区间上下界（点估计值另置，保证档位选择只看区间） */
+    private static HomecomingInput inputWithRange(double batteryPercent, double minMs, double maxMs) {
+        return new HomecomingInput("EV-R", "ABORT", "TASK-R", "ORDER-R", "DRONE-R", HOME_NEST,
+                POSITION, batteryPercent, BASELINE, true, null,
+                new WindSnapshot(0.0, 90.0, 1L, minMs, maxMs),
+                "WIND_GUST", 1_700_000_000_000L, Boolean.TRUE);
+    }
+
+    /**
+     * §2.3 三档判档链（11-16 任务清单 2-3）：有区间+Δv→A4 不乘系数；有点估计→不乘 k；
+     * 无快照→固定 k。用测试桩基线（BASELINE=40）钉死每档实际带出的基线。
+     */
+    @Test
+    void windTierChain_shouldSelectBaselineByUncertaintyForm() {
+        // 档② A4：区间 [5,9] + Δv=3 → v_robust=12 m/s；算法层不乘系数，基线仍是 40
+        // 65% ≥ 40%+20%=60% 回原巢；若误乘 k=1.2 则 48%+20%=68%>65% 会错降第三级
+        HomecomingParams withOffset = new HomecomingParams(20.0, 20.0, null, 0.8, 1.2, 1.2,
+                NO_BUFFER_MS, 1_000L, SLOT_HOLD_MS, 3.0, null);
+        HomecomingDecision a4 = HomecomingReview.review(inputWithRange(65.0, 5.0, 9.0), withOffset, List.of());
+        assertEquals(HomecomingTier.RETURN_HOME_NEST, a4.tier(), "A4 档不乘系数，基线 40 不被放大");
+        assertTrue(a4.reason().contains("A4鲁棒档"), "reason 须标 A4 档：" + a4.reason());
+        assertTrue(a4.reason().contains("12.0m/s"), "reason 须带 v_robust=上界9+Δv3=12：" + a4.reason());
+
+        // 档②' 有点估计、无区间：即便注入 Δv 也不进 A4，走点估计档、不乘 k
+        HomecomingDecision point = HomecomingReview.review(input(65.0), withOffset, List.of());
+        assertEquals(HomecomingTier.RETURN_HOME_NEST, point.tier(), "点估计档不乘 k");
+        assertTrue(point.reason().contains("点估计档"), "reason 须标点估计档：" + point.reason());
+
+        // 档③ 无快照：固定 k=1.2 放大到 48%，48%+20%=68%>65% 降第三级
+        HomecomingParams k12 = new HomecomingParams(20.0, 20.0, null, 0.8, 1.2, 1.2,
+                NO_BUFFER_MS, 1_000L, SLOT_HOLD_MS, 3.0, null);
+        HomecomingDecision fixedK = HomecomingReview.review(inputWithoutWind(65.0), k12, List.of());
+        assertEquals(HomecomingTier.EMERGENCY_LAND_FIELD, fixedK.tier(), "兜底档乘 k");
+        assertTrue(fixedK.reason().contains("固定系数k兜底档"), "reason 须标兜底档：" + fixedK.reason());
+    }
+
+    /** A3 机会约束档：alpha 未灌（null）时判档链不进 A3，点估计/区间档照常 */
+    @Test
+    void alphaNotInjected_shouldNotEnterA3() {
+        HomecomingParams withAlpha = new HomecomingParams(20.0, 20.0, null, 0.8, 1.2, 1.2,
+                NO_BUFFER_MS, 1_000L, SLOT_HOLD_MS, 3.0, null);
+        assertNull(withAlpha.alphaFailProb(), "本批 α 未灌、无默认值");
+        HomecomingDecision d = HomecomingReview.review(inputWithRange(70.0, 6.0, 10.0), withAlpha, List.of());
+        assertEquals(HomecomingTier.RETURN_HOME_NEST, d.tier());
+        assertFalse(d.reason().contains("A3机会约束档命中"), "α 未灌不得宣称进了 A3 档");
+    }
+
+    /** 参数自守：A4 Δv 非负、α 在 (0,1)；9 参兼容构造两新字段为 null */
+    @Test
+    void windTierParams_shouldRejectIllegalValues() {
+        HomecomingParams legacy = new HomecomingParams(20.0, 20.0, null, 0.8, 1.2, 1.2,
+                NO_BUFFER_MS, 1_000L, SLOT_HOLD_MS);
+        assertNull(legacy.robustWindOffsetMs(), "9 参兼容构造：A4 Δv 未注入");
+        assertNull(legacy.alphaFailProb(), "9 参兼容构造：α 未注入");
+
+        IllegalArgumentException negOffset = assertThrows(IllegalArgumentException.class,
+                () -> new HomecomingParams(20.0, 20.0, null, 0.8, 1.2, 1.2, NO_BUFFER_MS, 1_000L,
+                        SLOT_HOLD_MS, -1.0, null));
+        assertTrue(negOffset.getMessage().contains("风速轴偏移"), "须点名 Δv：" + negOffset.getMessage());
+
+        IllegalArgumentException badAlpha = assertThrows(IllegalArgumentException.class,
+                () -> new HomecomingParams(20.0, 20.0, null, 0.8, 1.2, 1.2, NO_BUFFER_MS, 1_000L,
+                        SLOT_HOLD_MS, 3.0, 1.5));
+        assertTrue(badAlpha.getMessage().contains("失败概率"), "须点名 α：" + badAlpha.getMessage());
+    }
+
+    /** WindSnapshot 区间自守：上下界非负、下界不大于上界；Ms 是 m/s 不是毫秒 */
+    @Test
+    void windSnapshotRange_shouldRejectIllegalValues() {
+        WindSnapshot range = new WindSnapshot(6.0, 90.0, 1L, 5.0, 9.0);
+        assertTrue(range.hasWindRange());
+        assertFalse(new WindSnapshot(6.0, 90.0, 1L).hasWindRange(), "点估计无区间");
+
+        IllegalArgumentException reversed = assertThrows(IllegalArgumentException.class,
+                () -> new WindSnapshot(6.0, 90.0, 1L, 9.0, 5.0));
+        assertTrue(reversed.getMessage().contains("下界"), "须点名区间下界：" + reversed.getMessage());
     }
 
     /** 迟滞只作用第一级能量边界：注入退出裕度后按退出裕度判 */
