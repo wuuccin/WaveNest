@@ -27,6 +27,9 @@ import com.waterlogistics.storage.repository.OrderTaskMapper;
 import com.waterlogistics.storage.repository.TaskLogMapper;
 import java.lang.reflect.Proxy;
 import java.math.BigDecimal;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -51,6 +54,8 @@ class InflightSafetyServiceTest {
     private static final String DRONE = "UAV-01";
     private static final String NEST = "NEST-01";
     private static final long OBSERVED_AT = 1_764_000_000_000L;
+    private static final long ETA_AT = 1_764_000_600_000L;
+    private static final ZoneId DB_ZONE = ZoneId.of("Asia/Shanghai");
 
     private final List<TaskLogEntity> logs = new ArrayList<>();
     private final List<Object> events = new ArrayList<>();
@@ -93,6 +98,8 @@ class InflightSafetyServiceTest {
         assertEquals("继续", review.verdict());
         assertEquals("在飞安全复核-继续", review.opType());
         assertTrue(review.eventTs() > 0, "eventTs 取审计行 ts 换算，不能为 0");
+        assertEquals(ETA_AT, orderStateEvents().get(0).view().etaTs().longValue(),
+                "复核帧须带出订单已有 etaTs，按 DB_ZONE 反解，抹空会把前端「预计送达」清空");
         assertTrue(homecomingInputs.isEmpty(), "继续档不进功能 10");
     }
 
@@ -153,6 +160,10 @@ class InflightSafetyServiceTest {
                 "迁移帧（AFTER_COMMIT 先到、版本大）＋ 复核帧（后到、版本小），两帧都带复核三值");
         assertEquals(OrderStatus.RETURNING, orderStateEvents().get(0).view().orderStatus());
         assertEquals("应急药品", orderStateEvents().get(0).view().goodsType(), "气象复核回写的状态帧必须带上配送品类，否则界面把已展示的品类退回「未记录」");
+        assertEquals(ETA_AT, orderStateEvents().get(0).view().etaTs().longValue(),
+                "迁移帧须带出 etaTs，抹空会把前端「预计送达」清空");
+        assertEquals(ETA_AT, orderStateEvents().get(1).view().etaTs().longValue(),
+                "复核帧同样带出 etaTs");
         assertEquals("终止", orderStateEvents().get(0).view().safetyReview().verdict(),
                 "迁移帧自身必须携带复核三值：它先到且版本更大，复核帧随后到会被严格递增判据丢弃");
         assertEquals("终止", orderStateEvents().get(1).view().safetyReview().verdict(),
@@ -326,6 +337,7 @@ class InflightSafetyServiceTest {
         entity.setStatus(status.getValue());
         entity.setMeetLon(new BigDecimal("115.8600"));
         entity.setMeetLat(new BigDecimal("28.6700"));
+        entity.setEtaTs(LocalDateTime.ofInstant(Instant.ofEpochMilli(ETA_AT), DB_ZONE));
         return entity;
     }
 

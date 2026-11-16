@@ -252,8 +252,8 @@ public class InflightSafetyService {
         // 终止档迁移帧与复核帧带同一份 SafetyReview：迁移帧 AFTER_COMMIT 先到且版本更大，
         // 复核帧随后到会被严格递增判据丢弃——迁移帧必须自身携带，终止档三值才带得出来。
         OrderView view = new OrderView(order.getOrderId(), OrderStatus.RETURNING, eventTs,
-                version, null, null, null, null, null, order.getCargoNestId(), order.getGoodsType(),
-                review);
+                version, null, null, null, null, etaTsOf(order), order.getCargoNestId(),
+                order.getGoodsType(), review);
         eventPublisher.publishEvent(new OrderStateChangedEvent(view));
     }
 
@@ -377,6 +377,16 @@ public class InflightSafetyService {
     }
 
     /**
+     * 订单实体的预计送达时刻转 Unix 毫秒，口径与 {@code FlightPhaseAdvancer} 广播帧一致：
+     * 写库用 {@link #DB_ZONE} 转 {@code LocalDateTime}，这里用同一时区反解。复核本身不改送达时刻，
+     * 但帧里若留 null，前端按整对象替换会把已展示的「预计送达」抹空，故原样带出。
+     */
+    private static Long etaTsOf(OrderTaskEntity order) {
+        return order.getEtaTs() == null ? null
+                : order.getEtaTs().atZone(DB_ZONE).toInstant().toEpochMilli();
+    }
+
+    /**
      * 三档都随 {@code order_state} 带出复核结论：继续档不改状态也发一帧（留痕给展示层），
      * 调整档同理；终止档的迁移帧在事务内先发，本帧后发、版本较小会被前端严格递增判据
      * 丢弃，但迁移帧已带同一份复核三值，结论不会丢。
@@ -390,9 +400,11 @@ public class InflightSafetyService {
         long eventTs = review.eventTs();
         long version = taskQueueService.stateVersion(
                 outcome.order().getOrderId(), outcome.audit().getLogId());
+        // etaTs 与货巢、品类同为复核时订单上已定的事实：帧里留 null 会把前端已展示的「预计送达」抹空。
         OrderView view = new OrderView(outcome.order().getOrderId(),
-                statusOf(outcome.order()), eventTs, version, null, null, null, null, null,
-                outcome.order().getCargoNestId(), outcome.order().getGoodsType(), review);
+                statusOf(outcome.order()), eventTs, version, null, null, null, null,
+                etaTsOf(outcome.order()), outcome.order().getCargoNestId(),
+                outcome.order().getGoodsType(), review);
         eventPublisher.publishEvent(new OrderStateChangedEvent(view));
     }
 
