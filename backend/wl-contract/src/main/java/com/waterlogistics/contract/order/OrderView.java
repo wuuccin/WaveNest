@@ -29,6 +29,10 @@ import com.waterlogistics.contract.state.OrderStatus;
  *                              下游只按「有没有货巢」处理，不区分来源
  * @param goodsType             下单时选定的配送品类；历史订单缺值时为 null，
  *                              展示层显示「未记录」，不得猜补默认品类
+ * @param safetyReview          最近一次在飞安全复核的三值结论；无复核为 null。
+ *                              verdict 与 opType 原样取自 InflightSafetyVerdict，
+ *                              不得翻译或映射；飞行态等非复核帧不带该字段，
+ *                              由 REST 与前端按字段级合并沿用旧值，不被 null 抹掉
  */
 public record OrderView(
 
@@ -52,7 +56,22 @@ public record OrderView(
 
         String cargoNestId,
 
-        String goodsType) {
+        String goodsType,
+
+        SafetyReview safetyReview) {
+
+    /**
+     * 兼容旧构造点：复核结论留空。
+     *
+     * <p>新增 {@code safetyReview} 前的 11 参主构造签名；全仓多数订单态帧仍按
+     * 该签名构造，保持它们零改动。无复核的帧显式置 null，靠字段级合并沿用旧值。
+     */
+    public OrderView(String orderId, OrderStatus orderStatus, long eventTs, long stateVersion,
+            WaitReason waitReason, Long wakeEtaTs, GeoPoint emergencyLandingPoint,
+            String handoverPhase, Long etaTs, String cargoNestId, String goodsType) {
+        this(orderId, orderStatus, eventTs, stateVersion, waitReason, wakeEtaTs,
+                emergencyLandingPoint, handoverPhase, etaTs, cargoNestId, goodsType, null);
+    }
 
     /**
      * 兼容旧构造点：配送品类留空。
@@ -76,7 +95,7 @@ public record OrderView(
             WaitReason waitReason, Long wakeEtaTs, GeoPoint emergencyLandingPoint,
             String handoverPhase, Long etaTs, String cargoNestId) {
         this(orderId, orderStatus, eventTs, stateVersion, waitReason, wakeEtaTs,
-                emergencyLandingPoint, handoverPhase, etaTs, cargoNestId, null);
+                emergencyLandingPoint, handoverPhase, etaTs, cargoNestId, null, null);
     }
 
     /**
@@ -99,7 +118,7 @@ public record OrderView(
             WaitReason waitReason, Long wakeEtaTs, GeoPoint emergencyLandingPoint,
             String handoverPhase, Long etaTs) {
         this(orderId, orderStatus, eventTs, stateVersion, waitReason, wakeEtaTs,
-                emergencyLandingPoint, handoverPhase, etaTs, null, null);
+                emergencyLandingPoint, handoverPhase, etaTs, null, null, null);
     }
 
     /**
@@ -118,6 +137,6 @@ public record OrderView(
             WaitReason waitReason, Long wakeEtaTs, GeoPoint emergencyLandingPoint,
             String handoverPhase) {
         this(orderId, orderStatus, eventTs, stateVersion, waitReason, wakeEtaTs,
-                emergencyLandingPoint, handoverPhase, null, null, null);
+                emergencyLandingPoint, handoverPhase, null, null, null, null);
     }
 }

@@ -513,8 +513,22 @@ public class OrderAdmissionService {
     }
 
     private void merge(OrderView next) {
-        orders.compute(next.orderId(), (orderId, current) ->
-                current == null || next.stateVersion() > current.stateVersion() ? next : current);
+        orders.compute(next.orderId(), (orderId, current) -> {
+            if (current == null || next.stateVersion() > current.stateVersion()) {
+                // 复核三值只在复核帧携带；飞行态等非复核帧 safetyReview=null，
+                // 整对象替换会把已展示的复核结论抹掉。与前端 stores/index.js 的
+                // goodsType ?? old?.goodsType 同口径：next 无该字段则沿用 current。
+                if (next.safetyReview() == null && current != null
+                        && current.safetyReview() != null) {
+                    return new OrderView(next.orderId(), next.orderStatus(), next.eventTs(),
+                            next.stateVersion(), next.waitReason(), next.wakeEtaTs(),
+                            next.emergencyLandingPoint(), next.handoverPhase(), next.etaTs(),
+                            next.cargoNestId(), next.goodsType(), current.safetyReview());
+                }
+                return next;
+            }
+            return current;
+        });
     }
 
     /**

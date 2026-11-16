@@ -7,9 +7,11 @@ import com.waterlogistics.algo.inflight.HomecomingInput;
 import com.waterlogistics.algo.inflight.HomecomingParams;
 import com.waterlogistics.algo.inflight.HomecomingTier;
 import com.waterlogistics.contract.order.OrderView;
+import com.waterlogistics.contract.order.SafetyReview;
 import com.waterlogistics.contract.rest.GeoPoint;
 import com.waterlogistics.contract.state.OrderStatus;
 import com.waterlogistics.dispatch.alert.HomecomingInputAssembler;
+import com.waterlogistics.dispatch.queue.TaskQueueService;
 import com.waterlogistics.contract.order.OrderStateChangedEvent;
 import com.waterlogistics.storage.entity.DroneEntity;
 import com.waterlogistics.storage.entity.OrderTaskEntity;
@@ -92,6 +94,7 @@ public class InflightSafetyService {
     private final HomecomingInputAssembler inputAssembler;
     private final ApplicationEventPublisher eventPublisher;
     private final TransactionTemplate transactionTemplate;
+    private final TaskQueueService taskQueueService;
 
     /**
      * @param inputAssembler 只借它的 {@link HomecomingInputAssembler#params()}：
@@ -105,7 +108,8 @@ public class InflightSafetyService {
             RescheduleService rescheduleService,
             HomecomingInputAssembler inputAssembler,
             ApplicationEventPublisher eventPublisher,
-            TransactionTemplate transactionTemplate) {
+            TransactionTemplate transactionTemplate,
+            TaskQueueService taskQueueService) {
         this.orderTaskMapper = orderTaskMapper;
         this.taskLogMapper = taskLogMapper;
         this.droneMapper = droneMapper;
@@ -113,6 +117,7 @@ public class InflightSafetyService {
         this.inputAssembler = inputAssembler;
         this.eventPublisher = eventPublisher;
         this.transactionTemplate = transactionTemplate;
+        this.taskQueueService = taskQueueService;
     }
 
     /**
@@ -131,6 +136,9 @@ public class InflightSafetyService {
      */
     public Optional<InflightSafetyVerdict> review(InflightSafetyRequest request) {
         Optional<ReviewOutcome> outcome = runInTransaction(() -> reviewInTransaction(request));
+        // 三档都带复核结论走 order_state（继续档也要留痕给展示层）；
+        // 原广播独立保留：调整／终止档仍发 InflightSafetyDecisionEvent，继续档不发。
+        outcome.ifPresent(this::publishSafetyReview);
         outcome.filter(o -> o.verdict().riskMarked()).ifPresent(this::publish);
         return outcome.map(ReviewOutcome::verdict);
     }
@@ -161,7 +169,7 @@ public class InflightSafetyService {
         }
         InflightSafetyVerdict verdict = judged.get();
 
-        writeAudit(order, verdict);
+        TaskLogEntity audit = writeAudit(order, verdict);
 
         HomecomingDecision decision = null;
         if (verdict.verdict() == InflightSafetyVerdict.Verdict.TERMINATE) {
@@ -169,14 +177,14 @@ public class InflightSafetyService {
             // 迫降野外时功能 10 已把订单置「失败」并写了自己的迁移行，本层不覆盖；
             // 返回空（缺机巢归属／会面点／电量）时只留审计，不能凭审计说已返航。
             if (decision != null && decision.tier() != HomecomingTier.EMERGENCY_LAND_FIELD) {
-                transitionToReturning(order, status);
+                transitionToReturning(order, status, reviewOf(verdict, audit));
             }
         }
         log.info("在飞安全复核完成：orderId={} droneId={} 结论={} 落点={} 订单态={} eventId={}",
                 order.getOrderId(), request.droneId(), verdict.verdict().getValue(),
                 decision == null ? "不适用" : decision.tier().getValue(),
                 order.getStatus(), request.eventId());
-        return Optional.of(new ReviewOutcome(verdict, order, decision));
+        return Optional.of(new ReviewOutcome(verdict, order, decision, audit));
     }
 
     /**
@@ -189,7 +197,7 @@ public class InflightSafetyService {
      * （与既有 {@code writeAudit} 的 fail-soft 口径不同——那里是复核结论的旁证，
      * 这里是可执行动作的前置记录）。
      */
-    private void writeAudit(OrderTaskEntity order, InflightSafetyVerdict verdict) {
+    private TaskLogEntity writeAudit(OrderTaskEntity order, InflightSafetyVerdict verdict) {
         TaskLogEntity entry = new TaskLogEntity();
         entry.setOrderId(order.getOrderId());
         entry.setOpType(verdict.verdict().getOpType());
@@ -197,6 +205,7 @@ public class InflightSafetyService {
         entry.setToStatus(order.getStatus());
         entry.setTs(LocalDateTime.ofInstant(Instant.now(), DB_ZONE));
         taskLogMapper.insert(entry);
+        return entry;
     }
 
     /**
@@ -213,7 +222,8 @@ public class InflightSafetyService {
      * <p>ETA 与 {@code TaskQueueService.transition} 同口径传 {@code null}：
      * 本层不重算返航段预计送达，也不改库里的 {@code eta_ts}。
      */
-    private void transitionToReturning(OrderTaskEntity order, OrderStatus from) {
+    private void transitionToReturning(OrderTaskEntity order, OrderStatus from,
+            SafetyReview review) {
         int updated = orderTaskMapper.update(null,
                 Wrappers.<OrderTaskEntity>lambdaUpdate()
                         .eq(OrderTaskEntity::getOrderId, order.getOrderId())
@@ -235,12 +245,15 @@ public class InflightSafetyService {
         migration.setTs(LocalDateTime.ofInstant(Instant.ofEpochMilli(eventTs), DB_ZONE));
         taskLogMapper.insert(migration);
 
-        // 与 TaskQueueService.stateVersion 同源：版本 1 留给建单帧，日志主键保证递增。
-        long version = migration.getLogId() == null ? 2L
-                : Math.max(2L, migration.getLogId() + 1L);
-        // 配送品类与货巢同为建单时刻确定的字段：本帧不带，前端整对象替换后会把订单上的品类抹成「未记录」。
+        // 复用 TaskQueueService.stateVersion：它先取 max(2, logId+1)，再记住已发布最大版本，
+        // 后续 logId==null 的帧在其上自增；不能自行写 Math.max，否则版本记忆位缺失会让帧被前端拒收。
+        long version = taskQueueService.stateVersion(order.getOrderId(), migration.getLogId());
+        // 配送品类、货巢与复核三值同为建单／复核已定的字段：本帧不带会被前端字段级合并抹掉。
+        // 终止档迁移帧与复核帧带同一份 SafetyReview：迁移帧 AFTER_COMMIT 先到且版本更大，
+        // 复核帧随后到会被严格递增判据丢弃——迁移帧必须自身携带，终止档三值才带得出来。
         OrderView view = new OrderView(order.getOrderId(), OrderStatus.RETURNING, eventTs,
-                version, null, null, null, null, null, order.getCargoNestId(), order.getGoodsType());
+                version, null, null, null, null, etaTsOf(order), order.getCargoNestId(),
+                order.getGoodsType(), review);
         eventPublisher.publishEvent(new OrderStateChangedEvent(view));
     }
 
@@ -352,6 +365,50 @@ public class InflightSafetyService {
     // ───────────────────────── 事务外 ─────────────────────────
 
     /**
+     * 三档共用的复核三值：结论与操作词原样取自裁决（中文词，不翻译、不映射），
+     * 时刻取审计行 {@code ts}。审计行由 {@link #writeAudit} 用 {@code Instant.now()}
+     * 配 {@link #DB_ZONE} 写入，这里必须用同一时区反解，否则毫秒数整体偏 8 小时，
+     * 前端按 {@code eventTs} 排序会把复核帧排到队首或队尾、与其它帧对不上。
+     */
+    private static SafetyReview reviewOf(InflightSafetyVerdict verdict, TaskLogEntity audit) {
+        long eventTs = audit.getTs() == null ? System.currentTimeMillis()
+                : audit.getTs().atZone(DB_ZONE).toInstant().toEpochMilli();
+        return new SafetyReview(verdict.verdict().getValue(), verdict.verdict().getOpType(), eventTs);
+    }
+
+    /**
+     * 订单实体的预计送达时刻转 Unix 毫秒，口径与 {@code FlightPhaseAdvancer} 广播帧一致：
+     * 写库用 {@link #DB_ZONE} 转 {@code LocalDateTime}，这里用同一时区反解。复核本身不改送达时刻，
+     * 但帧里若留 null，前端按整对象替换会把已展示的「预计送达」抹空，故原样带出。
+     */
+    private static Long etaTsOf(OrderTaskEntity order) {
+        return order.getEtaTs() == null ? null
+                : order.getEtaTs().atZone(DB_ZONE).toInstant().toEpochMilli();
+    }
+
+    /**
+     * 三档都随 {@code order_state} 带出复核结论：继续档不改状态也发一帧（留痕给展示层），
+     * 调整档同理；终止档的迁移帧在事务内先发，本帧后发、版本较小会被前端严格递增判据
+     * 丢弃，但迁移帧已带同一份复核三值，结论不会丢。
+     *
+     * <p>版本复用 {@link TaskQueueService#stateVersion}（含 fallback 记忆位），日志主键
+     * 取审计行——版本与时刻同源，都来自本次复核落下的那条 {@code task_log}。
+     */
+    private void publishSafetyReview(ReviewOutcome outcome) {
+        InflightSafetyVerdict verdict = outcome.verdict();
+        SafetyReview review = reviewOf(verdict, outcome.audit());
+        long eventTs = review.eventTs();
+        long version = taskQueueService.stateVersion(
+                outcome.order().getOrderId(), outcome.audit().getLogId());
+        // etaTs 与货巢、品类同为复核时订单上已定的事实：帧里留 null 会把前端已展示的「预计送达」抹空。
+        OrderView view = new OrderView(outcome.order().getOrderId(),
+                statusOf(outcome.order()), eventTs, version, null, null, null, null,
+                etaTsOf(outcome.order()), outcome.order().getCargoNestId(),
+                outcome.order().getGoodsType(), review);
+        eventPublisher.publishEvent(new OrderStateChangedEvent(view));
+    }
+
+    /**
      * 调整与终止两档广播；继续档不发（见 {@link InflightSafetyDecisionEvent}）。
      *
      * <p>广播失败只告警不外抛：复核结果与审计已在事务里落定，推送失败不该把一次
@@ -390,8 +447,8 @@ public class InflightSafetyService {
         return value == null || value.isBlank();
     }
 
-    /** 复核结果三元组：结论 ＋ 权威订单行 ＋ 终止档的落点结论（非终止档为空）。 */
+    /** 复核结果四元组：结论 ＋ 权威订单行 ＋ 落点结论（非终止档为空）＋ 本次审计行。 */
     private record ReviewOutcome(InflightSafetyVerdict verdict, OrderTaskEntity order,
-            HomecomingDecision decision) {
+            HomecomingDecision decision, TaskLogEntity audit) {
     }
 }
