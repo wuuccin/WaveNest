@@ -35,10 +35,16 @@ public final class HomecomingReview {
         // 静态判定器，禁止实例化
     }
 
-    /** 无历史（首次判定）入口 */
+    /** 无历史（首次判定）入口：第三级无迫降点候选、阈值未注入，维持「null + reason」退化。 */
     public static HomecomingDecision review(HomecomingInput input, HomecomingParams params,
             List<NestCandidate> candidates) {
-        return review(input, params, candidates, null);
+        return review(input, params, candidates, null, null, null);
+    }
+
+    /** 有历史入口：第三级无迫降点候选、阈值未注入，维持「null + reason」退化。 */
+    public static HomecomingDecision review(HomecomingInput input, HomecomingParams params,
+            List<NestCandidate> candidates, HomecomingTier previousTier) {
+        return review(input, params, candidates, previousTier, null, null);
     }
 
     /**
@@ -49,10 +55,16 @@ public final class HomecomingReview {
      * @param candidates 候选他巢台账（D 组 {@code occupancy_slot} 读出）；可为 null 视作无候选
      * @param previousTier 上一轮落点结论，用于第一级能量边界的双阈值迟滞；
      *                    为 null 表示无历史，按触发裕度判
+     * @param landingCandidates 第三级迫降点候选（模块层算好距航道垂距／水陆后注入）；可为 null 视作无候选，
+     *                    此时第三级维持「null + reason」退化（{@link #review(HomecomingInput, HomecomingParams, List)}
+     *                    等旧入口即走此路）
+     * @param corridorHalfWidthM 距航道半宽阈值，米（{@code e10LandingCorridorHalfWidthM}）；
+     *                    可空＝未注入，选择器判全部候选「不可算」而不是取建议值
      * @return 三级落点结论（含候选他巢逐项打叉审计记录）
      */
     public static HomecomingDecision review(HomecomingInput input, HomecomingParams params,
-            List<NestCandidate> candidates, HomecomingTier previousTier) {
+            List<NestCandidate> candidates, HomecomingTier previousTier,
+            List<EmergencyLandingCandidate> landingCandidates, Double corridorHalfWidthM) {
         if (input == null || params == null) {
             throw new IllegalArgumentException("input 与 params 必填：判定不允许缺输入或缺阈值");
         }
@@ -108,10 +120,22 @@ public final class HomecomingReview {
                 : "第一级不可回（电量 " + input.batteryPercent() + "% 不足基线 " + round2(homeRequired)
                         + "%（" + baseline.tierLabel() + "）＋ 裕度 " + round2(margin) + "%）";
         // §7.6 第 7 步：迫降点 ID 由本组 L4 迫降点层（台账候选 → 否决筛除 → 可达性）出。
-        // 本轮未接 L4 台账，故 targetId/targetPosition 留空，不臆造迫降点。
-        return new HomecomingDecision(HomecomingTier.EMERGENCY_LAND_FIELD, null, null, false, audit, riskFlags,
-                "第三级命中：迫降野外（" + why + "，" + auditNote + "；迫降为最后一级。"
-                        + "迫降点 ID 待 L4 迫降点层按 §7.6 第 7 步出）");
+        // 11-16 任务清单 2-2：接 EmergencyLandingSelector，只消费模块层注入的候选点与阈值。
+        // 有可用点 → targetId/targetPosition 非空；无可用点 → 均 null + reason（两态，不臆造）。
+        EmergencyLandingSelector.EmergencyLandingSelection landing =
+                EmergencyLandingSelector.select(landingCandidates, corridorHalfWidthM);
+        String landingNote;
+        if (landing.hasSelection()) {
+            landingNote = "迫降点 " + landing.elpId() + "（L4 否决筛除通过）";
+        } else {
+            landingNote = "无可用迫降点（L4 否决 "
+                    + (landing.audit().isEmpty() ? "无候选" : landing.audit().size() + " 项") + "；targetId 留空）";
+        }
+        return new HomecomingDecision(HomecomingTier.EMERGENCY_LAND_FIELD,
+                landing.hasSelection() ? landing.elpId() : null,
+                landing.hasSelection() ? landing.position() : null,
+                false, audit, riskFlags,
+                "第三级命中：迫降野外（" + why + "，" + auditNote + "；迫降为最后一级，" + landingNote + "）");
     }
 
     /**

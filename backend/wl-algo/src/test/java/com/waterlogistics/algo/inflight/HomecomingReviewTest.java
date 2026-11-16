@@ -90,6 +90,35 @@ class HomecomingReviewTest {
         assertTrue(d.reason().contains("无候选他巢"));
     }
 
+    /** 第三级回填（2-2）：有可用迫降点 → targetId/坐标非空、告警语义不变 */
+    @Test
+    void thirdTier_withUsableLandingPoint_shouldFillTarget() {
+        EmergencyLandingCandidate usable = new EmergencyLandingCandidate("ELP-OK",
+                new GeoPoint(115.85, 28.65), 300.0, EmergencyLandingCandidate.SURFACE_WATER, true);
+        HomecomingDecision d = HomecomingReview.review(input(30.0), params(1_000L), List.of(),
+                null, List.of(usable), 500.0);
+
+        assertEquals(HomecomingTier.EMERGENCY_LAND_FIELD, d.tier());
+        assertEquals("ELP-OK", d.targetId(), "有可用点须回填非空迫降点标识");
+        assertEquals(new GeoPoint(115.85, 28.65), d.targetPosition(), "坐标随之回填");
+        assertFalse(d.needSlotRequest(), "第三级仍不出占位请求");
+        assertTrue(d.reason().contains("迫降点 ELP-OK"), "reason 须点明选中的迫降点：" + d.reason());
+    }
+
+    /** 第三级回填（2-2）：无可用点 → targetId/坐标 null + reason，不得踩「非第三级须有 targetId」约束 */
+    @Test
+    void thirdTier_withoutUsableLandingPoint_shouldStayNullWithReason() {
+        EmergencyLandingCandidate land = new EmergencyLandingCandidate("ELP-LAND",
+                new GeoPoint(115.85, 28.65), 100.0, EmergencyLandingCandidate.SURFACE_LAND, true);
+        HomecomingDecision d = HomecomingReview.review(input(30.0), params(1_000L), List.of(),
+                null, List.of(land), 500.0);
+
+        assertEquals(HomecomingTier.EMERGENCY_LAND_FIELD, d.tier());
+        assertNull(d.targetId(), "陆地否决后无可用点，保持 null");
+        assertNull(d.targetPosition());
+        assertTrue(d.reason().contains("无可用迫降点"), "reason 须说明未出点：" + d.reason());
+    }
+
     /** 第二级：跳过不可达候选，取首个准入他巢，落巢即回收（不给卸货点） */
     @Test
     void secondTier_shouldStopAtOtherNestAndRequestSlot() {

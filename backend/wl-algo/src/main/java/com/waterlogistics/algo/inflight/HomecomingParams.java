@@ -94,6 +94,15 @@ public record HomecomingParams(
     public static final double SUGGESTED_ROBUST_WIND_OFFSET_MS = 3.0;
 
     /**
+     * 第三级迫降点距航道半宽阈值建议值 = 500 米（11-16 清单 1-6，键 {@code e10LandingCorridorHalfWidthM}）。
+     *
+     * <p>赣江该段江面＋近岸横向尺度为数百米量级：比会面走廊半宽 50 m 高一个量级、比机巢服务半径 5 km
+     * 低一个量级，故取 500 m。<b>仅供单测与仿真起步</b>；生产取值须由模块层从 {@code sys_param} 读出后注入，
+     * 阈值未注入时选择器判「不可算」而非取该建议值（不臆造）。
+     */
+    public static final double SUGGESTED_LANDING_CORRIDOR_HALF_WIDTH_M = 500.0;
+
+    /**
      * 《84》§4.3 {@code e10_margin_k} = 1.2 是「固定裕度系数 k」的<b>建议初值</b>。
      *
      * <p><b>本类刻意不给 k 的默认值</b>：§7.7 硬约束 2「风况只经返程基线进入判定，不得单独成维或单独调阈值」
