@@ -187,7 +187,8 @@ export const useOrderStore = defineStore('order', {
       if (!data?.orderId || !ORDER_STATES.includes(data.orderStatus) || !Number.isSafeInteger(data.stateVersion)) return false
       const old = this.byId[data.orderId]
       if (old && data.stateVersion <= old.stateVersion) return false
-      const next = { ...data }
+      // 配送品类自建单后不再变化：任何生产端漏带该字段时，都用上一帧的值兜住，避免界面把已显示的品类退回「未记录」。
+      const next = { ...data, goodsType: data.goodsType ?? old?.goodsType ?? null }
       this.byId[data.orderId] = next
       if (!old || old.stateVersion !== next.stateVersion) {
         this.timeline[data.orderId] ??= []

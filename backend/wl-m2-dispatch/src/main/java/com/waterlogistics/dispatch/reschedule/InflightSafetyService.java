@@ -238,8 +238,9 @@ public class InflightSafetyService {
         // 与 TaskQueueService.stateVersion 同源：版本 1 留给建单帧，日志主键保证递增。
         long version = migration.getLogId() == null ? 2L
                 : Math.max(2L, migration.getLogId() + 1L);
+        // 配送品类与货巢同为建单时刻确定的字段：本帧不带，前端整对象替换后会把订单上的品类抹成「未记录」。
         OrderView view = new OrderView(order.getOrderId(), OrderStatus.RETURNING, eventTs,
-                version, null, null, null, null, null, order.getCargoNestId());
+                version, null, null, null, null, null, order.getCargoNestId(), order.getGoodsType());
         eventPublisher.publishEvent(new OrderStateChangedEvent(view));
     }
 

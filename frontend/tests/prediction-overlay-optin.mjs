@@ -63,9 +63,9 @@ await check('验证注入船舶首帧后看台层椭圆数量为零', async () =
   assert.equal(await page.locator('.prediction-track').count(), 0, '未经点选就画了看台预测折线')
 })
 
-await check('验证注入船舶首帧后常驻层椭圆仍然存在', async () => {
+await check('验证注入船舶首帧后常驻层椭圆仍为起点、中点、终点三条', async () => {
   const count = await page.locator('.ship-confidence-ellipse').count()
-  assert.ok(count > 0, `常驻船舶层椭圆被一起删掉了，实际 ${count} 个`)
+  assert.equal(count, 3, `常驻船舶层应保留起点、中点、终点三个椭圆，实际 ${count} 个`)
 })
 
 await check('验证图例标注常驻船舶层椭圆', async () => {

@@ -85,7 +85,7 @@ public final class AdmissionPipeline {
         /** 时间上不可行 */
         TIME_INFEASIBLE("时间不可行"),
         /** 配送品类不受理 */
-        CARGO_TYPE("货物类型不受理"),
+        CARGO_TYPE("配送品类不受理"),
         /** 超载 */
         OVERLOAD("超出载重上界"),
         /** MMSI 非法 */

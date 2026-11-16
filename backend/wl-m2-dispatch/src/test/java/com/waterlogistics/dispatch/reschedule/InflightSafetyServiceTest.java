@@ -114,6 +114,7 @@ class InflightSafetyServiceTest {
     @DisplayName("终止档：审计＋迁移两行日志、调功能 10、回写返航中并标脏周期缓存")
     void review_terminate_shouldCallHomecomingAndPublish() {
         order = order(OrderStatus.OUTBOUND);
+        order.setGoodsType("应急药品");
         drone = drone();
 
         service().review(request(15.2, AlertLevel.CRITICAL, false));
@@ -140,6 +141,7 @@ class InflightSafetyServiceTest {
         assertEquals("返航中", order.getStatus(), "中止返航回写（《23》§4 约束 2 例外、§8）");
         assertEquals(1, orderStateEvents().size(), "回写后须发状态事件给 advancer 标脏");
         assertEquals(OrderStatus.RETURNING, orderStateEvents().get(0).view().orderStatus());
+        assertEquals("应急药品", orderStateEvents().get(0).view().goodsType(), "气象复核回写的状态帧必须带上配送品类，否则界面把已展示的品类退回「未记录」");
     }
 
     @Test

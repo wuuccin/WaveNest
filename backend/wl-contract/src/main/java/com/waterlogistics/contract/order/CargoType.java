@@ -12,6 +12,10 @@ import java.util.List;
  * <p>本枚举定义系统认识哪些品类。当前允许配送哪些品类由
  * {@code wavenest.m2.admission.cargo-whitelist} 配置决定，两者不得混为一谈。
  * 声明顺序就是字典接口与拒单提示的固定输出顺序。
+ *
+ * <p>取值与声明顺序须与前端 {@code frontend/src/api/cargoTypes.js} 的
+ * {@code DEMO_CARGO_TYPES} 同批同步，跨语言一致性由
+ * {@code frontend/tests/cargo-type-sync.mjs} 守卫。
  */
 public enum CargoType {
 
