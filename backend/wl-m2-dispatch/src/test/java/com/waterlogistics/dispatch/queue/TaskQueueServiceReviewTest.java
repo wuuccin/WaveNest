@@ -7,7 +7,7 @@ import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.waterlogistics.contract.rest.WaitReason;
 import com.waterlogistics.dispatch.gate.DispatchGateService;
-import com.waterlogistics.dispatch.order.OrderStateChangedEvent;
+import com.waterlogistics.contract.order.OrderStateChangedEvent;
 import com.waterlogistics.storage.entity.DroneEntity;
 import com.waterlogistics.storage.entity.OrderTaskEntity;
 import com.waterlogistics.storage.entity.TaskLogEntity;

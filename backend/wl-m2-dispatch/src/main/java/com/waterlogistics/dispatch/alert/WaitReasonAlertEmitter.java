@@ -5,7 +5,7 @@ import com.waterlogistics.contract.mq.TopicName;
 import com.waterlogistics.contract.rest.WaitReason;
 import com.waterlogistics.contract.state.AlertLevel;
 import com.waterlogistics.contract.state.AlertType;
-import com.waterlogistics.dispatch.order.OrderStateChangedEvent;
+import com.waterlogistics.contract.order.OrderStateChangedEvent;
 import com.waterlogistics.storage.entity.AlertEntity;
 import com.waterlogistics.storage.entity.OrderTaskEntity;
 import com.waterlogistics.storage.repository.AlertMapper;

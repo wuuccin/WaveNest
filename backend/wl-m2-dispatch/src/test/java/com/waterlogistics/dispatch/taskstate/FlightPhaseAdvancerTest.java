@@ -7,7 +7,7 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.waterlogistics.contract.order.OrderView;
 import com.waterlogistics.contract.state.OrderStatus;
-import com.waterlogistics.dispatch.order.OrderStateChangedEvent;
+import com.waterlogistics.contract.order.OrderStateChangedEvent;
 import com.waterlogistics.rendezvous.port.DroneContext;
 import com.waterlogistics.rendezvous.port.DroneContextPort;
 import com.waterlogistics.storage.entity.OrderTaskEntity;

@@ -1,16 +1,22 @@
 package com.waterlogistics.monitor.taskstate;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.waterlogistics.algo.measurement.TelemetryState;
 import com.waterlogistics.algo.meeting.model.B_HandoverConfirmation;
+import com.waterlogistics.contract.order.OrderStateChangedEvent;
+import com.waterlogistics.contract.order.OrderView;
 import com.waterlogistics.contract.state.GoodsStatus;
+import com.waterlogistics.contract.state.OrderStatus;
 import com.waterlogistics.contract.state.TaskStatus;
 import com.waterlogistics.monitor.track.FlightContextProvider;
 import com.waterlogistics.monitor.track.FlightTracker;
+import com.waterlogistics.storage.entity.DroneEntity;
 import com.waterlogistics.storage.entity.GoodsEntity;
 import com.waterlogistics.storage.entity.OrderTaskEntity;
 import com.waterlogistics.storage.entity.TaskLogEntity;
+import com.waterlogistics.storage.repository.DroneMapper;
 import com.waterlogistics.storage.repository.GoodsMapper;
 import com.waterlogistics.storage.repository.OrderTaskMapper;
 import com.waterlogistics.storage.repository.TaskLogMapper;
@@ -20,26 +26,35 @@ import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /** Connects cleaned flight telemetry and genuine handover confirmations to task state. */
 @Service
 public class TelemetryTaskStateService {
+    private static final Logger log = LoggerFactory.getLogger(TelemetryTaskStateService.class);
     private static final ZoneId DB_ZONE = ZoneId.of("Asia/Shanghai");
     private final OrderTaskMapper orders;
     private final TaskLogMapper logs;
     private final GoodsMapper goods;
+    private final DroneMapper drones;
+    private final ApplicationEventPublisher events;
     private final Map<String, FlightProgress> latestProgress = new ConcurrentHashMap<>();
 
     public record FlightProgress(String orderId, com.waterlogistics.algo.measurement.RouteMeasurement.Progress progress,
                                  ProgressEta eta, long observedAtMs) { }
 
     public TelemetryTaskStateService(OrderTaskMapper orders, TaskLogMapper logs,
-                                     GoodsMapper goods) {
+                                     GoodsMapper goods, DroneMapper drones,
+                                     ApplicationEventPublisher events) {
         this.orders = orders;
         this.logs = logs;
         this.goods = goods;
+        this.drones = drones;
+        this.events = events;
     }
 
     /** Compute progress and ETA from the cleaned position for the active outbound route. */
@@ -111,6 +126,16 @@ public class TelemetryTaskStateService {
         return result;
     }
 
+    /**
+     * 订单状态推进：改 {@code order_task.status} ＋ 写 {@code task_log} ＋ 同步无人机态 ＋ 广播订单视图。
+     *
+     * <p><b>为什么这四件事必须在一起</b>：只改库不广播，界面就停在推进前的状态——库里已是
+     * 「去程中」而列表仍显示「已派发」，演示现场无法解释；只改库不同步无人机态，机位会被
+     * 一直占在「已预占」，下一单少一架可用机。无人机态回写口径与
+     * {@code FlightPhaseAdvancer.syncDroneStatus} 一致；两个模块互不依赖（M4 只依赖
+     * {@code wl-contract}／{@code wl-algo}／{@code wl-storage}），故此处按同一口径实现一份，
+     * 不抽公共件以免为一行更新改动模块依赖图。
+     */
     private void transition(OrderTaskEntity order, TaskStatus from, TaskStatus to, long timestamp, String operation) {
         TaskStateMachine.requireTransit(from, to);
         int updated = orders.update(null, new UpdateWrapper<OrderTaskEntity>()
@@ -125,6 +150,79 @@ public class TelemetryTaskStateService {
         log.setToStatus(to.getValue());
         log.setTs(at(timestamp));
         logs.insert(log);
+
+        syncDroneStatus(order.getDroneId(), to);
+        publishOrderState(order, to, timestamp, log.getLogId());
+    }
+
+    /**
+     * 广播已确认的订单视图。
+     *
+     * <p>版本号取 {@code task_log.log_id + 1}，与 {@code FlightPhaseAdvancer} 同口径：前端按
+     * {@code stateVersion} 单调递增丢弃乱序帧，版本不动等于帧被丢掉。
+     * {@code log_id} 为空（未落库的桩场景）时不发——没有版本号就没有合并语义。
+     */
+    private void publishOrderState(OrderTaskEntity order, TaskStatus to, long timestamp, Long logId) {
+        if (events == null || logId == null) {
+            return;
+        }
+        OrderStatus next = orderStatus(to);
+        if (next == null) {
+            return;
+        }
+        Long etaMs = order.getEtaTs() == null
+                ? null
+                : order.getEtaTs().atZone(DB_ZONE).toInstant().toEpochMilli();
+        try {
+            events.publishEvent(new OrderStateChangedEvent(new OrderView(
+                    order.getOrderId(), next, timestamp, Math.max(2L, logId + 1L),
+                    null, null, null, null, etaMs, order.getCargoNestId())));
+        } catch (Exception e) {
+            // 审计与状态已落库，推送失败只告警：下一拍不会重推同一阶段，避免重复刷屏
+            log.warn("订单状态广播失败（task_log 已落库）：orderId={} status={} err={}",
+                    order.getOrderId(), to.getValue(), e.getMessage());
+        }
+    }
+
+    /**
+     * 无人机态回写：起飞置「执行任务中／空中」，返航置「返航中／空中」。
+     *
+     * <p>条件更新：只接「本单该接的」机，已被别的单占住或在飞的键不覆盖。
+     */
+    private void syncDroneStatus(String droneId, TaskStatus to) {
+        if (drones == null || droneId == null) {
+            return;
+        }
+        LambdaUpdateWrapper<DroneEntity> update = new LambdaUpdateWrapper<DroneEntity>()
+                .eq(DroneEntity::getDroneId, droneId);
+        switch (to) {
+            case OUTBOUND -> update
+                    .in(DroneEntity::getStatus, "空闲", "已预占")
+                    .set(DroneEntity::getStatus, "执行任务中")
+                    .set(DroneEntity::getPositionType, "空中")
+                    .set(DroneEntity::getCurrentNestId, null);
+            case RETURNING -> update
+                    .eq(DroneEntity::getStatus, "执行任务中")
+                    .set(DroneEntity::getStatus, "返航中")
+                    .set(DroneEntity::getPositionType, "空中");
+            default -> {
+                return;
+            }
+        }
+        int affected = drones.update(null, update);
+        if (affected == 0) {
+            log.warn("无人机状态未更新（当前状态不在本单可接范围）：droneId={} 目标状态={}",
+                    droneId, to.getValue());
+        }
+    }
+
+    /** 任务态转订单态；{@code 迫停中}／{@code 迫降待回收} 不在订单态取值内，返回 {@code null}。 */
+    private static OrderStatus orderStatus(TaskStatus value) {
+        try {
+            return OrderStatus.fromValue(value.getValue());
+        } catch (IllegalArgumentException ignored) {
+            return null;
+        }
     }
 
     private static TaskStatus taskStatus(String value) {

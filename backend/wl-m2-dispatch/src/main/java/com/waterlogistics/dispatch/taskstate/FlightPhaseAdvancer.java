@@ -6,7 +6,7 @@ import com.waterlogistics.algo.estimation.OrderEta;
 import com.waterlogistics.algo.meeting.GeoApprox;
 import com.waterlogistics.contract.order.OrderView;
 import com.waterlogistics.contract.state.OrderStatus;
-import com.waterlogistics.dispatch.order.OrderStateChangedEvent;
+import com.waterlogistics.contract.order.OrderStateChangedEvent;
 import com.waterlogistics.dispatch.goods.GoodsLifecycleService;
 import com.waterlogistics.dispatch.rendezvous.NestLookup;
 import com.waterlogistics.dispatch.rendezvous.NestLookup.NestPosition;

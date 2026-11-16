@@ -8,7 +8,7 @@ import com.waterlogistics.contract.state.AlertType;
 import com.waterlogistics.contract.ws.AlarmFrame;
 import com.waterlogistics.contract.ws.DroneStateFrame;
 import com.waterlogistics.contract.ws.WsFrameType;
-import com.waterlogistics.dispatch.order.OrderStateChangedEvent;
+import com.waterlogistics.contract.order.OrderStateChangedEvent;
 import com.waterlogistics.dispatch.plan.MissionTrackPlannedEvent;
 import com.waterlogistics.dispatch.prediction.PredictionUpdatedEvent;
 import com.waterlogistics.dispatch.rendezvous.RendezvousPlanCommittedEvent;

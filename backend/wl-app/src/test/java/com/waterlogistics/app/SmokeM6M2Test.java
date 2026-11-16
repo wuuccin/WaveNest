@@ -13,7 +13,7 @@ import com.waterlogistics.dispatch.order.OrderAdmissionService;
 import com.waterlogistics.dispatch.order.OrderSubmitRequest;
 import com.waterlogistics.dispatch.order.OrderSubmitResponse;
 import com.waterlogistics.dispatch.prediction.PredictionService;
-import com.waterlogistics.dispatch.order.OrderStateChangedEvent;
+import com.waterlogistics.contract.order.OrderStateChangedEvent;
 import com.waterlogistics.dispatch.queue.CargoGateWaker;
 import com.waterlogistics.dispatch.queue.TaskQueueService;
 import com.waterlogistics.dispatch.taskstate.FlightPhaseAdvancer;
