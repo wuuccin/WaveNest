@@ -10,7 +10,7 @@ import com.waterlogistics.contract.order.OrderView;
 import com.waterlogistics.contract.rest.GeoPoint;
 import com.waterlogistics.contract.state.OrderStatus;
 import com.waterlogistics.dispatch.alert.HomecomingInputAssembler;
-import com.waterlogistics.dispatch.order.OrderStateChangedEvent;
+import com.waterlogistics.contract.order.OrderStateChangedEvent;
 import com.waterlogistics.storage.entity.DroneEntity;
 import com.waterlogistics.storage.entity.OrderTaskEntity;
 import com.waterlogistics.storage.entity.TaskLogEntity;

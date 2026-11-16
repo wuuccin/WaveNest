@@ -1,15 +1,20 @@
 package com.waterlogistics.dispatch.gate;
 
+import com.waterlogistics.contract.order.OrderStateChangedEvent;
+import com.waterlogistics.contract.order.OrderView;
 import com.waterlogistics.contract.state.OrderStatus;
 import com.waterlogistics.dispatch.rendezvous.ManualMeetRecomputePort;
 import com.waterlogistics.dispatch.resource.OccupancySlotService;
+import com.waterlogistics.storage.entity.DroneEntity;
 import com.waterlogistics.storage.entity.OrderTaskEntity;
 import com.waterlogistics.storage.entity.TaskLogEntity;
+import com.waterlogistics.storage.repository.DroneMapper;
 import com.waterlogistics.storage.repository.OrderTaskMapper;
 import com.waterlogistics.storage.repository.TaskLogMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -61,6 +66,8 @@ public class OrderInterventionServiceImpl implements OrderInterventionService {
     private final OccupancySlotService occupancySlotService;
     private final ManualMeetRecomputePort manualMeetRecomputePort;
     private final TransactionTemplate transactionTemplate;
+    private final DroneMapper droneMapper;
+    private final ApplicationEventPublisher eventPublisher;
 
     /**
      * @param orderTaskMapper         订单表
@@ -69,17 +76,23 @@ public class OrderInterventionServiceImpl implements OrderInterventionService {
      * @param manualMeetRecomputePort 人工调整会面点的重算出口；容器缺该 Bean 时为 {@code null}，
      *                                保证 M2 可独立启动（与 {@code DispatchGateService} 可空口径一致）
      * @param transactionTemplate     状态流转事务模板
+     * @param droneMapper             无人机表；终止态回收机位用，缺省时跳过回写
+     * @param eventPublisher          订单视图广播；缺省时不发（保留可独立构造的测试口径）
      */
     public OrderInterventionServiceImpl(OrderTaskMapper orderTaskMapper,
             TaskLogMapper taskLogMapper,
             OccupancySlotService occupancySlotService,
             ObjectProvider<ManualMeetRecomputePort> manualMeetRecomputePort,
-            TransactionTemplate transactionTemplate) {
+            TransactionTemplate transactionTemplate,
+            DroneMapper droneMapper,
+            ApplicationEventPublisher eventPublisher) {
         this.orderTaskMapper = orderTaskMapper;
         this.taskLogMapper = taskLogMapper;
         this.occupancySlotService = occupancySlotService;
         this.manualMeetRecomputePort = manualMeetRecomputePort.getIfAvailable();
         this.transactionTemplate = transactionTemplate;
+        this.droneMapper = droneMapper;
+        this.eventPublisher = eventPublisher;
     }
 
     @Override
@@ -129,7 +142,18 @@ public class OrderInterventionServiceImpl implements OrderInterventionService {
         return outcome.committed() ? null : outcome.message();
     }
 
-    /** 状态流转 + 留痕 + 终态释放占位，三者同一事务。 */
+    /**
+     * 状态流转 + 留痕 + 终态释放占位与回收机位 + 广播订单视图。
+     *
+     * <p><b>为什么必须广播</b>：订单列表与 {@code order_state} 推送都读进程内视图，
+     * 视图只由 {@link OrderStateChangedEvent} 合并更新。干预只写库不发事件时，八动作在库里
+     * 全部生效、在界面上全部看不见——演示现场点「紧急叫停」，列表仍显示「去程中」。
+     * 版本号取 {@code task_log.log_id + 1}，与 {@code FlightPhaseAdvancer} 同口径，
+     * 前端按 {@code stateVersion} 单调递增丢弃乱序帧。
+     *
+     * <p><b>为什么只回收自己那一架</b>：{@code order.getDroneId()} 是本单派出去的机；
+     * 已被别的单接走的机由那单负责，不回写（与 {@code syncDroneStatus} 的条件更新同旨）。
+     */
     private void applyTransition(InterventionAction spec, OrderTaskEntity order, OrderStatus current) {
         OrderStatus target = spec.targetStatus() == null ? current : spec.targetStatus();
         String orderId = order.getOrderId();
@@ -139,11 +163,65 @@ public class OrderInterventionServiceImpl implements OrderInterventionService {
                 order.setFailReason("人工干预：" + spec.label());
                 orderTaskMapper.updateById(order);
             }
-            writeAudit(orderId, spec.label(), current.getValue(), target.getValue());
+            TaskLogEntity audit =
+                    writeAudit(orderId, spec.label(), current.getValue(), target.getValue());
             if (target != current && target.isTerminal()) {
-                occupancySlotService.releaseByOrder(orderId);
+                if (occupancySlotService != null) {
+                    occupancySlotService.releaseByOrder(orderId);
+                }
+                releaseDrone(order.getDroneId());
+            }
+            if (target != current) {
+                publishOrderState(order, target, audit);
             }
         });
+    }
+
+    /**
+     * 广播已确认的订单视图。
+     *
+     * <p>事件由 {@code @TransactionalEventListener(AFTER_COMMIT)} 消费，故在事务内发布、
+     * 提交后才推送；广播失败不阻断已落库的干预（推送失败只表现为界面不刷新，回滚反而会把
+     * 已确认的干预撤掉）。
+     */
+    private void publishOrderState(OrderTaskEntity order, OrderStatus target, TaskLogEntity audit) {
+        if (eventPublisher == null) {
+            return;
+        }
+        long eventTs = audit.getTs() == null
+                ? System.currentTimeMillis()
+                : audit.getTs().atZone(DB_ZONE).toInstant().toEpochMilli();
+        Long etaMs = order.getEtaTs() == null
+                ? null
+                : order.getEtaTs().atZone(DB_ZONE).toInstant().toEpochMilli();
+        long version = audit.getLogId() == null ? 2L : Math.max(2L, audit.getLogId() + 1L);
+        try {
+            eventPublisher.publishEvent(new OrderStateChangedEvent(new OrderView(
+                    order.getOrderId(), target, eventTs, version,
+                    null, null, null, null, etaMs, order.getCargoNestId())));
+        } catch (Exception e) {
+            log.warn("人工干预后订单视图广播失败（状态与留痕已落库）：orderId={} status={} err={}",
+                    order.getOrderId(), target.getValue(), e.getMessage());
+        }
+    }
+
+    /** 终止态回收机位：置「空闲」并回本巢。机已空闲或行缺失时跳过，不覆盖别的单的占用。 */
+    private void releaseDrone(String droneId) {
+        if (droneMapper == null || droneId == null) {
+            return;
+        }
+        DroneEntity drone = droneMapper.selectById(droneId);
+        if (drone == null) {
+            log.warn("无人机行查不到，跳过回收：droneId={}", droneId);
+            return;
+        }
+        if ("空闲".equals(drone.getStatus())) {
+            return;
+        }
+        drone.setStatus("空闲");
+        drone.setPositionType("原巢");
+        drone.setCurrentNestId(drone.getHomeNestId());
+        droneMapper.updateById(drone);
     }
 
     private static OrderStatus parseStatus(String value) {
@@ -159,7 +237,7 @@ public class OrderInterventionServiceImpl implements OrderInterventionService {
                 "订单当前状态不允许该操作：" + statusValue);
     }
 
-    private void writeAudit(String orderId, String label, String fromStatus, String toStatus) {
+    private TaskLogEntity writeAudit(String orderId, String label, String fromStatus, String toStatus) {
         TaskLogEntity entry = new TaskLogEntity();
         entry.setOrderId(orderId);
         entry.setOpType("人工干预-" + label);
@@ -167,5 +245,6 @@ public class OrderInterventionServiceImpl implements OrderInterventionService {
         entry.setToStatus(toStatus);
         entry.setTs(LocalDateTime.ofInstant(Instant.now(), DB_ZONE));
         taskLogMapper.insert(entry);
+        return entry;
     }
 }

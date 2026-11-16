@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.waterlogistics.contract.order.OrderStateChangedEvent;
 import com.waterlogistics.contract.order.OrderView;
 import com.waterlogistics.contract.rest.ApiPath;
 import com.waterlogistics.contract.state.OrderStatus;

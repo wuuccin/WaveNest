@@ -3,6 +3,7 @@ package com.waterlogistics.dispatch.order;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.waterlogistics.contract.order.OrderStateChangedEvent;
 import com.waterlogistics.contract.order.OrderView;
 import com.waterlogistics.contract.rest.DispatchGate;
 import com.waterlogistics.contract.rest.GateSource;

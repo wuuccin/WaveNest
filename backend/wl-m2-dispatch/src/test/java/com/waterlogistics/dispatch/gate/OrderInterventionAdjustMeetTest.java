@@ -91,7 +91,7 @@ class OrderInterventionAdjustMeetTest {
 
     private OrderInterventionServiceImpl service(ManualMeetRecomputePort port) {
         return new OrderInterventionServiceImpl(orderTaskMapper(), taskLogMapper(), null,
-                provider(port), null);
+                provider(port), null, null, null);
     }
 
     private ManualMeetRecomputePort port() {

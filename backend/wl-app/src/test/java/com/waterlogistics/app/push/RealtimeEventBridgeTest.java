@@ -17,7 +17,7 @@ import com.waterlogistics.contract.ws.DroneStateFrame;
 import com.waterlogistics.contract.ws.RendezvousFrame;
 import com.waterlogistics.contract.ws.ShipTrajPoint;
 import com.waterlogistics.contract.ws.WsFrameType;
-import com.waterlogistics.dispatch.order.OrderStateChangedEvent;
+import com.waterlogistics.contract.order.OrderStateChangedEvent;
 import com.waterlogistics.dispatch.prediction.PredictionSnapshot;
 import com.waterlogistics.dispatch.prediction.PredictionUpdatedEvent;
 import com.waterlogistics.dispatch.rendezvous.RendezvousPlanCommittedEvent;

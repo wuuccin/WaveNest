@@ -1,6 +1,7 @@
 package com.waterlogistics.dispatch.order;
 
 import com.waterlogistics.algo.cargo.CargoNestChoice;
+import com.waterlogistics.contract.order.OrderStateChangedEvent;
 import com.waterlogistics.contract.order.OrderView;
 import com.waterlogistics.contract.rest.WaitReason;
 import com.waterlogistics.contract.state.OrderStatus;

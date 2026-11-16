@@ -2,19 +2,25 @@ package com.waterlogistics.monitor.taskstate;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.waterlogistics.algo.measurement.Geo;
 import com.waterlogistics.algo.measurement.RouteMeasurement;
 import com.waterlogistics.algo.measurement.TelemetryState;
 import com.waterlogistics.algo.meeting.model.B_HandoverConfirmation;
 import com.waterlogistics.algo.meeting.model.HandoverResult;
 import com.waterlogistics.contract.mq.UavTelemetry;
+import com.waterlogistics.contract.order.OrderStateChangedEvent;
 import com.waterlogistics.contract.state.GoodsStatus;
+import com.waterlogistics.contract.state.OrderStatus;
 import com.waterlogistics.contract.state.TaskStatus;
 import com.waterlogistics.monitor.track.FlightContextProvider;
 import com.waterlogistics.monitor.track.FlightTracker;
+import com.waterlogistics.storage.entity.DroneEntity;
 import com.waterlogistics.storage.entity.GoodsEntity;
 import com.waterlogistics.storage.entity.OrderTaskEntity;
 import com.waterlogistics.storage.entity.TaskLogEntity;
+import com.waterlogistics.storage.repository.DroneMapper;
 import com.waterlogistics.storage.repository.GoodsMapper;
 import com.waterlogistics.storage.repository.OrderTaskMapper;
 import com.waterlogistics.storage.repository.TaskLogMapper;
@@ -22,7 +28,9 @@ import java.lang.reflect.Proxy;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.Test;
+import org.springframework.context.ApplicationEventPublisher;
 
 class TelemetryTaskStateServiceTest {
     private static final long NOW = 1_700_000_000_000L;
@@ -42,6 +50,12 @@ class TelemetryTaskStateServiceTest {
         assertEquals(TaskStatus.OUTBOUND.getValue(), fixture.order.getStatus());
         assertEquals(1, fixture.logs.size());
         assertEquals(1, fixture.etaWrites);
+        // 起飞必须同时回写无人机态并广播订单视图：只落库不广播，界面会停在「已派发」
+        assertEquals(1, fixture.droneWrites);
+        OrderStateChangedEvent event = assertInstanceOf(OrderStateChangedEvent.class, fixture.published.get(0));
+        assertEquals(OrderStatus.OUTBOUND, event.view().orderStatus());
+        assertEquals("ORDER-1", event.view().orderId());
+        assertEquals(2L, event.view().stateVersion());
     }
 
     @Test
@@ -60,6 +74,9 @@ class TelemetryTaskStateServiceTest {
         assertEquals(TaskStatus.RETURNING.getValue(), fixture.order.getStatus());
         assertEquals(GoodsStatus.DELIVERED.getValue(), fixture.goods.getStatus());
         assertEquals(1, fixture.logs.size());
+        assertEquals(1, fixture.droneWrites);
+        OrderStateChangedEvent event = assertInstanceOf(OrderStateChangedEvent.class, fixture.published.get(0));
+        assertEquals(OrderStatus.RETURNING, event.view().orderStatus());
     }
 
     @Test
@@ -87,12 +104,20 @@ class TelemetryTaskStateServiceTest {
     }
 
     private static final class Fixture {
+        static {
+            // LambdaUpdateWrapper 需要实体的列缓存；桩里没有 MyBatis 上下文，手工注册一次
+            TableInfoHelper.initTableInfo(
+                    new MapperBuilderAssistant(new MybatisConfiguration(), ""), DroneEntity.class);
+        }
+
         final OrderTaskEntity order = new OrderTaskEntity();
         final GoodsEntity goods = new GoodsEntity();
         final List<TaskLogEntity> logs = new ArrayList<>();
+        final List<Object> published = new ArrayList<>();
         final TelemetryTaskStateService service;
         int orderWrites;
         int etaWrites;
+        int droneWrites;
 
         Fixture(TaskStatus status) {
             order.setOrderId("ORDER-1");
@@ -122,10 +147,24 @@ class TelemetryTaskStateServiceTest {
                 throw new UnsupportedOperationException(method);
             });
             TaskLogMapper taskLogs = proxy(TaskLogMapper.class, (method, args) -> {
-                if (method.equals("insert")) { logs.add((TaskLogEntity) args[0]); return 1; }
+                if (method.equals("insert")) {
+                    TaskLogEntity entry = (TaskLogEntity) args[0];
+                    // 真库由自增主键回填 log_id；桩里按插入顺序补，版本号才有来源
+                    entry.setLogId((long) logs.size() + 1);
+                    logs.add(entry);
+                    return 1;
+                }
                 throw new UnsupportedOperationException(method);
             });
-            service = new TelemetryTaskStateService(orders, taskLogs, cargo);
+            DroneMapper drones = proxy(DroneMapper.class, (method, args) -> {
+                if (method.equals("update")) { droneWrites++; return 1; }
+                throw new UnsupportedOperationException(method);
+            });
+            ApplicationEventPublisher events = proxy(ApplicationEventPublisher.class, (method, args) -> {
+                if (method.equals("publishEvent")) { published.add(args[0]); return null; }
+                throw new UnsupportedOperationException(method);
+            });
+            service = new TelemetryTaskStateService(orders, taskLogs, cargo, drones, events);
         }
     }
 
