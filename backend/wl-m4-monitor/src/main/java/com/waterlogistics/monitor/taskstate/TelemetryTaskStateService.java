@@ -174,9 +174,10 @@ public class TelemetryTaskStateService {
                 ? null
                 : order.getEtaTs().atZone(DB_ZONE).toInstant().toEpochMilli();
         try {
+            // 配送品类与货巢同为建单时刻确定的字段：本帧不带，前端整对象替换后会把订单上的品类抹成「未记录」。
             events.publishEvent(new OrderStateChangedEvent(new OrderView(
                     order.getOrderId(), next, timestamp, Math.max(2L, logId + 1L),
-                    null, null, null, null, etaMs, order.getCargoNestId())));
+                    null, null, null, null, etaMs, order.getCargoNestId(), order.getGoodsType())));
         } catch (Exception e) {
             // 审计与状态已落库，推送失败只告警：下一拍不会重推同一阶段，避免重复刷屏
             log.warn("订单状态广播失败（task_log 已落库）：orderId={} status={} err={}",

@@ -82,6 +82,14 @@ class AdmissionInputAssemblerTest {
     }
 
     @Test
+    @DisplayName("字典接口读取的可承运集合与接单判定 Policy 完全一致")
+    void cargoTypeOptions_shouldMatchPolicyWhitelist() {
+        AdmissionInputAssembler built = assembler(null);
+
+        assertEquals(List.copyOf(built.policy().cargoWhitelist()), built.cargoTypeOptions());
+    }
+
+    @Test
     @DisplayName("未装配货物表 → null（跳过并可见，不当作「货没好」）")
     void noGoodsMapper_shouldSkipCriterion() {
         assertNull(readyOf(assembler(null), null),

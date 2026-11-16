@@ -196,9 +196,10 @@ public class OrderInterventionServiceImpl implements OrderInterventionService {
                 : order.getEtaTs().atZone(DB_ZONE).toInstant().toEpochMilli();
         long version = audit.getLogId() == null ? 2L : Math.max(2L, audit.getLogId() + 1L);
         try {
+            // 配送品类与货巢同为建单时刻确定的字段：本帧不带，前端整对象替换后会把订单上的品类抹成「未记录」。
             eventPublisher.publishEvent(new OrderStateChangedEvent(new OrderView(
                     order.getOrderId(), target, eventTs, version,
-                    null, null, null, null, etaMs, order.getCargoNestId())));
+                    null, null, null, null, etaMs, order.getCargoNestId(), order.getGoodsType())));
         } catch (Exception e) {
             log.warn("人工干预后订单视图广播失败（状态与留痕已落库）：orderId={} status={} err={}",
                     order.getOrderId(), target.getValue(), e.getMessage());

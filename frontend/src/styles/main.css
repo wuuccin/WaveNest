@@ -144,11 +144,13 @@ h1, h2, p { margin: 0; }
 .map-change-summary em { margin-left: auto; padding: 6px 9px; border-radius: 5px; color: #8b591c; background: #ffecce; font-size: 12px; font-style: normal; font-weight: 800; }
 .map-guide { display: flex; align-items: center; flex-wrap: wrap; gap: 9px 17px; padding: 12px 18px; border-top: 1px solid var(--line); background: #f7fbfa; color: #385763; font-size: 12px; font-weight: 650; }
 .map-guide > span { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
+.map-guide > .map-guide-note { flex: 0 0 100%; white-space: normal; line-height: 1.5; }
 .map-symbol { display: inline-grid; place-items: center; flex: none; width: 28px; height: 28px; border: 2px solid #fff; border-radius: 50%; color: #fff; font-size: 13px; font-style: normal; font-weight: 800; box-shadow: 0 2px 5px #16424d24; }
 .map-symbol-ship { background: #078b79; }
 .map-symbol-drone { background: #2d70b2; font-size: 17px; }
 .map-symbol-meeting { color: #bb741d; background: #fff7e9; border-color: #d9912e; font-size: 23px; }
 .map-symbol-ellipse { color: #b66e17; background: #fff5df; border: 2px dashed #d18421; font-size: 21px; }
+.map-symbol-ellipse-overlay { color: #0b7d6e; background: #e4f6f2; border: 2px dashed #0f9f8c; font-size: 21px; }
 .map-symbol-before { color: #657789; background: #eef2f5; border-color: #97a5b2; font-size: 20px; }
 .map-line { display: inline-block; flex: none; width: 31px; height: 0; border-top: 5px solid; }
 .map-line-actual { border-color: #164e63; }
@@ -188,7 +190,7 @@ h1, h2, p { margin: 0; }
 .legend-nest { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 5px; color: #fff; background: #6f5aa8; font-size: 13px; font-style: normal; font-weight: 800; }
 .map-caption, .map-scale { position: absolute; z-index: 400; padding: 8px 11px; color: #355866; border: 1px solid #c6dadb; border-radius: 6px; background: rgba(255, 255, 255, .94); box-shadow: 0 3px 12px rgba(39, 84, 91, .12); font-size: 11px; }
 .map-caption { top: 13px; left: 13px; }
-.map-scale { top: 13px; right: 13px; }
+.map-scale { top: 13px; right: 13px; max-width: 272px; text-align: right; line-height: 1.5; }
 .map-pick-tool { position: absolute; z-index: 850; right: 13px; bottom: 48px; display: grid; gap: 6px; width: 292px; padding: 11px 12px; border: 1px solid #7da9aa; border-radius: 7px; color: #284e59; background: rgba(250,255,254,.97); box-shadow: 0 5px 18px rgba(28,65,73,.2); font-size: 10px; }
 .map-pick-tool strong { color: #0f6f68; font-size: 12px; }
 .map-pick-tool span { line-height: 1.45; }
@@ -196,9 +198,6 @@ h1, h2, p { margin: 0; }
 .map-pick-tool button { min-height: 27px; border: 0; border-radius: 4px; color: #fff; background: #0c8177; cursor: pointer; font: inherit; font-weight: 800; }
 .map-pick-tool button:disabled { color: #789296; background: #dbe7e6; cursor: not-allowed; }
 .map-pick-tool small { color: #39796e; }
-.debug-bridge-pin { position: relative; display: grid; place-items: center; width: 26px !important; height: 26px !important; border: 2px solid #fff !important; border-radius: 50% !important; color: #fff !important; background: #c3404d !important; box-shadow: 0 0 0 3px rgba(195,64,77,.28), 0 3px 9px rgba(35,48,58,.3); }
-.debug-bridge-pin span { font-size: 19px; font-weight: 900; line-height: 1; }
-.debug-bridge-pin b { position: absolute; top: 28px; left: 13px; width: max-content; padding: 3px 5px; transform: translateX(-50%); border: 1px solid #e6b8bd; border-radius: 4px; color: #8d2933; background: rgba(255,255,255,.96); box-shadow: 0 2px 6px rgba(24,43,58,.15); font-size: 9px; white-space: nowrap; }
 .bridge-pin { position: relative; display: grid; place-items: center; width: 34px !important; height: 34px !important; border: 2px solid #fff !important; border-radius: 50% !important; color: #fff !important; background: #b85b38 !important; box-shadow: 0 3px 10px rgba(35,48,58,.3); }
 .bridge-pin span { font-size: 13px; font-weight: 900; }
 .bridge-pin b { position: absolute; top: 37px; left: 17px; width: max-content; padding: 3px 6px; transform: translateX(-50%); border: 1px solid #e8c8b8; border-radius: 4px; color: #71351f; background: rgba(255,255,255,.96); font-size: 9px; white-space: nowrap; }

@@ -25,6 +25,9 @@ public final class ApiPath {
     /** 机巢状态（GET） */
     public static final String NESTS = "/api/nests";
 
+    /** 当前可承运配送品类字典（GET） */
+    public static final String CARGO_TYPES = "/api/cargo-types";
+
     /**
      * 人工干预（POST）：调整会面点、撤回尚未起飞的订单、取消订单、
      * 冻结派单、紧急叫停某单、转人工接管共六项（以《35-M5》§3.2 干预台为准）。

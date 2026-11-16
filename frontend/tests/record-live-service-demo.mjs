@@ -73,14 +73,15 @@ try {
 
   await page.getByRole('link', { name: '船员下单' }).click()
   const form = page.locator('.form-panel .crew-form')
-  await form.locator('input').nth(0).fill('123456789')
-  await form.locator('input').nth(1).fill('实时联调急救药品')
-  await form.locator('input').nth(2).fill('1.5')
-  await form.locator('select').selectOption('紧急')
+  await form.getByLabel('目标船舶 MMSI（9 位数字）').fill('123456789')
+  await form.getByLabel('配送品类').locator('option', { hasText: '应急药品' }).waitFor({ timeout: 15000 })
+  await form.getByLabel('配送品类').selectOption('应急药品')
+  await form.getByLabel('物资重量（kg）').fill('1.5')
+  await form.getByLabel('紧急程度').selectOption('紧急')
   await caption(
-    '第 1 步 · 填写并提交真实订单',
-    '仿真船 MMSI 必须是 123456789；提交按钮会调用 POST /api/orders。',
-    ['MMSI 123456789', '重量 1.5 kg', '优先级 URGENT'],
+    '填写并提交真实订单',
+    '仿真船 MMSI 必须是 123456789；配送品类来自后端可承运字典；提交按钮会调用 POST /api/orders。',
+    ['MMSI 123456789', '配送品类 应急药品', '重量 1.5 kg', '优先级 URGENT'],
     3600
   )
   await form.getByRole('button', { name: /提交配送订单/ }).click()

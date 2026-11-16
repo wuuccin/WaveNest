@@ -38,6 +38,7 @@ class TelemetryTaskStateServiceTest {
     @Test
     void cleanedTelemetryUpdatesProgressAndEta() {
         Fixture fixture = new Fixture(TaskStatus.DISPATCHED);
+        fixture.order.setGoodsType("应急药品");
         TelemetryState state = state();
         var context = context();
         var measurement = new FlightTracker().measure(state, context.route(), context.landing(), false);
@@ -56,6 +57,7 @@ class TelemetryTaskStateServiceTest {
         assertEquals(OrderStatus.OUTBOUND, event.view().orderStatus());
         assertEquals("ORDER-1", event.view().orderId());
         assertEquals(2L, event.view().stateVersion());
+        assertEquals("应急药品", event.view().goodsType(), "遥测推进的状态帧必须带上配送品类，否则界面把已展示的品类退回「未记录」");
     }
 
     @Test

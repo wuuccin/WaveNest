@@ -213,6 +213,18 @@ class OrderAdmissionServiceTest {
     }
 
     @Test
+    @DisplayName("船舶数据缺失时，非法配送品类仍被拒绝，不产生待唤醒订单")
+    void staleData_withIllegalCargoType_shouldNotCreateDeferredOrder() {
+        int before = service.orderCount();
+        OrderSubmitResponse response = service.submit(
+                new OrderSubmitRequest(MMSI, 5.5, "危险化学品", inOneHour(), "URGENT"));
+
+        assertFalse(response.accepted());
+        assertEquals("CARGO_TYPE", response.reasonCode());
+        assertEquals(before, service.orderCount(), "非法品类不得落库为待唤醒订单");
+    }
+
+    @Test
     @DisplayName("★ 不填期望送达时间 → 正常受理（11-05 序号 2：deadline 由系统算）")
     void missingDeadline_shouldStillAccept() {
         feedShip(MMSI);

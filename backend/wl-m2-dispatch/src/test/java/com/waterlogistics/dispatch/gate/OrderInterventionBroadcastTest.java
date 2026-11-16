@@ -60,6 +60,7 @@ class OrderInterventionBroadcastTest {
         orderRow.setDroneId(DRONE_ID);
         orderRow.setStatus(OrderStatus.OUTBOUND.getValue());
         orderRow.setCargoNestId("NEST-01");
+        orderRow.setGoodsType("应急药品");
         droneRow = new DroneEntity();
         droneRow.setDroneId(DRONE_ID);
         droneRow.setStatus("执行任务中");
@@ -88,6 +89,7 @@ class OrderInterventionBroadcastTest {
         assertEquals(LOG_ID + 1, event.view().stateVersion(),
                 "版本号沿用 task_log.log_id + 1，前端按版本单调递增丢弃乱序帧");
         assertEquals("NEST-01", event.view().cargoNestId(), "货巢必须带上，否则会把建单货巢抹空");
+        assertEquals("应急药品", event.view().goodsType(), "配送品类必须带上，否则前端整对象替换后会把已展示的品类抹成「未记录」");
     }
 
     @Test
