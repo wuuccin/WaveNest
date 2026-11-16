@@ -66,7 +66,7 @@ public final class HomecomingReview {
         double margin = previousTier == HomecomingTier.RETURN_HOME_NEST
                 ? params.batteryReleaseMarginPct()
                 : params.batterySafetyMarginPct();
-        double homeRequired = homewardEnergyRequired(input, params);
+        double homeRequired = homewardEnergyRequired(input, params, previousTier);
         boolean firstTierOk = firstTierFeasibleByReserve(input.batteryPercent(), homeRequired, margin);
         // 《84》§2.2 A5 兜底：低电量绝对阈值与 2.1 取更保守者，两者必须并存
         boolean firstTierOkAll = firstTierOk && aboveAbsoluteFloor(input.batteryPercent(), params);
@@ -119,9 +119,21 @@ public final class HomecomingReview {
      * <p>依据《84》§7.7 硬约束 2「风况只经返程基线进入判定，不得单独成维或单独调阈值」：
      * 有风况快照时基线已是风况相关精算结果（§2.1 不等式里的 {@code E_return}），
      * 再乘 k 是重复计数；无风况快照时上游既不给分布也不给范围，按 §2.3 ③ 固定系数 k 兜底放大基线。
+     *
+     * <p><b>k 也分进入／退出两值</b>（2026-11-16 迟滞比率口径）：上一轮已在第一级时走
+     * {@link HomecomingParams#windMarginFactorExit()}，否则走进入侧
+     * {@link HomecomingParams#windMarginFactor()}——只改电量裕度一侧，无风况档的判定线不随迟滞移动。
      */
-    private static double homewardEnergyRequired(HomecomingInput input, HomecomingParams params) {
-        double k = input.windSnapshot() == null ? params.windMarginFactor() : 1.0;
+    private static double homewardEnergyRequired(HomecomingInput input, HomecomingParams params,
+            HomecomingTier previousTier) {
+        double k;
+        if (input.windSnapshot() != null) {
+            k = 1.0;
+        } else {
+            k = previousTier == HomecomingTier.RETURN_HOME_NEST
+                    ? params.windMarginFactorExit()
+                    : params.windMarginFactor();
+        }
         return input.homewardEnergyBaselinePercent() * k;
     }
 

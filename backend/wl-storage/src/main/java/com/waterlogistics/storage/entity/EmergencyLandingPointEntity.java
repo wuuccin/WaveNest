@@ -31,6 +31,9 @@ public class EmergencyLandingPointEntity {
     /** 状态：可用/占用/维护 */
     private String status;
 
+    /** 水面／陆地（中文词，与 status 同风格；019 扩列，DDL 待组长点批） */
+    private String surfaceType;
+
     /** 适用机型与限制 */
     private String applicableModels;
 }

@@ -36,7 +36,7 @@ class HomecomingServiceTest {
 
     private static HomecomingParams params(Long arrivalEtaMs) {
         // 触发裕度 20（e10_reserve_ratio=0.20×100）、他巢系数 0.8、缓冲 0、未接 A5 兜底与迟滞退出
-        return new HomecomingParams(20.0, 20.0, null, 0.8, 1.0, 0L, arrivalEtaMs, SLOT_HOLD_MS);
+        return new HomecomingParams(20.0, 20.0, null, 0.8, 1.0, 1.0, 0L, arrivalEtaMs, SLOT_HOLD_MS);
     }
 
     /** 第一级：编排层原样透传回原巢结论，不发占位请求 */

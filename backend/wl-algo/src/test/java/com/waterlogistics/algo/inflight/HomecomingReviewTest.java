@@ -42,7 +42,7 @@ class HomecomingReviewTest {
      * 缓冲 0（便于按半开区间直觉构造用例）、未接 A5 兜底、未接迟滞退出。
      */
     private static HomecomingParams params(Long arrivalEtaMs) {
-        return new HomecomingParams(20.0, 20.0, null, 0.8, 1.2, NO_BUFFER_MS, arrivalEtaMs, SLOT_HOLD_MS);
+        return new HomecomingParams(20.0, 20.0, null, 0.8, 1.2, 1.2, NO_BUFFER_MS, arrivalEtaMs, SLOT_HOLD_MS);
     }
 
     private static NestCandidate nest(String nestId, int slots, List<TimeWindow> busy, double energy) {
@@ -159,7 +159,7 @@ class HomecomingReviewTest {
     /** e10_slot_buffer 两端缓冲：端点相接但在缓冲内仍算冲突 */
     @Test
     void slotBuffer_shouldAbsorbEdgeContact() {
-        HomecomingParams buffered = new HomecomingParams(20.0, 20.0, null, 0.8, 1.2,
+        HomecomingParams buffered = new HomecomingParams(20.0, 20.0, null, 0.8, 1.2, 1.2,
                 HomecomingParams.SUGGESTED_SLOT_BUFFER_MS, 10_000L, SLOT_HOLD_MS);
         List<TimeWindow> touching = List.of(new TimeWindow(8_000L, 10_000L));
 
@@ -205,8 +205,8 @@ class HomecomingReviewTest {
     @Test
     void verdict_shouldFollowInjectedMargin() {
         HomecomingInput in = input(50.0);
-        HomecomingParams loose = new HomecomingParams(5.0, 5.0, null, 0.8, 1.2, NO_BUFFER_MS, 1_000L, SLOT_HOLD_MS);
-        HomecomingParams tight = new HomecomingParams(20.0, 20.0, null, 0.8, 1.2, NO_BUFFER_MS, 1_000L, SLOT_HOLD_MS);
+        HomecomingParams loose = new HomecomingParams(5.0, 5.0, null, 0.8, 1.2, 1.2, NO_BUFFER_MS, 1_000L, SLOT_HOLD_MS);
+        HomecomingParams tight = new HomecomingParams(20.0, 20.0, null, 0.8, 1.2, 1.2, NO_BUFFER_MS, 1_000L, SLOT_HOLD_MS);
 
         assertEquals(HomecomingTier.RETURN_HOME_NEST,
                 HomecomingReview.review(in, loose, List.of()).tier(), "裕度 5%：50% ≥ 45%，应回原巢");
@@ -218,8 +218,8 @@ class HomecomingReviewTest {
     @Test
     void secondTier_shouldFollowInjectedAvailFactor() {
         HomecomingInput in = input(50.0);
-        HomecomingParams loose = new HomecomingParams(20.0, 20.0, null, 0.98, 1.2, NO_BUFFER_MS, 1_000L, SLOT_HOLD_MS);
-        HomecomingParams tight = new HomecomingParams(20.0, 20.0, null, 0.5, 1.2, NO_BUFFER_MS, 1_000L, SLOT_HOLD_MS);
+        HomecomingParams loose = new HomecomingParams(20.0, 20.0, null, 0.98, 1.2, 1.2, NO_BUFFER_MS, 1_000L, SLOT_HOLD_MS);
+        HomecomingParams tight = new HomecomingParams(20.0, 20.0, null, 0.5, 1.2, 1.2, NO_BUFFER_MS, 1_000L, SLOT_HOLD_MS);
 
         assertEquals(HomecomingTier.FORCE_STOP_OTHER_NEST,
                 HomecomingReview.review(in, loose, List.of(nest("NEST-A", 2, List.of(), 45.0))).tier(),
@@ -246,7 +246,7 @@ class HomecomingReviewTest {
     /** §2.2 A5 低电量绝对阈值兜底：与 2.1 取更保守者，必须并存 */
     @Test
     void lowBatteryFallback_shouldOverrideBaselineVerdict() {
-        HomecomingParams withFloor = new HomecomingParams(20.0, 20.0, 45.0, 0.8, 1.2,
+        HomecomingParams withFloor = new HomecomingParams(20.0, 20.0, 45.0, 0.8, 1.2, 1.2,
                 NO_BUFFER_MS, 1_000L, SLOT_HOLD_MS);
 
         // 70% ≥ 40%+20%，2.1 判可行；且 70% > 45% 兜底线，2.2 同判可行
@@ -257,7 +257,7 @@ class HomecomingReviewTest {
                 .contains("低电量兜底线"));
 
         // 抬兜底线到 80%：2.1 仍判可行，但 2.2 判否 → 第一级不可行，降第三级
-        HomecomingParams highFloor = new HomecomingParams(20.0, 20.0, 80.0, 0.8, 1.2,
+        HomecomingParams highFloor = new HomecomingParams(20.0, 20.0, 80.0, 0.8, 1.2, 1.2,
                 NO_BUFFER_MS, 1_000L, SLOT_HOLD_MS);
         HomecomingDecision d = HomecomingReview.review(input(70.0), highFloor, List.of());
 
@@ -273,7 +273,7 @@ class HomecomingReviewTest {
     /** §7.7 硬约束 2：风况只经返程基线进入判定，有快照时不得再乘 k */
     @Test
     void windFactor_shouldOnlyApplyWhenSnapshotMissing() {
-        HomecomingParams k12 = new HomecomingParams(20.0, 20.0, null, 0.8, 1.2, NO_BUFFER_MS, 1_000L, SLOT_HOLD_MS);
+        HomecomingParams k12 = new HomecomingParams(20.0, 20.0, null, 0.8, 1.2, 1.2, NO_BUFFER_MS, 1_000L, SLOT_HOLD_MS);
 
         // 有风况快照：基线已含风况，k 不得再放大 —— 65% ≥ 40%+20%=60%，应回原巢
         assertEquals(HomecomingTier.RETURN_HOME_NEST,
@@ -289,7 +289,7 @@ class HomecomingReviewTest {
     /** 迟滞只作用第一级能量边界：注入退出裕度后按退出裕度判 */
     @Test
     void hysteresis_shouldLatchFirstTier() {
-        HomecomingParams latched = new HomecomingParams(20.0, 10.0, null, 0.8, 1.2,
+        HomecomingParams latched = new HomecomingParams(20.0, 10.0, null, 0.8, 1.2, 1.2,
                 NO_BUFFER_MS, 1_000L, SLOT_HOLD_MS);
         HomecomingInput in = input(55.0);
 
@@ -304,6 +304,23 @@ class HomecomingReviewTest {
                 List.of(nest("NEST-A", 2, List.of(), 36.0)), HomecomingTier.RETURN_HOME_NEST);
         assertTrue(auditOf(secondTier, "NEST-A").reachabilityOk(),
                 "迟滞不得外溢到第二级：48%×0.8=38% ≥ 36%，第二级恒按系数判，不按 release 裕度判");
+    }
+
+    /** 风况侧迟滞：无快照时 k 也分进入／退出两值（退出侧取 e10MarginK×e10HystExitRatio） */
+    @Test
+    void windHysteresis_shouldUseExitFactorWhenLatched() {
+        HomecomingParams p = new HomecomingParams(20.0, 12.0, null, 0.8, 1.2, 0.72,
+                NO_BUFFER_MS, 1_000L, SLOT_HOLD_MS);
+
+        // 进入侧：40%×1.2=48%，+20%=68% > 65%
+        assertEquals(HomecomingTier.EMERGENCY_LAND_FIELD,
+                HomecomingReview.review(inputWithoutWind(65.0), p, List.of()).tier(),
+                "进入侧 k=1.2：65% < 68%，不进第一级");
+        // 退出侧：40%×0.72=28.8%，+12%=40.8% ≤ 65%
+        assertEquals(HomecomingTier.RETURN_HOME_NEST,
+                HomecomingReview.review(inputWithoutWind(65.0), p, List.of(),
+                        HomecomingTier.RETURN_HOME_NEST).tier(),
+                "退出侧 k=0.72：65% ≥ 40.8%，风况侧同样防乒乓");
     }
 
     /** 原巢不是「他巢」，第二级须从候选里剔除 */
@@ -372,13 +389,18 @@ class HomecomingReviewTest {
     @Test
     void params_shouldRejectIllegalCombinations() {
         IllegalArgumentException margin = assertThrows(IllegalArgumentException.class,
-                () -> new HomecomingParams(10.0, 20.0, null, 0.8, 1.2, 0L, 0L, SLOT_HOLD_MS));
+                () -> new HomecomingParams(10.0, 20.0, null, 0.8, 1.2, 1.2, 0L, 0L, SLOT_HOLD_MS));
         assertTrue(margin.getMessage().contains("解除裕度"), "异常信息须点名解除裕度：" + margin.getMessage());
 
         IllegalArgumentException factor = assertThrows(IllegalArgumentException.class,
-                () -> new HomecomingParams(10.0, 10.0, null, 1.5, 1.2, 0L, 0L, SLOT_HOLD_MS));
+                () -> new HomecomingParams(10.0, 10.0, null, 1.5, 1.2, 1.2, 0L, 0L, SLOT_HOLD_MS));
         assertTrue(factor.getMessage().contains("他巢可达性系数"),
                 "异常信息须点名他巢可达性系数：" + factor.getMessage());
+
+        IllegalArgumentException windExit = assertThrows(IllegalArgumentException.class,
+                () -> new HomecomingParams(10.0, 10.0, null, 0.8, 1.2, 1.5, 0L, 0L, SLOT_HOLD_MS));
+        assertTrue(windExit.getMessage().contains("退出侧 k"),
+                "异常信息须点名退出侧 k：" + windExit.getMessage());
     }
 
     /** 缺必填字段时报错点名字段，不静默放行 */
