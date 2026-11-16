@@ -30,6 +30,7 @@ class InterventionActionTest {
         cases.put("解除冻结", "clear");
         cases.put("解冻", "clear");
         cases.put("解除人工冻结", "clear");
+        cases.put("重置闸门", "reset");
         cases.put("重置", "reset");
         cases.put("复位", "reset");
         cases.put("调整会面点", "adjust_meet");

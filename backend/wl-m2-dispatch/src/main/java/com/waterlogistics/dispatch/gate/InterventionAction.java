@@ -30,7 +30,7 @@ enum InterventionAction {
             List.of("解除冻结", "解冻", "解除人工冻结")),
 
     RESET("reset", "重置闸门", false, null,
-            List.of("重置", "复位")),
+            List.of("重置闸门", "重置", "复位")),
 
     ADJUST_MEET("adjust_meet", "调整会面点", true, null,
             List.of("调整会面点")),
