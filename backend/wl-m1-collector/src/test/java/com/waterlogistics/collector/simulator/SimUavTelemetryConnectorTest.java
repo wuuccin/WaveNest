@@ -10,15 +10,23 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * 无人机遥测仿真连接器单测：机数、电量递减与下限、圆周巡航几何。
+ * 无人机遥测仿真连接器单测：机数、电量递减与下限、圆周巡航几何，
+ * 以及 11-16 任务 3-8 的注入式手段（偏航渐进位移、低电量一步到位）。
+ *
+ * <p>注入类的断言一律用「对照组」写法：同一时刻跑两台仿真器，一台注入、一台不注入，
+ * 逐拍比对同一架机的坐标。巡航是圆周运动，单看「离机巢多远」会随相位起伏，
+ * 量不出注入到底推了多少米。
  */
 class SimUavTelemetryConnectorTest {
 
     private RecordingPublisher publisher;
     private SimUavTelemetryConnector sim;
+    /** 对照组用（{@link #referenceConnector()} 建，与 sim 同步起跑、不注入） */
+    private RecordingPublisher referencePublisher;
 
     @BeforeEach
     void setUp() {
@@ -111,8 +119,173 @@ class SimUavTelemetryConnectorTest {
         assertEquals(4, fresh.telemetry().size(), "懒初始化后应正常产出");
     }
 
+    // ------------------------------------------------------------------
+    // 注入式手段（11-16 任务 3-8）
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("偏航注入按拍渐进：首拍约 12 m，六拍追平 60 m，且每拍位移不越过清洗上限")
+    void offtrackRampsGraduallyAndCrossesThreshold() {
+        SimUavTelemetryConnector reference = referenceConnector();
+        sim.injectOfftrack("UAV-01", 60.0, 90.0);
+
+        sim.pollOnce(1_000L);
+        reference.pollOnce(1_000L);
+        double firstStep = eastOffsetMeters(lastTelemetryOf("UAV-01"), lastOf(referencePublisher, "UAV-01"));
+        assertTrue(firstStep > 10.0 && firstStep < 13.5,
+                "首拍应只走约 12 m（speed-ms × 1 s），实测 " + firstStep + "——" +
+                        "瞬移会被 M4 清洗判 POSITION_JUMP 后丢弃");
+
+        for (int i = 1; i <= 6; i++) {
+            sim.pollOnce(1_000L + i * 1_000L);
+            reference.pollOnce(1_000L + i * 1_000L);
+        }
+        double ramped = eastOffsetMeters(lastTelemetryOf("UAV-01"), lastOf(referencePublisher, "UAV-01"));
+        assertEquals(60.0, ramped, 0.5, "六拍后应追平 60 m，实测 " + ramped);
+
+        // 每拍位移反算速度必须留在清洗上限（默认 50 m/s）以内
+        List<UavTelemetry> all = publisher.telemetry().stream()
+                .filter(m -> m.uavId().equals("UAV-01"))
+                .toList();
+        for (int i = 1; i < all.size(); i++) {
+            double step = metersBetween(all.get(i - 1), all.get(i));
+            assertTrue(step < 50.0, "第 " + i + " 拍位移 " + step + " m/拍，超过清洗上限会被判 POSITION_JUMP");
+        }
+    }
+
+    @Test
+    @DisplayName("偏航注入只作用于指定机，其他机与对照组逐拍一致")
+    void offtrackAffectsOnlyTargetDrone() {
+        SimUavTelemetryConnector reference = referenceConnector();
+        sim.injectOfftrack("UAV-01", 60.0, 90.0);
+        for (int i = 0; i < 8; i++) {
+            sim.pollOnce(i * 1_000L);
+            reference.pollOnce(i * 1_000L);
+        }
+
+        assertTrue(eastOffsetMeters(lastTelemetryOf("UAV-01"), lastOf(referencePublisher, "UAV-01")) > 55.0,
+                "UAV-01 应被推开 60 m");
+        // 两台仿真器的位置噪声各自随机（1e-9°≈0.1 mm），容差按厘米给
+        assertEquals(0.0, metersBetween(lastTelemetryOf("UAV-02"), lastOf(referencePublisher, "UAV-02")), 1e-2,
+                "UAV-02 不应被带偏");
+        assertEquals(0.0, metersBetween(lastTelemetryOf("UAV-04"), lastOf(referencePublisher, "UAV-04")), 1e-2,
+                "UAV-04 不应被带偏");
+    }
+
+    @Test
+    @DisplayName("偏航注入方向归一到 [0,360)，注入瞬间已施加位移为 0")
+    void offtrackNormalizesBearingAndReportsTarget() {
+        SimUavTelemetryConnector.Injection state = sim.injectOfftrack("UAV-03", 40.0, 450.0);
+
+        assertEquals(40.0, state.targetDeviationM(), 1e-9);
+        assertEquals(90.0, state.bearingDeg(), 1e-9, "450° 应归一到 90°");
+        assertEquals(0.0, state.currentDeviationM(), 1e-9, "注入瞬间尚未施加位移");
+        assertEquals(100.0, state.batteryPercent(), 1e-9);
+    }
+
+    @Test
+    @DisplayName("低电量注入一步到位，此后仍按拍递减")
+    void batteryInjectionAppliesImmediatelyAndKeepsDraining() {
+        sim.injectBattery("UAV-02", 15.0);
+
+        // 首拍：15 - 0.02 = 14.98，按 0.1 精度上报仍是 15.0
+        sim.pollOnce(1_000L);
+        assertEquals(15.0, lastTelemetryOf("UAV-02").battery(), 0.1, "注入后首帧即应落在 15% 附近");
+
+        for (int i = 1; i <= 10; i++) {
+            sim.pollOnce(1_000L + i * 1_000L);
+        }
+        double afterTen = lastTelemetryOf("UAV-02").battery();
+        assertEquals(14.8, afterTen, 0.1, "电量应继续按每拍 0.02% 递减");
+    }
+
+    @Test
+    @DisplayName("复位：偏航位移渐进退回原点、电量回满")
+    void clearingInjectionRampsBackAndRefillsBattery() {
+        SimUavTelemetryConnector reference = referenceConnector();
+        sim.injectOfftrack("UAV-01", 60.0, 90.0);
+        sim.injectBattery("UAV-01", 12.0);
+        for (int i = 0; i < 8; i++) {
+            sim.pollOnce(i * 1_000L);
+            reference.pollOnce(i * 1_000L);
+        }
+        assertTrue(eastOffsetMeters(lastTelemetryOf("UAV-01"), lastOf(referencePublisher, "UAV-01")) > 55.0,
+                "复位前应已推开");
+
+        sim.clearInjection("UAV-01");
+        for (int i = 8; i < 20; i++) {
+            sim.pollOnce(i * 1_000L);
+            reference.pollOnce(i * 1_000L);
+        }
+
+        assertEquals(0.0, eastOffsetMeters(lastTelemetryOf("UAV-01"), lastOf(referencePublisher, "UAV-01")), 0.5,
+                "复位后位移应退回原点（不是瞬间归零，避免反向跳变被清洗）");
+        assertTrue(lastTelemetryOf("UAV-01").battery() > 99.0, "复位后电量应回满");
+    }
+
+    @Test
+    @DisplayName("非法入参一律拒绝：未知机号、格式错、位移越界、电量越界")
+    void rejectsInvalidInput() {
+        assertThrows(IllegalArgumentException.class, () -> sim.injectOfftrack("UAV-09", 60.0, 90.0), "超出机数");
+        assertThrows(IllegalArgumentException.class, () -> sim.injectOfftrack("uav-1", 60.0, 90.0), "格式不对");
+        assertThrows(IllegalArgumentException.class, () -> sim.injectOfftrack("UAV-01", 0.0, 90.0), "位移须大于 0");
+        assertThrows(IllegalArgumentException.class, () -> sim.injectOfftrack("UAV-01", 6000.0, 90.0), "位移上限 5000 m");
+        assertThrows(IllegalArgumentException.class, () -> sim.injectBattery("UAV-01", 120.0), "电量须 ≤100");
+        assertThrows(IllegalArgumentException.class, () -> sim.injectBattery("UAV-01", -1.0), "电量须 ≥0");
+        assertThrows(IllegalArgumentException.class, () -> sim.clearInjection("UAV-42"), "复位也认机号");
+    }
+
+    @Test
+    @DisplayName("注入状态查询覆盖全部机，未注入的机偏航未生效")
+    void injectionsSnapshotCoversFleet() {
+        sim.injectBattery("UAV-04", 18.0);
+
+        List<SimUavTelemetryConnector.Injection> all = sim.injections();
+        assertEquals(4, all.size());
+        assertEquals("UAV-01", all.get(0).uavId());
+        assertEquals(0.0, all.get(0).targetDeviationM(), 1e-9);
+        assertEquals(18.0, all.get(3).batteryPercent(), 1e-9);
+        assertTrue(all.get(0).targetDeviationM() == 0.0, "未注入的机不应显示偏航生效");
+    }
+
+    /** 与 {@link #sim} 同步起跑、不注入的对照组：两台的相位与噪声分布一致，可直接逐拍比对。 */
+    private SimUavTelemetryConnector referenceConnector() {
+        referencePublisher = new RecordingPublisher();
+        SimUavTelemetryConnector reference = new SimUavTelemetryConnector(referencePublisher);
+        FieldInjector.applySimDefaults(reference);
+        reference.start();
+        return reference;
+    }
+
     /** 遥测点到给定坐标的十进制度平面距离，仅用于断言巡航半径。 */
     private static double degDistance(UavTelemetry m, double lon, double lat) {
         return Math.hypot(m.lon() - lon, m.lat() - lat);
+    }
+
+    /** 注入机相对对照组在正东方向多走的米数（注入方向 90° 时即位移量）。 */
+    private static double eastOffsetMeters(UavTelemetry injected, UavTelemetry reference) {
+        return (injected.lon() - reference.lon()) * 111_320.0 * Math.cos(Math.toRadians(reference.lat()));
+    }
+
+    /** 两条遥测之间的平面距离（米）。 */
+    private static double metersBetween(UavTelemetry a, UavTelemetry b) {
+        double dx = (b.lon() - a.lon()) * 111_320.0 * Math.cos(Math.toRadians(a.lat()));
+        double dy = (b.lat() - a.lat()) * 111_320.0;
+        return Math.hypot(dx, dy);
+    }
+
+    /** 取某机最后一条遥测（发布器按拍扁平存放，4 架机一循环）。 */
+    private UavTelemetry lastTelemetryOf(String uavId) {
+        return lastOf(publisher, uavId);
+    }
+
+    private UavTelemetry lastOf(RecordingPublisher source, String uavId) {
+        List<UavTelemetry> all = source.telemetry();
+        for (int i = all.size() - 1; i >= 0; i--) {
+            if (all.get(i).uavId().equals(uavId)) {
+                return all.get(i);
+            }
+        }
+        throw new AssertionError("没有 " + uavId + " 的遥测");
     }
 }
