@@ -120,6 +120,43 @@ class FlightQueryControllerTest {
         assertEquals(9L, ((java.util.Map<?, ?>) orderFrame.data()).get("stateVersion"));
     }
 
+    @Test
+    void replay_shouldKeepOnlyRealOrderTransitions() {
+        FlightRecordStore store = new FlightRecordStore();
+        TelemetryService telemetry = new TelemetryService(LIMITS, 4.5);
+        store.append(telemetry.acceptState(frame(1_700_000_000_000L, 80.0)));
+        OrderTaskMapper orders = Mockito.mock(OrderTaskMapper.class);
+        TaskLogMapper logs = Mockito.mock(TaskLogMapper.class);
+        OrderTaskEntity order = new OrderTaskEntity();
+        order.setOrderId("ORD-1");
+        order.setDroneId("UAV-D0-1");
+        order.setCreateTime(local(1_699_999_999_000L));
+        when(orders.selectById("ORD-1")).thenReturn(order);
+        TaskLogEntity accepted = log(1L, "订单接入", null, "待受理");
+        TaskLogEntity reviewed = log(2L, "在飞安全复核-继续", "去程中", "去程中");
+        TaskLogEntity returning = log(3L, "在飞安全复核-中止返航", "去程中", "返航中");
+        when(logs.selectList(any(QueryWrapper.class))).thenReturn(List.of(accepted, reviewed, returning));
+        var controller = new FlightQueryController(new FlightQueryService(store), orders, logs,
+                null, null, null);
+
+        var frames = controller.replay("ORD-1").frames().stream()
+                .filter(item -> item.type().equals("order_state")).toList();
+        assertEquals(2, frames.size());
+        assertEquals("待受理", ((java.util.Map<?, ?>) frames.get(0).data()).get("orderStatus"));
+        assertEquals("返航中", ((java.util.Map<?, ?>) frames.get(1).data()).get("orderStatus"));
+    }
+
+    private static TaskLogEntity log(long id, String operation, String from, String to) {
+        TaskLogEntity row = new TaskLogEntity();
+        row.setOrderId("ORD-1");
+        row.setLogId(id);
+        row.setOpType(operation);
+        row.setFromStatus(from);
+        row.setToStatus(to);
+        row.setTs(local(1_700_000_000_000L));
+        return row;
+    }
+
     private static LocalDateTime local(long ts) {
         return LocalDateTime.ofInstant(Instant.ofEpochMilli(ts), ZoneId.of("Asia/Shanghai"));
     }

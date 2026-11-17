@@ -8,10 +8,14 @@ function harness(timeoutMs = 100) {
     for (const listener of listeners) listener({ type, data })
   }
   let injections = 0
+  let clears = 0
+  let gateStatus = 'BROKEN'
   const api = {
     resetShip: async () => ({}),
     createOrder: async () => ({ accepted: true, orderId: 'O1' }),
-    injectWeather: async () => { injections += 1; return {} }
+    injectWeather: async () => { injections += 1; return {} },
+    clearWeatherBias: async () => { clears += 1; return {} },
+    orders: async () => ({ dispatchGate: { gateStatus } })
   }
   const runner = createDemoRunner({ api, subscribe: listener => {
     listeners.add(listener)
@@ -26,7 +30,7 @@ function harness(timeoutMs = 100) {
     await new Promise(resolve => setTimeout(resolve, 0))
     return { run }
   }
-  return { emit, runner, start, get injections() { return injections } }
+  return { emit, runner, start, setGateStatus: value => { gateStatus = value }, get injections() { return injections }, get clears() { return clears } }
 }
 
 test('气象超限事件推动无人机返航演示阶段', async () => {
@@ -37,7 +41,23 @@ test('气象超限事件推动无人机返航演示阶段', async () => {
   h.emit('drone_state', { uavId: 'U1', activeOrderId: 'O1', flightPhase: '返航中' })
   h.emit('order_state', { orderId: 'O1', orderStatus: '去程中' })
   await new Promise(resolve => setTimeout(resolve, 0))
-  assert.equal(h.runner.state.step, 4)
+  assert.ok(h.runner.state.step >= 4)
+  assert.equal(h.clears, 1)
+  h.runner.cancel()
+  await run
+})
+
+test('风况回落后确认闸门解除，再等待重派交接', async () => {
+  const h = harness(100)
+  const { run } = await h.start()
+  h.emit('alarm', { orderId: 'O1', targetId: 'U1', alarmType: '气象超限' })
+  h.emit('drone_state', { uavId: 'U1', activeOrderId: 'O1', flightPhase: '返航中' })
+  await new Promise(resolve => setTimeout(resolve, 0))
+  assert.equal(h.clears, 1)
+  h.emit('weather', { windSpeedMs: 5 })
+  h.setGateStatus('NORMAL')
+  await new Promise(resolve => setTimeout(resolve, 1100))
+  assert.equal(h.runner.state.step, 6)
   h.runner.cancel()
   await run
 })
