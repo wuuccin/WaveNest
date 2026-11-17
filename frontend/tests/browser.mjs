@@ -35,7 +35,11 @@ for (const viewport of [{ width: 1440, height: 900, name: 'desktop' }, { width: 
   await page.getByRole('button', { name: '离线演示' }).click()
   if (await page.locator('.nest-pin').count()) throw new Error(`${viewport.name}: live nest rows remained after switching to the offline data source`)
   const checkOverflow = async area => {
-    if (await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1)) throw new Error(`${viewport.name}: ${area} horizontal overflow`)
+    const overflow = await page.evaluate(() => {
+      if (document.documentElement.scrollWidth <= innerWidth + 1) return []
+      return [...document.querySelectorAll('body *')].filter(element => element.getBoundingClientRect().right > innerWidth + 1 && !element.closest('.map-shell')).slice(0, 8).map(element => `${element.tagName.toLowerCase()}.${String(element.className).replace(/\s+/g, '.')}`)
+    })
+    if (overflow.length) throw new Error(`${viewport.name}: ${area} horizontal overflow from ${overflow.join(', ')}`)
   }
   await checkOverflow('dashboard')
   if (!await page.locator('.leaflet-pane').count()) throw new Error(`${viewport.name}: map missing`)

@@ -9,6 +9,7 @@ const drone = (lon, lat, battery, flightPhase, id='UAV-01') => ({ uavId: id, lon
   {phase:'去程',points:[{lon:115.854,lat:28.647},{lon:115.862,lat:28.666}]},
   {phase:'末段交接',points:[{lon:115.862,lat:28.666},{lon:115.875,lat:28.681}]},
   {phase:'返程',points:[{lon:115.875,lat:28.681},{lon:115.854,lat:28.647}]}] })
+const weather = windSpeedMs => ({ lon: 115.862, lat: 28.666, windSpeedMs, windDirDeg: 135, gustMs: windSpeedMs + 2, obsTs: now() })
 const meeting = (lon,lat,locked=false) => ({orderId:'DEMO-01',lon,lat,locked,eventTs:now(),candidateCount:4,
   chosenNestId:locked?'NEST-02':'NEST-01',rejectionReasons:['M30T（UAV-03）：电量不足','M3T（UAV-04）：超出服务半径'],
   candidates:[
@@ -18,11 +19,11 @@ const meeting = (lon,lat,locked=false) => ({orderId:'DEMO-01',lon,lat,locked,eve
     {candidateId:'C-04',nestId:'NEST-02',droneId:'UAV-04',model:'M3T',distKm:5.24,feasible:false,reasons:['超出服务半径']}
   ]})
 export const SCENES = [
-  { title:'初始态势', frames:[['ship_traj',ship(0,0,210,100)],['order_state',order('待受理',1)]] },
+  { title:'初始态势', frames:[['ship_traj',ship(0,0,210,100)],['weather',weather(5)],['order_state',order('待受理',1)]] },
   { title:'下单 · 预测与会面', frames:[['ship_traj',ship(.0008,0,145,65)],['rendezvous',meeting(115.870,28.678)],['order_state',order('已派发',2)]] },
   { title:'无人机起飞', frames:[['drone_state',drone(115.858,28.657,84,'去程')],['order_state',order('去程中',3)]] },
-  { title:'风速突变 · 气象超限处置', frames:[['alarm',{level:'警告',alarmType:'气象超限',targetId:'UAV-01',orderId:'DEMO-01',message:'演示场景：风速突变后，系统重新评估原机的飞行安全',eventTs:now()}]] },
+  { title:'风速突变 · 气象超限处置', frames:[['weather',weather(16)],['alarm',{level:'警告',alarmType:'气象超限',targetId:'UAV-01',orderId:'DEMO-01',message:'演示场景：风速突变后，系统重新评估原机的飞行安全',eventTs:now()}]] },
   { title:'本例预设原机返航', frames:[['drone_state',drone(115.860,28.657,72,'返航')],['order_state',order('返航中',4)]] },
-  { title:'货物回收 · 重入队', frames:[['drone_state',drone(115.854,28.647,65,'已回收')],['order_state',order('待调度',5)]] },
+  { title:'货物回收 · 重入队', frames:[['weather',weather(5)],['drone_state',drone(115.854,28.647,65,'已回收')],['order_state',order('待调度',5)]] },
   { title:'新机与船舶交接完成', frames:[['drone_state',drone(115.870,28.678,91,'末段交接','UAV-02')],['order_state',order('末段交接中',6,'交接')],['drone_state',drone(115.854,28.647,78,'返航完成','UAV-02')],['order_state',order('已完成',7)]] }
 ]
