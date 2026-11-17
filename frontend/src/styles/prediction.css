@@ -8,7 +8,7 @@
    三处都靠同一个判定（isPremiseFlagged），颜色只是它的表达。
    ========================================================================== */
 
-.prediction-panel { border: 1px solid var(--line); border-radius: 8px; background: var(--paper); box-shadow: var(--shadow); margin-bottom: 18px; }
+.prediction-panel { min-width: 0; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); box-shadow: var(--shadow); margin-bottom: 18px; }
 .prediction-panel .panel-head { align-items: center; }
 .prediction-head-tools { display: flex; align-items: center; gap: 10px; }
 

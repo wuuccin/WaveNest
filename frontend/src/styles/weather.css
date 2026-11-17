@@ -5,13 +5,20 @@
    =========================================================================== */
 
 .weather-scale-panel,
-.weather-inject-panel {
+.weather-inject-panel,
+.uav-inject-panel {
   padding: 15px 17px 13px;
   background: var(--paper);
   border: 1px solid var(--line);
   border-radius: 11px;
   box-shadow: var(--shadow);
 }
+
+.uav-inject-panel { margin: 0 10px 10px; }
+.uav-inject-fields { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.uav-inject-fields label { display: grid; gap: 5px; min-width: 0; color: var(--muted); font-size: 11px; }
+.uav-inject-fields input, .uav-inject-fields select { width: 100%; min-width: 0; padding: 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--paper); color: var(--ink); }
+@media (max-width: 760px) { .uav-inject-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 
 .weather-scale-panel .panel-head,
 .weather-inject-panel .panel-head { margin-bottom: 12px; }

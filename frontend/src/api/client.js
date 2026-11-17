@@ -37,6 +37,10 @@ export const api = {
   // 复位：清除注入偏置，自产风回到基准海况（演示结束后必做，否则下一场不可复现）
   clearWeatherBias: (options = {}) => request('/sim/weather/bias', { ...options, method: 'DELETE' }),
   resetWeather: (options = {}) => request('/sim/weather/bias', { ...options, method: 'DELETE' }),
+  uavInjectionStatus: () => request('/sim/uav'),
+  injectUavOfftrack: ({ uavId, deviationM, bearingDeg }) => request(`/sim/uav/offtrack?${new URLSearchParams({ uavId, deviationM: String(deviationM), bearingDeg: String(bearingDeg) })}`, { method: 'POST' }),
+  injectUavBattery: ({ uavId, percent }) => request(`/sim/uav/battery?${new URLSearchParams({ uavId, percent: String(percent) })}`, { method: 'POST' }),
+  clearUavInjections: (uavId) => request(`/sim/uav/injections${uavId ? `?${new URLSearchParams({ uavId })}` : ''}`, { method: 'DELETE' }),
   tasks: () => request('/api/monitor/tasks'),
   records: taskId => request(`/api/monitor/tasks/${encodeURIComponent(taskId)}/records`),
   stats: () => request('/api/monitor/statistics'),

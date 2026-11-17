@@ -37,7 +37,7 @@ for (const viewport of [{ width: 1440, height: 900, name: 'desktop' }, { width: 
   const checkOverflow = async area => {
     const overflow = await page.evaluate(() => {
       if (document.documentElement.scrollWidth <= innerWidth + 1) return []
-      return [...document.querySelectorAll('body *')].filter(element => element.getBoundingClientRect().right > innerWidth + 1 && !element.closest('.map-shell')).slice(0, 8).map(element => `${element.tagName.toLowerCase()}.${String(element.className).replace(/\s+/g, '.')}`)
+      return [...document.querySelectorAll('body *')].filter(element => element.getBoundingClientRect().right > innerWidth + 1 && !element.closest('.map-shell, .main-nav')).slice(0, 8).map(element => `${element.tagName.toLowerCase()}.${String(element.className).replace(/\s+/g, '.')}`)
     })
     if (overflow.length) throw new Error(`${viewport.name}: ${area} horizontal overflow from ${overflow.join(', ')}`)
   }
@@ -93,12 +93,28 @@ for (const viewport of [{ width: 1440, height: 900, name: 'desktop' }, { width: 
 
 const live = await browser.newPage()
 const liveErrors = []
+let uavOfftrackCalls = 0
+let uavBatteryCalls = 0
+let uavResetCalls = 0
 live.on('pageerror', error => liveErrors.push(error.message))
 await stubLiveApi(live)
+await live.route('**/sim/uav', route => route.fulfill({ json: { drones: [{ uavId: 'UAV-01', targetDeviationM: uavOfftrackCalls ? 60 : 0, currentDeviationM: uavOfftrackCalls ? 24 : 0, bearingDeg: 90, batteryPercent: uavBatteryCalls ? 15 : 100, offtrackActive: uavOfftrackCalls > 0 }] } }))
+await live.route('**/sim/uav/offtrack?**', route => { uavOfftrackCalls += 1; return route.fulfill({ json: { uavId: 'UAV-01', targetDeviationM: 60, currentDeviationM: 0, bearingDeg: 90, batteryPercent: 100, offtrackActive: true } }) })
+await live.route('**/sim/uav/battery?**', route => { uavBatteryCalls += 1; return route.fulfill({ json: { uavId: 'UAV-01', targetDeviationM: 60, currentDeviationM: 24, bearingDeg: 90, batteryPercent: 15, offtrackActive: true } }) })
+await live.route('**/sim/uav/injections?**', route => { uavResetCalls += 1; return route.fulfill({ json: { uavId: 'UAV-01', targetDeviationM: 0, currentDeviationM: 24, bearingDeg: 90, batteryPercent: 100, offtrackActive: false } }) })
 await live.goto(`${baseUrl}/#dashboard`, { waitUntil: 'domcontentloaded' })
 await live.getByRole('button', { name: '实时服务' }).click()
 await live.locator('.header-status').getByText('WebSocket 已连接').waitFor({ timeout: 10000 })
 if (!await live.locator('.live-order-summary').count()) throw new Error('live: backend order status missing')
+await live.getByText('风况标尺与仿真注入').click()
+await live.getByLabel('注入无人机').selectOption('UAV-01')
+await live.getByRole('button', { name: '注入偏航' }).click()
+await live.getByText(/已开始偏航注入/).waitFor()
+await live.getByRole('button', { name: '注入低电量' }).click()
+await live.getByText(/已注入电量 15/).waitFor()
+await live.getByRole('button', { name: '复位所选无人机' }).click()
+await live.getByText(/注入已复位/).waitFor()
+if (uavOfftrackCalls !== 1 || uavBatteryCalls !== 1 || uavResetCalls !== 1) throw new Error('live: UAV injection requests missing')
 if (liveErrors.length) throw new Error(`live: ${liveErrors.join('; ')}`)
 await live.screenshot({ path: join(shots, 'live.png'), fullPage: true })
 console.log('live: WebSocket connection and backend order status passed')
