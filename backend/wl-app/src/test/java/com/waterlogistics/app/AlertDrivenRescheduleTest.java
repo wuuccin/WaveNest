@@ -18,11 +18,17 @@ import com.waterlogistics.dispatch.order.OrderSubmitRequest;
 import com.waterlogistics.dispatch.order.OrderSubmitResponse;
 import com.waterlogistics.dispatch.prediction.PredictionService;
 import com.waterlogistics.dispatch.queue.CargoGateWaker;
+import com.waterlogistics.dispatch.queue.TaskQueueService;
+import com.waterlogistics.dispatch.taskstate.FlightPhaseAdvancer;
 import com.waterlogistics.storage.entity.OrderTaskEntity;
 import com.waterlogistics.storage.entity.TaskLogEntity;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.waterlogistics.storage.repository.GoodsMapper;
 import com.waterlogistics.storage.repository.OrderTaskMapper;
 import com.waterlogistics.storage.repository.TaskLogMapper;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.stream.Collectors;
@@ -87,6 +93,12 @@ class AlertDrivenRescheduleTest {
     private CargoReadyService cargoReadyService;
     @Autowired
     private CargoGateWaker cargoGateWaker;
+    @Autowired
+    private TaskQueueService taskQueueService;
+    @Autowired
+    private FlightPhaseAdvancer flightPhaseAdvancer;
+    @Autowired
+    private GoodsMapper goodsMapper;
 
     /**
      * 登记货物到巢并由货到巢关轮询放行派机。
@@ -296,5 +308,74 @@ class AlertDrivenRescheduleTest {
         waker.tick();
         assertThat(orderTaskMapper.selectById(resp.orderId()).getStatus())
                 .isEqualTo(OrderStatus.DISPATCHED.getValue());
+    }
+
+    /**
+     * 11-16 序号 3-5：<b>熔断解除后被唤醒的积压订单要一路走到交接完成</b>，不只是「重派成功」。
+     *
+     * <p>「重派」只证到「已派发」，而整改要求的是七段故事线里最后那段——解除后积压单被重派
+     * <b>并完成交接</b>。中间任一环断掉（重入队后没人续编排、派发后飞行阶段不推进、
+     * 回执落不上凭证）都会表现成「订单停在已派发不动」，演示现场看起来就是卡住。
+     *
+     * <p>飞行阶段推进靠 <b>会面时刻回拨</b>触发时间兜底（与 {@code SmokeM6M2Test} 同手法），
+     * 不 mock 时钟：本用例要验的是真实推进器在真实库状态下的行为。
+     */
+    @Test
+    void weatherClear_shouldWakeBacklogThenCompleteHandover() {
+        predictionService.refresh(new AisMessage(
+                SHIP, "F1交接测试船", 115.857937, 28.663776, 5.0, 90.0, System.currentTimeMillis()));
+
+        // ① 熔断中下单：B3 延后语义，落「已受理待唤醒」而不是拒单
+        gateService.trip(GateSource.AUTO);
+        OrderSubmitResponse resp = admissionService.submit(new OrderSubmitRequest(
+                SHIP, 5.5, "医疗物资", System.currentTimeMillis() + 3_600_000L, "URGENT"));
+        assertThat(resp.accepted()).isTrue();
+        String orderId = resp.orderId();
+        // 延后单从未过门关、没有持锁：只登记货物到巢，解除后由气象唤醒器直接续编排
+        OrderTaskEntity deferred = orderTaskMapper.selectById(orderId);
+        if (deferred.getCargoNestId() != null && !deferred.getCargoNestId().isBlank()) {
+            cargoReadyService.markReady(orderId, deferred.getCargoNestId());
+        }
+        assertThat(orderTaskMapper.selectById(orderId).getStatus())
+                .isEqualTo(OrderStatus.ACCEPTED_WAIT_WAKE.getValue());
+
+        // ② 气象解除 → 边沿命中 → 逐单重入队并续编排（重派到「已派发」）
+        gateService.clear(GateSource.AUTO);
+        waker.tick();
+        OrderTaskEntity dispatched = orderTaskMapper.selectById(orderId);
+        assertThat(dispatched.getStatus())
+                .as("解除后积压单必须被重派，不能停在待唤醒")
+                .isEqualTo(OrderStatus.DISPATCHED.getValue());
+        assertThat(dispatched.getDroneId()).isNotBlank();
+        assertThat(dispatched.getMeetTime()).isNotNull();
+
+        // ③ 把会面时刻回拨到已过时刻，让时间兜底把飞行阶段推到返航中（可写回执的阶段）
+        dispatched.setMeetTime(LocalDateTime.ofInstant(
+                Instant.ofEpochMilli(System.currentTimeMillis() - 3_600_000L),
+                ZoneId.of("Asia/Shanghai")));
+        orderTaskMapper.updateById(dispatched);
+        flightPhaseAdvancer.tick();
+        assertThat(orderTaskMapper.selectById(orderId).getStatus())
+                .as("飞行阶段推进须把已派发推到返航中；停在原状态说明推进链断了")
+                .isEqualTo(OrderStatus.RETURNING.getValue());
+
+        // ④ 交接回执：货物「已交付」＋ task_log 交付凭证，重复回执幂等
+        taskQueueService.markHandoverDone(orderId);
+        taskQueueService.markHandoverDone(orderId);
+        String goodsId = "G-" + orderId + "-1";
+        assertThat(goodsMapper.selectById(goodsId).getStatus())
+                .as("交接完成后货物必须是已交付")
+                .isEqualTo(com.waterlogistics.contract.state.GoodsStatus.DELIVERED.getValue());
+        assertThat(taskLogMapper.selectList(new LambdaQueryWrapper<TaskLogEntity>()
+                        .eq(TaskLogEntity::getOrderId, orderId)
+                        .eq(TaskLogEntity::getOpType, TaskQueueService.OP_TYPE_DELIVERY_RECEIPT)))
+                .as("重复回执幂等：交付凭证只写一次")
+                .hasSize(1);
+
+        // ⑤ 下一拍凭交付凭证推「已完成」
+        flightPhaseAdvancer.tick();
+        assertThat(orderTaskMapper.selectById(orderId).getStatus())
+                .as("有交付凭证后必须能走到已完成；停住说明收尾链断了")
+                .isEqualTo(OrderStatus.FINISHED.getValue());
     }
 }

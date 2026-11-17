@@ -2,6 +2,8 @@ package com.waterlogistics.dispatch.homecoming;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.waterlogistics.algo.estimation.WaterwayGeometry;
+import com.waterlogistics.algo.inflight.EmergencyLandingCandidate;
 import com.waterlogistics.algo.inflight.HomecomingDecision;
 import com.waterlogistics.algo.inflight.HomecomingInput;
 import com.waterlogistics.algo.inflight.HomecomingParams;
@@ -15,14 +17,17 @@ import com.waterlogistics.algo.meeting.model.B_FlyableRoute;
 import com.waterlogistics.contract.rest.GeoPoint;
 import com.waterlogistics.contract.state.DroneStatus;
 import com.waterlogistics.contract.state.OrderStatus;
+import com.waterlogistics.dispatch.prediction.CenterlineLedger;
 import com.waterlogistics.dispatch.resource.OccupancySlotService;
 import com.waterlogistics.rendezvous.trajectory.GenerateRouteCommand;
 import com.waterlogistics.storage.entity.DroneEntity;
+import com.waterlogistics.storage.entity.EmergencyLandingPointEntity;
 import com.waterlogistics.storage.entity.NestEntity;
 import com.waterlogistics.storage.entity.OrderTaskEntity;
 import com.waterlogistics.storage.entity.TaskLogEntity;
 import com.waterlogistics.storage.param.SysParamLoader;
 import com.waterlogistics.storage.repository.DroneMapper;
+import com.waterlogistics.storage.repository.EmergencyLandingPointMapper;
 import com.waterlogistics.storage.repository.NestMapper;
 import com.waterlogistics.storage.repository.OrderTaskMapper;
 import com.waterlogistics.storage.repository.TaskLogMapper;
@@ -60,8 +65,14 @@ import org.springframework.stereotype.Service;
  * {@link OrderStatus#FAILED}、{@code fail_reason} 标「迫降野外，待人工回收」并落 {@code task_log}，
  * 交人工回收流程拾取。
  *
- * <p><b>决策不完整不落执行</b>（MEDIUM.23）：第三级缺 {@code targetId}（L4 迫降点层未接）时
+ * <p><b>决策不完整不落执行</b>（MEDIUM.23）：结论缺落点标识、或第三级缺迫降点坐标时
  * 只返回结论、不生成航迹也不下发返航指令，不臆造迫降点；有货时的订单失败记录仍照任务 25 落库。
+ *
+ * <p><b>第三级落点从哪来</b>（11-16 序号 3-1）：本层读 {@code emergency_landing_point} 台账组装候选点，
+ * 距航道垂距由中心线台账投影算出、水陆主选取 {@code surface_type} 列（为空时按 1-6 兜底用江面半宽
+ * 250 m 纯几何判），阈值读 {@code e10LandingCorridorHalfWidthM}；算法层
+ * {@link com.waterlogistics.algo.inflight.EmergencyLandingSelector} 只做否决筛除。
+ * 拿不到台账或阈值时退回「{@code targetId=null} ＋ reason」的两态退化，<b>不补猜测落点</b>。
  *
  * <h3>两种构造方式</h3>
  * <ul>
@@ -106,6 +117,20 @@ public class HomecomingService {
     /** 第一级迟滞记忆上限（按 orderId 有界 LRU，重启后至多退化一次） */
     private static final int PREVIOUS_TIER_CAPACITY = 1024;
 
+    /** 迫降点距航道半宽阈值键（1-6 裁定 / 018 灌 500）。 */
+    private static final String LANDING_CORRIDOR_KEY = "e10LandingCorridorHalfWidthM";
+
+    /**
+     * 1-6 兜底的江面半宽，米：{@code surface_type} 未标定时按「到中心线垂距 ≤ 250 m 即水面」纯几何判。
+     *
+     * <p>250 是 1-6 原文给的兜底口径（江面＋近岸横向尺度数百米），<b>不是本类自造的阈值</b>；
+     * 主选仍是台账列，本常量只在列留空时兜底，几何也不可用时留 null 交选择器判「不可算」。
+     */
+    private static final double FALLBACK_RIVER_HALF_WIDTH_M = 250.0;
+
+    /** 迫降点台账里「可用」的取值（与 23 §10 状态词一致）。 */
+    private static final String ELP_STATUS_AVAILABLE = "可用";
+
     private final OccupancySlotService slotService;
     private final NestMapper nestMapper;
     private final DroneMapper droneMapper;
@@ -113,6 +138,11 @@ public class HomecomingService {
     private final TaskLogMapper taskLogMapper;
     private final SysParamLoader sysParamLoader;
     private final HomecomingTrackPort returnTrackPort;
+    private final EmergencyLandingPointMapper landingPointMapper;
+    private final CenterlineLedger centerlineLedger;
+
+    /** 走廊阈值缺失只告警一次：逐拍 warn 会刷满日志，而缺键是运维状态、不会自愈。 */
+    private volatile boolean corridorMissingWarned;
 
     /** 上一轮落点结论（仅供第一级双阈值迟滞；有界 LRU） */
     private final Map<String, HomecomingTier> previousTiers = Collections.synchronizedMap(
@@ -130,7 +160,7 @@ public class HomecomingService {
      * Spring 容器走下面的全参构造。
      */
     public HomecomingService() {
-        this(null, null, null, null, null, null, null);
+        this(null, null, null, null, null, null, null, null, null);
     }
 
     @Autowired
@@ -140,7 +170,9 @@ public class HomecomingService {
             OrderTaskMapper orderTaskMapper,
             TaskLogMapper taskLogMapper,
             SysParamLoader sysParamLoader,
-            HomecomingTrackPort returnTrackPort) {
+            HomecomingTrackPort returnTrackPort,
+            EmergencyLandingPointMapper landingPointMapper,
+            CenterlineLedger centerlineLedger) {
         this.slotService = slotService;
         this.nestMapper = nestMapper;
         this.droneMapper = droneMapper;
@@ -148,6 +180,8 @@ public class HomecomingService {
         this.taskLogMapper = taskLogMapper;
         this.sysParamLoader = sysParamLoader;
         this.returnTrackPort = returnTrackPort;
+        this.landingPointMapper = landingPointMapper;
+        this.centerlineLedger = centerlineLedger;
     }
 
     /**
@@ -171,6 +205,9 @@ public class HomecomingService {
         HomecomingParams effectiveParams = params;
         DroneEntity drone = null;
         NestEntity homeNest = null;
+        // 第三级迫降点候选与走廊阈值：无依赖构造（纯单测）下保持空／null，走两态退化
+        List<EmergencyLandingCandidate> landingCandidates = List.of();
+        Double corridorHalfWidthM = null;
 
         if (hasDependencies()) {
             drone = droneMapper.selectById(input.droneId());
@@ -179,10 +216,15 @@ public class HomecomingService {
             if (ledger.isEmpty()) {
                 ledger = buildCandidateLedger(input, effectiveParams, homeNest);
             }
+            landingCandidates = buildLandingCandidates();
+            corridorHalfWidthM = landingCorridorHalfWidthM();
         }
 
+        // 11-16 序号 3-1：第三级落点由本层从 emergency_landing_point 台账组装候选点
+        // （距航道垂距与水陆由本层算好）后注入，算法层只做否决筛除、不读台账。
         HomecomingDecision decision = HomecomingReview.review(
-                input, effectiveParams, ledger, previousTierOf(input.orderId()));
+                input, effectiveParams, ledger, previousTierOf(input.orderId()),
+                landingCandidates, corridorHalfWidthM);
         decision = reserveForcedStop(decision, effectiveParams, input.orderId());
         rememberTier(input.orderId(), decision.tier());
 
@@ -244,6 +286,132 @@ public class HomecomingService {
             ledger.add(new NestCandidate(nest.getNestId(), totalSlots, occupied, returnEnergy));
         }
         return ledger;
+    }
+
+    // ─────────────────── 第三级迫降点候选台账（3-1） ───────────────────
+
+    /**
+     * 第三级迫降点候选：把 {@code emergency_landing_point} 台账转成算法层候选点，
+     * <b>距航道垂距与水陆二值都在本层算好</b>（算法层零 DB／零几何，见 {@link EmergencyLandingCandidate}）。
+     *
+     * <p><b>距航道垂距</b>：取中心线台账 {@link CenterlineLedger#load()} 的投影横偏
+     * {@link WaterwayGeometry.Projection#crossTrackDistanceM()}。几何不可用（台账缺表、折线不足）
+     * 时留 {@code null}，由选择器判「不可算」而不取 0——取 0 会把任意点都算成「贴着航道」。
+     *
+     * <p><b>水陆二值</b>：主选取 {@code surface_type} 列（019 扩列，中文词「水面」／「陆地」）；
+     * 列为空时按 1-6 的兜底口径用中心线垂距纯几何判——{@code ≤ 江面半宽 250 m → 水面}。
+     * 两路都拿不到时留 {@code null}，同样交选择器判不可算，<b>不默认水面</b>。
+     *
+     * <p><b>读不到台账不是错误</b>：表未建、查询异常一律按「无候选」退化并告警一次，
+     * 第三级回到「{@code targetId=null} ＋ reason」的既有语义，不阻断返航判定。
+     */
+    private List<EmergencyLandingCandidate> buildLandingCandidates() {
+        if (landingPointMapper == null) {
+            return List.of();
+        }
+        List<EmergencyLandingPointEntity> rows;
+        try {
+            rows = landingPointMapper.selectList(new LambdaQueryWrapper<EmergencyLandingPointEntity>()
+                    .orderByAsc(EmergencyLandingPointEntity::getElpId));
+        } catch (RuntimeException e) {
+            log.warn("迫降点台账不可读，第三级按无候选退化：{}", e.getMessage());
+            return List.of();
+        }
+        if (rows == null || rows.isEmpty()) {
+            return List.of();
+        }
+        WaterwayGeometry geometry = waterwayGeometry();
+        List<EmergencyLandingCandidate> out = new ArrayList<>(rows.size());
+        for (EmergencyLandingPointEntity row : rows) {
+            if (row == null || row.getElpId() == null || row.getElpId().isBlank()
+                    || row.getLon() == null || row.getLat() == null) {
+                log.warn("跳过无标识或无坐标的迫降点台账行，不臆造落点 elpId={}",
+                        row == null ? null : row.getElpId());
+                continue;
+            }
+            GeoPoint position = new GeoPoint(row.getLon().doubleValue(), row.getLat().doubleValue());
+            Double distanceToCenterlineM = crossTrackDistanceM(geometry, position);
+            out.add(new EmergencyLandingCandidate(
+                    row.getElpId(),
+                    position,
+                    distanceToCenterlineM,
+                    surfaceOf(row, distanceToCenterlineM),
+                    isAvailable(row)));
+        }
+        return out;
+    }
+
+    /** 中心线几何；未装配或不可用时返回 {@code null}（不抛，交调用方降级）。 */
+    private WaterwayGeometry waterwayGeometry() {
+        if (centerlineLedger == null) {
+            return null;
+        }
+        try {
+            return centerlineLedger.load();
+        } catch (RuntimeException e) {
+            log.warn("中心线台账不可用，迫降点垂距与兜底水陆判定按不可算：{}", e.getMessage());
+            return null;
+        }
+    }
+
+    private static Double crossTrackDistanceM(WaterwayGeometry geometry, GeoPoint point) {
+        if (geometry == null) {
+            return null;
+        }
+        double distance = geometry.project(point.lon(), point.lat()).crossTrackDistanceM();
+        return Double.isFinite(distance) ? distance : null;
+    }
+
+    /** 水陆二值：台账列优先，为空时按 1-6 兜底用江面半宽纯几何判，两路都不可用返回 null。 */
+    private static String surfaceOf(EmergencyLandingPointEntity row, Double distanceToCenterlineM) {
+        String labeled = row.getSurfaceType();
+        if (labeled != null && !labeled.isBlank()) {
+            return labeled.trim();
+        }
+        if (distanceToCenterlineM == null) {
+            return null;
+        }
+        return distanceToCenterlineM <= FALLBACK_RIVER_HALF_WIDTH_M
+                ? EmergencyLandingCandidate.SURFACE_WATER
+                : EmergencyLandingCandidate.SURFACE_LAND;
+    }
+
+    /** 台账状态是否可用：{@code null} 沿用机巢侧同口径视作可用（建表默认值即「可用」）。 */
+    private static boolean isAvailable(EmergencyLandingPointEntity row) {
+        return row.getStatus() == null || ELP_STATUS_AVAILABLE.equals(row.getStatus());
+    }
+
+    /**
+     * 距航道半宽阈值（{@code e10LandingCorridorHalfWidthM}，018 灌 500）。
+     *
+     * <p><b>缺键返回 {@code null} 而不是回落 500</b>：回落等于把「配置没灌」伪装成「按 500 判」，
+     * 现场看到的是所有候选被判不可算、第三级恒为无点，却没有任何「参数缺失」的信号。
+     * 返回 null 时选择器会逐项记 {@code UNCOMPUTABLE}，reason 里能看见否决原因。
+     */
+    private Double landingCorridorHalfWidthM() {
+        if (sysParamLoader == null) {
+            return null;
+        }
+        String raw = sysParamLoader.get(LANDING_CORRIDOR_KEY);
+        if (raw == null || raw.isBlank()) {
+            if (!corridorMissingWarned) {
+                corridorMissingWarned = true;
+                log.warn("迫降点走廊阈值缺失（{}），第三级候选一律按不可算处理；"
+                        + "请灌 018_e10_hyst_slot_landing.sql", LANDING_CORRIDOR_KEY);
+            }
+            return null;
+        }
+        try {
+            double value = Double.parseDouble(raw.trim());
+            if (Double.isFinite(value) && value > 0.0) {
+                return value;
+            }
+            log.warn("迫降点走廊阈值非正或非有限（{}={}），按不可算处理", LANDING_CORRIDOR_KEY, raw);
+            return null;
+        } catch (NumberFormatException e) {
+            log.warn("迫降点走廊阈值无法解析（{}={}），按不可算处理", LANDING_CORRIDOR_KEY, raw);
+            return null;
+        }
     }
 
     /** ETA 缺失时按「当前位置 → 原巢」距离／巡航速度补齐；补不齐则保持 null（时隙判据不可算）。 */
@@ -332,7 +500,8 @@ public class HomecomingService {
             DroneEntity drone, NestEntity homeNest) {
         OrderTaskEntity order = orderTaskMapper.selectById(input.orderId());
         if (!isExecutable(decision)) {
-            log.warn("决策不完整（缺 targetId），不落执行：orderId={} tier={}；按 MEDIUM.23 只保留结论与订单台账",
+            log.warn("决策不完整（缺目标标识或迫降点坐标），不落执行：orderId={} tier={}；"
+                            + "按 MEDIUM.23 只保留结论与订单台账",
                     input.orderId(), decision.tier().getValue());
             settleCargoAndOrder(decision, input, order);
             return;
@@ -342,10 +511,21 @@ public class HomecomingService {
         settleCargoAndOrder(decision, input, order);
     }
 
-    /** 第一／二级须有落点标识；第三级 L4 迫降点未出点时不得执行。 */
-    private static boolean isExecutable(HomecomingDecision decision) {
+    /**
+     * 执行前置：第一／二级须有落点标识；第三级须<b>标识与坐标同时具备</b>。
+     *
+     * <p>3-1 之后第三级能拿到迫降点标识，只看标识不再够——只有标识无坐标时
+     * {@code toRoutePlannerAndEnergy} 会因为目标点不可得而跳过航迹生成，
+     * 但 {@code toFlightController} 仍会把无人机状态置为「迫降」，
+     * 形成「状态已迫降、航迹没生成」的脱节。此处把两态一并作为执行前置。
+     */
+    static boolean isExecutable(HomecomingDecision decision) {
         String targetId = decision.targetId();
-        return targetId != null && !targetId.isBlank();
+        if (targetId == null || targetId.isBlank()) {
+            return false;
+        }
+        return decision.tier() != HomecomingTier.EMERGENCY_LAND_FIELD
+                || decision.targetPosition() != null;
     }
 
     /**

@@ -10,4 +10,7 @@ dependencies {
     implementation(libs.bundles.web.common)
     api(project(":wl-m3-rendezvous"))
     implementation(libs.bundles.mq)
+    // 3-1：模块层要验「台账 → 候选点 → 航迹下发」的接线，Mapper／端口用 mock 替身，
+    // 与 wl-m4-monitor 同口径只引 mockito-core（本仓无 mockito-junit-jupiter）。
+    testImplementation(libs.mockito.core)
 }
