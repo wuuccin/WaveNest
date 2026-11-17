@@ -66,14 +66,21 @@ class HomecomingServiceTest {
         assertEquals(2, d.candidateAudit().size(), "审计表要能逐项展示候选打叉");
     }
 
-    /** 第三级：判定层不得臆造迫降点，目标交 B 组精算 */
+    /**
+     * 第三级：<b>无依赖构造下没有台账可读</b>，判定层不得臆造迫降点，目标留空。
+     *
+     * <p>3-1 之后第三级在<b>有台账</b>时能给出标识与坐标（见
+     * {@link HomecomingLandingWiringTest}）；本用例钉的是另一半——拿不到台账时
+     * 仍必须回到「null ＋ reason」的两态退化，而不是补一个猜测的落点。
+     */
     @Test
     void thirdTier_shouldNotInventLandingPoint() {
         HomecomingDecision d = service.reviewAndDecide(input(30.0), params(1_000L), List.of());
 
         assertEquals(HomecomingTier.EMERGENCY_LAND_FIELD, d.tier());
-        assertNull(d.targetId(), "迫降点待 B 组精算或应急迫降点台账给出");
+        assertNull(d.targetId(), "无台账候选 ⇒ 留空；有台账时才由台账给出标识");
         assertNull(d.targetPosition());
         assertFalse(d.needSlotRequest(), "迫降野外不占位");
+        assertTrue(d.reason().contains("无可用迫降点"), "退化原因要能落审计：" + d.reason());
     }
 }
