@@ -259,7 +259,7 @@ class AlertDrivenRescheduleTest {
                 .doesNotThrowAnyException();
         // 缺订单号的偏航：跳过不抛
         assertThatCode(() -> dispatcher.route(new AlertEventMessage(
-                "EV-X2", "偏航", "严重", 1, DRONE, null, NOW, 99.0, 30.0)))
+                "EV-X2", "偏航", "严重", 1, "UAV-NOT-BOUND", null, NOW, 99.0, 30.0)))
                 .doesNotThrowAnyException();
 
         // 队列仍然活着：随后的合法消息正常处理
@@ -340,6 +340,7 @@ class AlertDrivenRescheduleTest {
                 .isEqualTo(OrderStatus.ACCEPTED_WAIT_WAKE.getValue());
 
         // ② 气象解除 → 边沿命中 → 逐单重入队并续编排（重派到「已派发」）
+        waker.tick();
         gateService.clear(GateSource.AUTO);
         waker.tick();
         OrderTaskEntity dispatched = orderTaskMapper.selectById(orderId);

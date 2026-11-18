@@ -69,6 +69,7 @@ public class TelemetryTaskStateService {
 
         if (current == TaskStatus.DISPATCHED && state.geometryUsable()) {
             transition(order, TaskStatus.DISPATCHED, TaskStatus.OUTBOUND, state.timestamp(), "遥测确认起飞");
+            markCargoLoaded(order);
             current = TaskStatus.OUTBOUND;
         }
         if (current != TaskStatus.OUTBOUND) return null;
@@ -88,6 +89,20 @@ public class TelemetryTaskStateService {
                     .set("eta_ts", etaTime));
         }
         return eta;
+    }
+
+    /**
+     * 真实遥测确认起飞时，把仍在货巢待装的货物绑定到执行机。
+     * M2 的时间推进器也执行同一幂等更新；这里补齐 M4 直接确认起飞的主链，
+     * 使后续的落巢回收与投放回执拥有合法的货物前态。
+     */
+    private void markCargoLoaded(OrderTaskEntity order) {
+        goods.update(null, new UpdateWrapper<GoodsEntity>()
+                .eq("order_id", order.getOrderId())
+                .eq("status", GoodsStatus.READY.getValue())
+                .set("status", GoodsStatus.LOADED.getValue())
+                .set("drone_id", order.getDroneId())
+                .set("location", "空中"));
     }
 
     public FlightProgress latestProgress(String orderId) {

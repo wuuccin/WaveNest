@@ -23,6 +23,7 @@ const errors = []
 page.on('pageerror', error => errors.push(error.message))
 
 async function caption(title, explanation, facts = [], ms = 3200) {
+  console.log(`STAGE=${title}`)
   await page.evaluate(({ title, explanation, facts }) => {
     let overlay = document.getElementById('live-video-caption')
     if (!overlay) {
@@ -52,6 +53,14 @@ async function waitForOrderState(label, title, explanation, facts = []) {
   await caption(title, explanation, [`实时状态 ${label}`, ...facts], 4600)
 }
 
+async function orderSnapshot(id) {
+  return page.evaluate(async orderId => {
+    const response = await fetch('/api/orders')
+    if (!response.ok) return null
+    return (await response.json()).orders.find(item => item.orderId === orderId) || null
+  }, id)
+}
+
 let video
 let orderId = ''
 try {
@@ -66,15 +75,15 @@ try {
   })
   await caption(
     'WaveNest · 前后端实时联通演示',
-    '当前画面连接最新 develop 的正式 Spring Boot 服务，数据来源保持为“实时服务”。',
-    ['前端 5173', '后端 8080', 'WebSocket 已连接', 'RabbitMQ / Redis 健康', `仿真航向 ${reset.cog}°`],
+    '当前画面连接本地正式 Spring Boot 服务和独立演示库，数据来源保持为“实时服务”。',
+    ['前端 5174', '后端 8081', 'WebSocket 已连接', 'RabbitMQ / Redis 健康', `仿真航向 ${reset.cog}°`],
     4300
   )
 
   await page.getByRole('link', { name: '船员下单' }).click()
   const form = page.locator('.form-panel .crew-form')
   await form.getByLabel('目标船舶 MMSI（9 位数字）').fill('123456789')
-  await form.getByLabel('配送品类').locator('option', { hasText: '应急药品' }).waitFor({ timeout: 15000 })
+  await form.getByLabel('配送品类').locator('option', { hasText: '应急药品' }).waitFor({ state: 'attached', timeout: 15000 })
   await form.getByLabel('配送品类').selectOption('应急药品')
   await form.getByLabel('物资重量（kg）').fill('1.5')
   await form.getByLabel('紧急程度').selectOption('紧急')
@@ -88,9 +97,36 @@ try {
   const feedback = form.locator('.action-feedback')
   await feedback.getByText(/已由服务接收/).waitFor({ timeout: 20000 })
   const feedbackText = await feedback.textContent()
-  orderId = feedbackText.match(/ORD-[\d-]+/)?.[0] || ''
+  orderId = feedbackText.match(/ORD-[A-Za-z0-9-]+/)?.[0] || ''
   if (!orderId) throw new Error(`未从下单反馈取得订单号：${feedbackText}`)
 
+  const orderBeforeCargo = await page.evaluate(async id => {
+    const listResponse = await fetch('/api/orders')
+    if (!listResponse.ok) throw new Error(`GET /api/orders ${listResponse.status}`)
+    const order = (await listResponse.json()).orders.find(item => item.orderId === id)
+    if (!order?.cargoNestId) throw new Error(`订单未返回货巢：${id}`)
+    const response = await fetch(`/api/orders/${encodeURIComponent(id)}/cargo-ready`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cargoNestId: order.cargoNestId })
+    })
+    if (!response.ok) throw new Error(`POST /api/orders/${id}/cargo-ready ${response.status}`)
+    const receipt = await response.json()
+    if (!receipt.accepted) throw new Error(`货到巢登记失败：${receipt.reasonCode || receipt.message}`)
+    return { cargoNestId: order.cargoNestId, receipt }
+  }, orderId)
+  await caption(
+    '确认货物已到巢',
+    '正式服务按货到巢关等待货物确认；确认后，后端自动继续组批、选机、求解会面点和派发。',
+    [`订单 ${orderId}`, `货巢 ${orderBeforeCargo.cargoNestId || '后端已记录'}`, 'POST cargo-ready 200'],
+    3600
+  )
+
+  await page.waitForFunction(async id => {
+    const response = await fetch('/api/orders')
+    if (!response.ok) return false
+    const order = (await response.json()).orders.find(item => item.orderId === id)
+    return Boolean(order?.droneId && order?.meetTime && order?.meetPoint)
+  }, orderId, { timeout: 60000, polling: 1000 })
   const orderPayload = await page.evaluate(async id => {
     const response = await fetch('/api/orders')
     if (!response.ok) throw new Error(`GET /api/orders ${response.status}`)
@@ -125,7 +161,7 @@ try {
 
   await page.getByRole('link', { name: '运行总览', exact: true }).click()
   await page.locator('.map-panel').first().waitFor()
-  await page.locator('.mission-facts').getByText(taskPayload.droneId, { exact: true }).waitFor({ timeout: 12000 })
+  await page.locator('.mission-facts').waitFor({ timeout: 30000 })
   await caption(
     '第 3 步 · 实时监控船舶和无人机',
     `M1 仿真器持续把 AIS、无人机遥测和气象消息送入 RabbitMQ，再由 WebSocket 推到地图。任务卡和地图已绑定执行机 ${taskPayload.droneId}。`,
@@ -145,8 +181,9 @@ try {
     '后端 FlightPhaseAdvancer 写入 task_log，并通过 WebSocket 广播“去程中”。',
     ['已派发 → 去程中']
   )
+  const reviewBefore = (await orderSnapshot(orderId))?.safetyReview?.eventTs ?? 0
   const weather = await page.evaluate(async () => {
-    const response = await fetch('/sim/weather/inject?wind=16&dir=135&persist=true', { method: 'POST' })
+    const response = await fetch('/sim/weather/inject?wind=18&dir=135&persist=true', { method: 'POST' })
     if (!response.ok) throw new Error(`POST /sim/weather/inject ${response.status}`)
     return response.json()
   })
@@ -162,13 +199,14 @@ try {
     const data = await response.json()
     return ['熔断中', 'BROKEN'].includes(data.dispatchGate?.gateStatus)
   }, null, { timeout: 25000, polling: 1000 })
-  await page.waitForFunction(async id => {
+  await page.waitForFunction(async ({ id, reviewBefore }) => {
     const response = await fetch('/api/orders')
     if (!response.ok) return false
     const order = (await response.json()).orders.find(item => item.orderId === id)
-    return Boolean(order?.safetyReview?.verdict)
-  }, orderId, { timeout: 30000, polling: 1000 })
-  await caption('第 6 步 · 查看在飞安全复核', '后端订单视图已返回复核结论；调度台订单进展展示原始结论。', [`订单 ${orderId}`], 5000)
+    return order?.safetyReview?.verdict === '终止'
+      && Number(order.safetyReview.eventTs) > Number(reviewBefore)
+  }, { id: orderId, reviewBefore }, { timeout: 60000, polling: 1000 })
+  await caption('第 6 步 · 查看在飞安全复核', '超限后收到新的“终止”复核结论，原机中止本次会面并执行返航。', [`订单 ${orderId}`, '复核结论 终止'], 5000)
   const cleared = await page.evaluate(async () => {
     const response = await fetch('/sim/weather/bias', { method: 'DELETE' })
     if (!response.ok) throw new Error(`DELETE /sim/weather/bias ${response.status}`)
@@ -183,10 +221,32 @@ try {
   await caption('第 7 步 · 风况回落与熔断解除', '已清除注入偏置，后端订单快照确认派单闸门恢复正常。',
     [`偏置清除 ${Boolean(cleared)}`, 'GET /api/orders 确认闸门正常'], 5000)
 
-  await waitForOrderState('末段交接中', '等待重新派单和交接',
-    '后端已把订单推进到末段交接；本段必须以真实状态确认。', ['订单进入末段交接中'])
+  await page.waitForFunction(async id => {
+    const order = await fetch('/api/orders').then(response => response.json()).then(data => data.orders.find(item => item.orderId === id))
+    return ['HANDOVER', 'RETURNING', 'FINISHED'].includes(order?.orderStatus)
+  }, orderId, { timeout: 180000, polling: 1000 })
+  let current = await orderSnapshot(orderId)
+  if (current?.orderStatus === 'RETURNING' && current?.safetyReview?.verdict === '终止') {
+    const goodsId = `G-${orderId}-1`
+    await page.evaluate(async ({ orderId, goodsId, uavId, nestId }) => {
+      const response = await fetch(`/sim/recycle?orderId=${encodeURIComponent(orderId)}&goodsId=${encodeURIComponent(goodsId)}&uavId=${encodeURIComponent(uavId)}&nestId=${encodeURIComponent(nestId)}`, { method: 'POST' })
+      if (!response.ok) throw new Error(`POST /sim/recycle ${response.status}`)
+    }, { orderId, goodsId, uavId: taskPayload.droneId, nestId: current.cargoNestId })
+    await caption('原机返航后确认落巢回收', '当前安全处置已经选择原机返航。真实回收确认通过 data.uav.recycle 消费链写回货物状态，订单随后回到调度队列。', [`原机 ${taskPayload.droneId}`, `落巢 ${current.cargoNestId}`, 'data.uav.recycle'], 5000)
+    await page.waitForFunction(async id => {
+      const order = await fetch('/api/orders').then(response => response.json()).then(data => data.orders.find(item => item.orderId === id))
+      return Boolean(order?.droneId && ['DISPATCHED', 'OUTBOUND', 'HANDOVER'].includes(order.orderStatus))
+    }, orderId, { timeout: 120000, polling: 1000 })
+  }
+  await waitForOrderState('末段交接中', '重新派单后等待交接',
+    '风况恢复后，后端已重新派发可用无人机并推进到末段交接。', ['重派交接'])
+  current = await orderSnapshot(orderId)
+  await page.evaluate(async ({ orderId, uavId }) => {
+    const response = await fetch(`/sim/delivery?taskId=${encodeURIComponent(orderId)}&orderId=${encodeURIComponent(orderId)}&uavId=${encodeURIComponent(uavId)}`, { method: 'POST' })
+    if (!response.ok) throw new Error(`POST /sim/delivery ${response.status}`)
+  }, { orderId, uavId: taskPayload.droneId })
   await waitForOrderState('返航中', '交接完成后无人机返航',
-    '后端已广播返航状态。', ['末段交接中 → 返航中'])
+    '真实投放回执已由后端消费，订单进入返航状态。', ['data.uav.delivery'])
   await waitForOrderState('已完成', '订单完成',
     '后端已广播订单完成状态。', ['返航中 → 已完成', `订单 ${orderId}`])
 

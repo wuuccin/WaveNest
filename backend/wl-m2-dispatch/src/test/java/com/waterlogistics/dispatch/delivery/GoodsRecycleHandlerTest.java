@@ -4,11 +4,15 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.never;
 
 import com.waterlogistics.contract.mq.GoodsRecycleConfirmation;
 import com.waterlogistics.contract.state.GoodsStatus;
 import com.waterlogistics.contract.state.OrderStatus;
 import com.waterlogistics.dispatch.goods.GoodsLifecycleService;
+import com.waterlogistics.dispatch.plan.DispatchOrchestrator;
 import com.waterlogistics.dispatch.queue.TaskQueueService;
 import com.waterlogistics.storage.entity.OrderTaskEntity;
 import com.waterlogistics.storage.entity.TaskLogEntity;
@@ -19,6 +23,8 @@ import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * 落巢回收确认处理测试（11-07 弥补 D-03／D-09／D-16）。
@@ -57,6 +63,12 @@ class GoodsRecycleHandlerTest {
         public void recycle(String orderId, String goodsId, String droneId, String nestId) {
             recycleCalls++;
         }
+
+        @Override
+        public void readyAfterRecycle(String orderId, String nestId) {
+            assertEquals(ORDER, orderId);
+            assertEquals(NEST, nestId);
+        }
     }
 
     private final List<TaskLogEntity> logs = new ArrayList<>();
@@ -67,6 +79,10 @@ class GoodsRecycleHandlerTest {
     private String orderStatus = OrderStatus.RETURNING.getValue();
 
     private GoodsRecycleHandler handler() {
+        return handler(null);
+    }
+
+    private GoodsRecycleHandler handler(DispatchOrchestrator orchestrator) {
         OrderTaskMapper orderMapper = (OrderTaskMapper) Proxy.newProxyInstance(
                 OrderTaskMapper.class.getClassLoader(),
                 new Class<?>[]{OrderTaskMapper.class},
@@ -98,7 +114,7 @@ class GoodsRecycleHandlerTest {
                     }
                     return null;
                 });
-        return new GoodsRecycleHandler(lifecycle, orderMapper, logMapper, queueService());
+        return new GoodsRecycleHandler(lifecycle, orderMapper, logMapper, queueService(), orchestrator);
     }
 
     /** 只验证「是否发起重入队」，状态迁移本身由 {@code TaskQueueService} 自己的用例覆盖。 */
@@ -174,6 +190,23 @@ class GoodsRecycleHandlerTest {
 
         assertEquals(GoodsRecycleHandler.OK, handler().confirm(message(NEST)));
         assertEquals(List.of(ORDER), requeued, "回收确认后必须重入队，否则重派前置永远不过");
+    }
+
+    @Test
+    @DisplayName("回收事务提交后再派单，避免读到未提交的回收货物")
+    void confirm_shouldDispatchAfterCommit() {
+        DispatchOrchestrator orchestrator = mock(DispatchOrchestrator.class);
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            assertEquals(GoodsRecycleHandler.OK, handler(orchestrator).confirm(message(NEST)));
+            verify(orchestrator, never()).orchestrate(ORDER);
+            for (TransactionSynchronization callback : TransactionSynchronizationManager.getSynchronizations()) {
+                callback.afterCommit();
+            }
+            verify(orchestrator).orchestrate(ORDER);
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
     }
 
     @Test

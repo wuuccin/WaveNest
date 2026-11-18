@@ -66,9 +66,8 @@ import org.springframework.stereotype.Component;
  *       只丢弃该条，<b>不得中断整个队列</b>；</li>
  *   <li><b>只新增文件</b>：本包只调用既有服务的现有方法，不改重调度／返航复核的
  *       签名与构造器；</li>
- *   <li><b>返航复核按 eventId 去重</b>：同一告警一个 eventId 贯穿始终（G-01），
- *       级别变化会复用 id 再发——复核一条告警只做一次（内存去重，重启后最多重复一次，
- *       审计口径可接受）。</li>
+ *   <li><b>返航复核按 eventId 去重</b>；气象复核按 eventId＋级别去重，
+ *       使同一告警由警告升级到严重时能够重新判档，重复投递仍只处理一次。</li>
  * </ul>
  *
  * <p><b>前置依赖</b>：消息类型解析依赖统一 Jackson 转换器（组装层唯一，新 record 自动映射）；
@@ -176,10 +175,12 @@ public class AlertDrivenDispatcher {
         }
     }
 
-    /** 将气象超限告警交给在飞安全复核生产入口，并沿用事件占位的去重语义。 */
+    /** 气象告警升级必须再复核一次；同一级别的重复投递仍去重。 */
     private void handleInflightSafety(AlertEventMessage message) {
-        if (!claimEvent(message.eventId())) {
-            log.info("同一气象告警事件已复核过，去重跳过：eventId={}", message.eventId());
+        String reviewKey = message.eventId() + "|weather|" + message.level();
+        if (!claimEvent(reviewKey)) {
+            log.info("同一级别气象告警已复核过，去重跳过：eventId={} level={}",
+                    message.eventId(), message.level());
             return;
         }
         boolean done = false;
@@ -208,7 +209,7 @@ public class AlertDrivenDispatcher {
             done = true;
         } finally {
             if (!done) {
-                releaseEvent(message.eventId());
+                releaseEvent(reviewKey);
             }
         }
     }
