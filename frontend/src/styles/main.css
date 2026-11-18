@@ -533,7 +533,8 @@ footer { display: flex; justify-content: space-between; gap: 12px; padding: 15px
   .heading-actions { width: 100%; justify-content: space-between; }
   .dashboard-layout, .workspace-grid, .workspace-grid.focus-intervene, .crew-workspace, .replay-workspace { grid-template-columns: 1fr; }
   .focus-intervene .control-column, .focus-intervene .table-panel, .replay-panel, .replay-map-panel { grid-column: 1; grid-row: auto; }
-  .mission-column, .control-column { display: grid; grid-template-columns: 1fr 1fr; align-items: start; }
+  .mission-column, .control-column { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+  .mission-column > *, .control-column > * { min-width: 0; }
   .mission-column > *:last-child, .control-column > *:last-child { grid-column: 1 / -1; }
   .replay-panel { order: -1; }
   .replay-map-panel .map-shell { height: 470px; }
@@ -590,6 +591,7 @@ footer { display: flex; justify-content: space-between; gap: 12px; padding: 15px
   .map-summary > div { border-bottom: 1px solid #e5eded; }
   .map-summary > div:nth-child(2n) { border-right: 0; }
   .mission-column, .control-column { display: flex; }
+  .mission-column > *, .control-column > * { width: 100%; min-width: 0; }
   .demo-panel { display: block; padding: 16px; }
   .demo-actions { justify-content: flex-start; margin-top: 15px; }
   .demo-actions button { flex: 1 1 45%; }

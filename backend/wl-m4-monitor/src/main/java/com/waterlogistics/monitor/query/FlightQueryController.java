@@ -156,7 +156,7 @@ public final class FlightQueryController {
         try {
             OrderStatus.fromValue(row.getFromStatus());
             OrderStatus.fromValue(row.getToStatus());
-            return true;
+            return !row.getFromStatus().equals(row.getToStatus());
         } catch (IllegalArgumentException ignored) {
             return false;
         }

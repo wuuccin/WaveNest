@@ -145,36 +145,50 @@ try {
     '后端 FlightPhaseAdvancer 写入 task_log，并通过 WebSocket 广播“去程中”。',
     ['已派发 → 去程中']
   )
-  await waitForOrderState(
-    '末段交接中',
-    '第 5 步 · 到达会面时刻，进入末段交接',
-    '状态由后端按计算出的会面时刻自动推进，前端只负责接收并展示。',
-    ['去程中 → 末段交接中']
-  )
-  await waitForOrderState(
-    '返航中',
-    '第 6 步 · 交接完成，无人机返航',
-    '交接时长达到系统参数后，后端记录“交接完成”并广播返航状态。',
-    ['末段交接中 → 返航中']
-  )
-  await waitForOrderState(
-    '已完成',
-    '第 7 步 · 落巢完成，实时闭环结束',
-    '返航时长到期后，后端写入“落巢完成”，本次实时订单从下单走到了完成。',
-    ['返航中 → 已完成', `订单 ${orderId}`]
-  )
-
-  const turn = await page.evaluate(async id => {
-    const response = await fetch(`/sim/ship/turn?delta=45&orderId=${encodeURIComponent(id)}`, { method: 'POST' })
-    if (!response.ok) throw new Error(`POST /sim/ship/turn ${response.status}`)
+  const weather = await page.evaluate(async () => {
+    const response = await fetch('/sim/weather/inject?wind=16&dir=135&persist=true', { method: 'POST' })
+    if (!response.ok) throw new Error(`POST /sim/weather/inject ${response.status}`)
     return response.json()
-  }, orderId)
+  })
   await caption(
-    '附加验证 · 后端注入船舶变向',
-    '完整订单结束后，再真实调用仿真控制接口验证船舶变向；随后产生的新 AIS 会实时更新轨迹。',
-    [`turnCount ${turn.turnCount}`, `新航向 ${turn.newCog}°`, `triggerMode ${turn.triggerMode}`],
+    '第 5 步 · 飞行中注入风速突变',
+    '原机处于去程中时，气象仿真接口注入超限风速；等待后端告警和安全处置。',
+    [`风速 ${weather.windMs} m/s`, `风向 ${weather.dirDeg}°`, `发布 ${weather.publishedCount} 个网格点`],
     6500
   )
+  await page.waitForFunction(async () => {
+    const response = await fetch('/api/orders')
+    if (!response.ok) return false
+    const data = await response.json()
+    return ['熔断中', 'BROKEN'].includes(data.dispatchGate?.gateStatus)
+  }, null, { timeout: 25000, polling: 1000 })
+  await page.waitForFunction(async id => {
+    const response = await fetch('/api/orders')
+    if (!response.ok) return false
+    const order = (await response.json()).orders.find(item => item.orderId === id)
+    return Boolean(order?.safetyReview?.verdict)
+  }, orderId, { timeout: 30000, polling: 1000 })
+  await caption('第 6 步 · 查看在飞安全复核', '后端订单视图已返回复核结论；调度台订单进展展示原始结论。', [`订单 ${orderId}`], 5000)
+  const cleared = await page.evaluate(async () => {
+    const response = await fetch('/sim/weather/bias', { method: 'DELETE' })
+    if (!response.ok) throw new Error(`DELETE /sim/weather/bias ${response.status}`)
+    return response.json()
+  })
+  await page.waitForFunction(async () => {
+    const response = await fetch('/api/orders')
+    if (!response.ok) return false
+    const data = await response.json()
+    return ['正常', 'NORMAL'].includes(data.dispatchGate?.gateStatus)
+  }, null, { timeout: 25000, polling: 1000 })
+  await caption('第 7 步 · 风况回落与熔断解除', '已清除注入偏置，后端订单快照确认派单闸门恢复正常。',
+    [`偏置清除 ${Boolean(cleared)}`, 'GET /api/orders 确认闸门正常'], 5000)
+
+  await waitForOrderState('末段交接中', '等待重新派单和交接',
+    '后端已把订单推进到末段交接；本段必须以真实状态确认。', ['订单进入末段交接中'])
+  await waitForOrderState('返航中', '交接完成后无人机返航',
+    '后端已广播返航状态。', ['末段交接中 → 返航中'])
+  await waitForOrderState('已完成', '订单完成',
+    '后端已广播订单完成状态。', ['返航中 → 已完成', `订单 ${orderId}`])
 
   await page.getByRole('link', { name: '任务回放' }).click()
   const select = page.getByRole('combobox', { name: '回放任务' })
@@ -195,7 +209,7 @@ try {
   await slider.fill(String(max))
   await caption(
     '实时联通演示结束',
-    '本次已验证下单、自动派发、去程、末段交接、返航、完成、实时遥测、船舶变向和任务回放。',
+    '本次已验证下单、自动派发、去程、气象超限、返航、完成、实时遥测和任务回放。',
     [`订单 ${orderId}`, `无人机 ${taskPayload.droneId}`, '全程实时服务数据', '状态由后端广播'],
     6000
   )

@@ -101,7 +101,7 @@ export function createRealtime() {
   }
   function resetMock() {
     close(); status.mode = 'mock'; status.connection = '离线演示'; status.error = ''; mockStep = 0
-    orders.reset(); alert.clear(); events.clear(); ship.apply(null); drone.apply(null); planTrack.reset()
+    orders.reset(); alert.clear(); events.clear(); ship.apply(null); drone.apply(null); planTrack.reset(); weather.reset()
     SCENES[0].frames.forEach(([type, data]) => emit(type, data))
   }
   function nextMock() {
