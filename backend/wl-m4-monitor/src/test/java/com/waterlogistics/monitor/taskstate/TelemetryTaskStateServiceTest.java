@@ -38,6 +38,7 @@ class TelemetryTaskStateServiceTest {
     @Test
     void cleanedTelemetryUpdatesProgressAndEta() {
         Fixture fixture = new Fixture(TaskStatus.DISPATCHED);
+        fixture.goods.setStatus(GoodsStatus.READY.getValue());
         fixture.order.setGoodsType("应急药品");
         TelemetryState state = state();
         var context = context();
@@ -49,6 +50,8 @@ class TelemetryTaskStateServiceTest {
         assertEquals(measurement.progress(), fixture.service.latestProgress("ORDER-1").progress());
         assertEquals(eta, fixture.service.latestProgress("ORDER-1").eta());
         assertEquals(TaskStatus.OUTBOUND.getValue(), fixture.order.getStatus());
+        assertEquals(GoodsStatus.LOADED.getValue(), fixture.goods.getStatus(),
+                "遥测确认起飞须同步完成装机，后续回收才能消费合法前态");
         assertEquals(1, fixture.logs.size());
         assertEquals(1, fixture.etaWrites);
         // 起飞必须同时回写无人机态并广播订单视图：只落库不广播，界面会停在「已派发」
@@ -145,7 +148,11 @@ class TelemetryTaskStateServiceTest {
             });
             GoodsMapper cargo = proxy(GoodsMapper.class, (method, args) -> {
                 if (method.equals("selectList")) return List.of(goods);
-                if (method.equals("update")) { goods.setStatus(GoodsStatus.DELIVERED.getValue()); return 1; }
+                if (method.equals("update")) {
+                    goods.setStatus(GoodsStatus.READY.getValue().equals(goods.getStatus())
+                            ? GoodsStatus.LOADED.getValue() : GoodsStatus.DELIVERED.getValue());
+                    return 1;
+                }
                 throw new UnsupportedOperationException(method);
             });
             TaskLogMapper taskLogs = proxy(TaskLogMapper.class, (method, args) -> {

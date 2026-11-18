@@ -4,6 +4,7 @@ import com.waterlogistics.contract.mq.GoodsRecycleConfirmation;
 import com.waterlogistics.contract.state.GoodsStatus;
 import com.waterlogistics.contract.state.OrderStatus;
 import com.waterlogistics.dispatch.goods.GoodsLifecycleService;
+import com.waterlogistics.dispatch.plan.DispatchOrchestrator;
 import com.waterlogistics.dispatch.queue.TaskQueueService;
 import com.waterlogistics.storage.entity.OrderTaskEntity;
 import com.waterlogistics.storage.entity.TaskLogEntity;
@@ -18,6 +19,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * 落巢回收确认处理（11-07 弥补计划 D-03／D-09／D-16）。
@@ -63,14 +66,24 @@ public class GoodsRecycleHandler {
     private final OrderTaskMapper orderTaskMapper;
     private final TaskLogMapper taskLogMapper;
     private final TaskQueueService taskQueueService;
+    private final DispatchOrchestrator dispatchOrchestrator;
 
+    @org.springframework.beans.factory.annotation.Autowired
     public GoodsRecycleHandler(GoodsLifecycleService goodsLifecycleService,
             OrderTaskMapper orderTaskMapper, TaskLogMapper taskLogMapper,
-            TaskQueueService taskQueueService) {
+            TaskQueueService taskQueueService, DispatchOrchestrator dispatchOrchestrator) {
         this.goodsLifecycleService = goodsLifecycleService;
         this.orderTaskMapper = orderTaskMapper;
         this.taskLogMapper = taskLogMapper;
         this.taskQueueService = taskQueueService;
+        this.dispatchOrchestrator = dispatchOrchestrator;
+    }
+
+    /** 保留纯单元测试的无编排器构造。 */
+    public GoodsRecycleHandler(GoodsLifecycleService goodsLifecycleService,
+            OrderTaskMapper orderTaskMapper, TaskLogMapper taskLogMapper,
+            TaskQueueService taskQueueService) {
+        this(goodsLifecycleService, orderTaskMapper, taskLogMapper, taskQueueService, null);
     }
 
     /**
@@ -110,7 +123,7 @@ public class GoodsRecycleHandler {
         entry.setTs(LocalDateTime.ofInstant(Instant.ofEpochMilli(msg.ts()), DB_ZONE));
         taskLogMapper.insert(entry);
 
-        requeueAfterRecycle(order);
+        requeueAfterRecycle(order, msg.nestId());
         log.info("落巢回收确认完成：orderId={} goodsId={} uavId={} nestId={}",
                 msg.orderId(), msg.goodsId(), msg.uavId(), msg.nestId());
         return OK;
@@ -131,7 +144,7 @@ public class GoodsRecycleHandler {
      * <p>状态不在 {@link #REQUEUE_AFTER_RECYCLE} 内时只记日志、不动订单：
      * 正常交付后（已完成）的回收不走重派。
      */
-    private void requeueAfterRecycle(OrderTaskEntity order) {
+    private void requeueAfterRecycle(OrderTaskEntity order, String recoveredNestId) {
         OrderStatus status;
         try {
             status = OrderStatus.fromValue(order.getStatus());
@@ -146,7 +159,25 @@ public class GoodsRecycleHandler {
             return;
         }
         taskQueueService.requeue(order.getOrderId());
-        log.info("回收确认后订单回「待调度」，等待重派：orderId={} 原状态={}",
+        // 回收确认已经证明货物在系统机巢内，进入新派发周期时要以「已就绪」作前态。
+        // 仅对本次确认的同一货物执行条件更新，不允许把已交付或灭失货物回退。
+        goodsLifecycleService.readyAfterRecycle(order.getOrderId(), recoveredNestId);
+        // 回收发生在熔断解除之后时，解除边沿已经过去；只回待调度会永久搁置。
+        // 事务提交后再编排，避免编排读取到尚未提交的货物状态。
+        if (dispatchOrchestrator != null && TransactionSynchronizationManager.isSynchronizationActive()) {
+            String orderId = order.getOrderId();
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    try {
+                        dispatchOrchestrator.orchestrate(orderId);
+                    } catch (RuntimeException e) {
+                        log.warn("回收后自动重派失败，订单保留待调度供重试：orderId={}", orderId, e);
+                    }
+                }
+            });
+        }
+        log.info("回收确认后订单回「待调度」并安排提交后重派：orderId={} 原状态={}",
                 order.getOrderId(), status.getValue());
     }
 

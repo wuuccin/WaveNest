@@ -156,6 +156,11 @@ public class PredictionService {
      */
     private final Map<String, AisMessage> lastObservations = new ConcurrentHashMap<>();
 
+    /** 返回该船最近一次用于生成预测快照的真实 AIS 观测。 */
+    public Optional<AisMessage> observationOf(String mmsi) {
+        return Optional.ofNullable(lastObservations.get(mmsi));
+    }
+
     /**
      * 每船上一版观测的<b>对地航向</b>（度），供航向跳变判定。
      *

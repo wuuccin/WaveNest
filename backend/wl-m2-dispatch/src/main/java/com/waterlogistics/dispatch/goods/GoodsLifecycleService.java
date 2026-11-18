@@ -58,6 +58,19 @@ public class GoodsLifecycleService {
         requireOne(rows, orderId, "已装机→已回收");
     }
 
+    /** 回收确认与订单重入队后，把在货巢的货物标为下一次派发可装机。 */
+    public void readyAfterRecycle(String orderId, String nestId) {
+        if (nestId == null || nestId.isBlank()) {
+            throw new IllegalStateException("回收后缺货巢，不能重新备货：" + orderId);
+        }
+        int rows = goodsMapper.update(null, Wrappers.<GoodsEntity>lambdaUpdate()
+                .eq(GoodsEntity::getOrderId, orderId)
+                .eq(GoodsEntity::getStatus, GoodsStatus.RECYCLED.getValue())
+                .eq(GoodsEntity::getLocation, nestId)
+                .set(GoodsEntity::getStatus, GoodsStatus.READY.getValue()));
+        requireOne(rows, orderId, "已回收→已就绪");
+    }
+
     /**
      * 是否已有真实交付凭证（货物状态为「已交付」）。
      *

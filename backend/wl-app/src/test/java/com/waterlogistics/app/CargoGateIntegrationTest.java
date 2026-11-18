@@ -221,6 +221,12 @@ class CargoGateIntegrationTest {
     @Test
     @DisplayName("毒帧：坏字节帧进 AIS 队列一次即落 DLQ，源队列不重投")
     void poisonFrame_landsInDlqOnce() {
+        // 清理上一次开发运行遗留的死信，避免历史毒帧被本用例误取。
+        rabbitTemplate.execute(channel -> {
+            channel.queuePurge("wavenest.m2.data-ais.dlq");
+            channel.queuePurge("wavenest.m2.data-ais");
+            return null;
+        });
         byte[] poison = "{ not-a-valid-json".getBytes(java.nio.charset.StandardCharsets.UTF_8);
         // 默认交换 + 路由键=队列名，直投 AIS 源队列（不经 wavenest.data 主题）
         rabbitTemplate.send("", "wavenest.m2.data-ais", new Message(poison));

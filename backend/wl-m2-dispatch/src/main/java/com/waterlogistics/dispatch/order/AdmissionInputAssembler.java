@@ -241,8 +241,11 @@ public class AdmissionInputAssembler {
         // 只看弧长会把横偏离的船误判成段内）
         AdmissionPipeline.ShipObservation ship = snapshot.map(s -> {
             var current = s.points().get(0);
+            var observation = predictionService.observationOf(request.mmsi())
+                    .filter(ais -> ais.ts() == s.t0Ms());
             WaterwayGeometry.Projection projection = segmentGeometry.project(
-                    current.lon(), current.lat());
+                    observation.map(ais -> ais.lon()).orElse(current.lon()),
+                    observation.map(ais -> ais.lat()).orElse(current.lat()));
             boolean inSegment = projection.s() >= segmentStartS
                     && projection.s() <= segmentEndS
                     && Math.abs(projection.crossTrackDistanceM()) <= corridorHalfWidthM;

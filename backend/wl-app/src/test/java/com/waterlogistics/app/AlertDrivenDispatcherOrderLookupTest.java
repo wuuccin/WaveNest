@@ -172,6 +172,25 @@ class AlertDrivenDispatcherOrderLookupTest {
     }
 
     @Test
+    void weatherExceeded_warningEscalatesToCriticalWithSameEventId() {
+        when(inflightSafetyService.review(any())).thenReturn(Optional.of(weatherVerdict()));
+        AlertEventMessage critical = weatherAlert();
+        AlertEventMessage warning = new AlertEventMessage(
+                critical.eventId(), critical.alertType(), AlertLevel.WARN.getValue(),
+                5, DRONE, ORDER, critical.timestamp(), 9.0, 8.0);
+
+        dispatcher.route(warning);
+        dispatcher.route(critical);
+        dispatcher.route(critical);
+
+        ArgumentCaptor<InflightSafetyRequest> captor =
+                ArgumentCaptor.forClass(InflightSafetyRequest.class);
+        verify(inflightSafetyService, times(2)).review(captor.capture());
+        assertThat(captor.getAllValues()).extracting(InflightSafetyRequest::alertLevel)
+                .containsExactly(AlertLevel.WARN, AlertLevel.CRITICAL);
+    }
+
+    @Test
     void weatherExceeded_whenWindSpeedMissing_shouldPassNaNInsteadOfZero() {
         when(inflightSafetyService.review(any())).thenReturn(Optional.empty());
 
