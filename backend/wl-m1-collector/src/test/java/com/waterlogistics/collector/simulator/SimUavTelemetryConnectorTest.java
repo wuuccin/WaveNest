@@ -165,10 +165,11 @@ class SimUavTelemetryConnectorTest {
 
         assertTrue(eastOffsetMeters(lastTelemetryOf("UAV-01"), lastOf(referencePublisher, "UAV-01")) > 55.0,
                 "UAV-01 应被推开 60 m");
-        // 两台仿真器的位置噪声各自随机（1e-9°≈0.1 mm），容差按厘米给
-        assertEquals(0.0, metersBetween(lastTelemetryOf("UAV-02"), lastOf(referencePublisher, "UAV-02")), 1e-2,
+        // 噪声虽设为 1e-9°（≈0.1 mm），但坐标经 round6() 取 6 位小数，
+        // 末位舍入抖动 ±1e-6°≈0.11132 m，两台独立仿真的差最大即一个舍入阶；容差 0.2 m 覆盖该阶。
+        assertEquals(0.0, metersBetween(lastTelemetryOf("UAV-02"), lastOf(referencePublisher, "UAV-02")), 0.2,
                 "UAV-02 不应被带偏");
-        assertEquals(0.0, metersBetween(lastTelemetryOf("UAV-04"), lastOf(referencePublisher, "UAV-04")), 1e-2,
+        assertEquals(0.0, metersBetween(lastTelemetryOf("UAV-04"), lastOf(referencePublisher, "UAV-04")), 0.2,
                 "UAV-04 不应被带偏");
     }
 
