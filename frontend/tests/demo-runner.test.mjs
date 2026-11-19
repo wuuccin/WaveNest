@@ -17,7 +17,7 @@ function harness(timeoutMs = 100) {
     clearWeatherBias: async () => { clears += 1; return {} },
     orders: async () => ({ dispatchGate: { gateStatus } })
   }
-  const runner = createDemoRunner({ api, subscribe: listener => {
+  const runner = createDemoRunner({ api, dwellMs: { 1: 0, 3: 0, 5: 0 }, subscribe: listener => {
     listeners.add(listener)
     return () => listeners.delete(listener)
   }, connected: () => true, timeoutMs })
@@ -55,6 +55,8 @@ test('风况回落后确认闸门解除，再等待重派交接', async () => {
   await new Promise(resolve => setTimeout(resolve, 0))
   assert.equal(h.clears, 1)
   h.emit('weather', { windSpeedMs: 5 })
+  h.emit('weather', { windSpeedMs: 5 })
+  h.emit('weather', { windSpeedMs: 5 })
   h.setGateStatus('NORMAL')
   await new Promise(resolve => setTimeout(resolve, 1100))
   assert.equal(h.runner.state.step, 6)
@@ -79,4 +81,35 @@ test('缺少气象超限事件不能通过演示阶段', async () => {
   await run
   assert.equal(h.runner.state.step, 3)
   assert.match(h.runner.state.error, /第 3 段.*超时/)
+})
+
+test('回收和投放必须由页面按钮确认，天气回落必须连续三帧', async () => {
+  const h = harness(3000)
+  const { run } = await h.start()
+  h.emit('alarm', { orderId: 'O1', targetId: 'U1', alarmType: '气象超限' })
+  h.emit('drone_state', { uavId: 'U1', activeOrderId: 'O1', flightPhase: '返航中' })
+  await new Promise(resolve => setTimeout(resolve, 0))
+  h.emit('weather', { windSpeedMs: 5 })
+  h.emit('weather', { windSpeedMs: 9 })
+  h.emit('weather', { windSpeedMs: 5 })
+  h.emit('weather', { windSpeedMs: 5 })
+  h.setGateStatus('NORMAL')
+  await new Promise(resolve => setTimeout(resolve, 1100))
+  assert.equal(h.runner.state.step, 5)
+  h.emit('weather', { windSpeedMs: 5 })
+  await new Promise(resolve => setTimeout(resolve, 1100))
+  assert.equal(h.runner.state.step, 6)
+  h.emit('order_state', { orderId: 'O1', orderStatus: '待调度' })
+  h.emit('order_state', { orderId: 'O1', orderStatus: '已派发' })
+  h.emit('drone_state', { uavId: 'U2', activeOrderId: 'O1', flightPhase: '去程中' })
+  assert.equal(h.runner.state.step, 6)
+  h.runner.confirmRecycle()
+  await new Promise(resolve => setTimeout(resolve, 0))
+  assert.equal(h.runner.state.step, 7)
+  h.emit('order_state', { orderId: 'O1', orderStatus: '末段交接中' })
+  h.emit('order_state', { orderId: 'O1', orderStatus: '已完成' })
+  assert.equal(h.runner.state.completed, false)
+  h.runner.confirmDelivery()
+  await run
+  assert.equal(h.runner.state.completed, true)
 })

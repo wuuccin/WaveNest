@@ -244,6 +244,9 @@ h1, h2, p { margin: 0; }
 .candidate-row-reasons { margin: 3px 0 0; padding-left: 14px; color: #75513d; font-size: 10px; line-height: 1.4; }
 .candidate-result { margin: 6px 0 0; color: #284e57; font-size: 11px; line-height: 1.5; }
 .candidate-empty { color: #5b7479; font-size: 10px; }
+.demo-confirm-actions { display: grid; gap: 8px; margin: 12px 0; }
+.demo-confirm-actions button { min-height: 44px; width: 100%; font-weight: 800; }
+.resource-wait-notice { padding: 10px 12px; border: 1px solid #e8c585; border-radius: 7px; background: #fff8e9; color: #785015; font-weight: 700; line-height: 1.5; }
 .state-chip, .form-status, .count-badge { display: inline-flex; align-items: center; justify-content: center; min-height: 25px; padding: 0 9px; border-radius: 999px; color: var(--teal-dark); background: var(--teal-soft); font-size: 11px; font-weight: 750; white-space: nowrap; }
 .state-chip.success { color: #267759; background: #e5f4ec; }
 .state-chip.danger { color: #9f4047; background: #f9e7e7; }
