@@ -137,11 +137,12 @@ public final class RealtimeEventBridge {
                     durable = "true"),
             key = TopicName.ALERT_EVENT))
     public void onAlertEvent(AlertEventMessage event) {
+        AlertType type = AlertType.fromValue(event.alertType());
         endpoint.publish(WsFrameType.ALARM, new AlarmFrame(
-                AlertType.fromValue(event.alertType()),
+                type,
                 AlertLevel.fromValue(event.level()),
                 event.droneId(),
-                alertMessage(event),
+                alertMessage(type, event),
                 // 位置由告警发送侧（T1-3）写上；取不到就原样传 null，不补默认坐标。
                 event.lon(), event.lat(),
                 // 订单号：发送侧带了就用带上的；没带则按机号反查在飞订单（口径见 alertOrderIdOf）。
@@ -194,9 +195,30 @@ public final class RealtimeEventBridge {
         return flightPhaseAdvancer == null ? null : flightPhaseAdvancer.activeOrderIdOf(droneId);
     }
 
-    private static String alertMessage(AlertEventMessage event) {
-        StringBuilder text = new StringBuilder("无人机 ")
-                .append(event.droneId()).append("：").append(event.alertType());
+    /**
+     * 告警提示语：按告警的归属层级分流，层级取告警类型，不看机号是否为空。
+     *
+     * <p>订单级（等待货物到巢／等待资源／订单待处置）打在订单上，订单可能还没有绑定机号，
+     * 提示语只写订单号，不出现「无人机 null」；无人机级（失联／低电量／偏航／气象超限／
+     * 链路异常）打在无人机上，提示语必须带真实机号，并附当前值与阈值。
+     *
+     * <p>等待货物到巢的宽限秒数由发送侧从 {@code sys_param.cargoLockTimeoutSec} 读好后
+     * 经 {@code thresholdValue} 传来，这里只负责拼接，不在出口层另取参数、也不写死。
+     */
+    private static String alertMessage(AlertType type, AlertEventMessage event) {
+        StringBuilder text = new StringBuilder();
+        if (type.isOrderLevel()) {
+            text.append("订单");
+            if (event.orderId() != null && !event.orderId().isBlank()) {
+                text.append(" ").append(event.orderId());
+            }
+            text.append("：").append(type.getValue());
+            if (type == AlertType.WAIT_CARGO_TIMEOUT && event.thresholdValue() != null) {
+                text.append("（宽限期 ").append(Math.round(event.thresholdValue())).append(" 秒）");
+            }
+            return text.toString();
+        }
+        text.append("无人机 ").append(event.droneId()).append("：").append(event.alertType());
         if (event.currentValue() != null) {
             text.append("，当前值 ").append(event.currentValue());
         }

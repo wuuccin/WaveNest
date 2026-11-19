@@ -1,8 +1,13 @@
 package com.waterlogistics.dispatch.alert;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import com.waterlogistics.contract.mq.AlertEventMessage;
 import com.waterlogistics.contract.order.OrderView;
@@ -10,8 +15,10 @@ import com.waterlogistics.contract.rest.WaitReason;
 import com.waterlogistics.contract.state.AlertType;
 import com.waterlogistics.contract.state.OrderStatus;
 import com.waterlogistics.contract.order.OrderStateChangedEvent;
+import com.waterlogistics.dispatch.queue.CargoNestGate;
 import com.waterlogistics.storage.entity.AlertEntity;
 import com.waterlogistics.storage.entity.OrderTaskEntity;
+import com.waterlogistics.storage.param.SysParamLoader;
 import com.waterlogistics.storage.repository.AlertMapper;
 import com.waterlogistics.storage.repository.OrderTaskMapper;
 import java.lang.reflect.Field;
@@ -37,6 +44,8 @@ class WaitReasonAlertEmitterTest {
     private final List<AlertEventMessage> mqMessages = new ArrayList<>();
     private OrderTaskEntity orderRow;
 
+    private SysParamLoader sysParamLoader;
+
     private WaitReasonAlertEmitter emitter;
 
     @BeforeEach
@@ -47,7 +56,10 @@ class WaitReasonAlertEmitterTest {
         orderRow.setOrderId(ORDER_ID);
         orderRow.setDroneId(DRONE_ID);
 
-        emitter = new WaitReasonAlertEmitter(alertMapper(), orderTaskMapper(), null) {
+        sysParamLoader = mock(SysParamLoader.class);
+        when(sysParamLoader.getInt(eq(CargoNestGate.LOCK_TIMEOUT_KEY), anyInt())).thenReturn(300);
+
+        emitter = new WaitReasonAlertEmitter(alertMapper(), orderTaskMapper(), null, sysParamLoader) {
             @Override
             protected void publish(AlertEventMessage message) {
                 mqMessages.add(message);
@@ -57,19 +69,33 @@ class WaitReasonAlertEmitterTest {
     }
 
     @Test
-    @DisplayName("订单进入 WAIT_CARGO 时写一条装货超时告警")
+    @DisplayName("订单进入 WAIT_CARGO 时写一条等待货物到巢告警")
     void waitCargo_shouldEmitCargoTimeoutAlert() {
         emitter.onOrderStateChanged(event(WaitReason.WAIT_CARGO));
 
         assertEquals(1, alertTable.size());
         AlertEntity row = alertTable.get(0);
         assertEquals(AlertType.WAIT_CARGO_TIMEOUT.getValue(), row.getAlertType());
+        assertEquals("等待货物到巢", row.getAlertType());
         assertEquals("警告", row.getLevel());
         assertEquals(ORDER_ID, row.getOrderId());
         assertEquals(DRONE_ID, row.getDroneId());
         assertEquals("未处理", row.getHandleStatus());
         assertEquals(1, mqMessages.size());
         assertEquals(AlertType.WAIT_CARGO_TIMEOUT.getValue(), mqMessages.get(0).alertType());
+    }
+
+    /** 宽限秒数从 sys_param 读出并随事件带出，展示名里不含秒数。 */
+    @Test
+    @DisplayName("等待货物到巢的宽限秒数取自 cargoLockTimeoutSec")
+    void waitCargo_shouldCarryGraceSecondsFromSysParam() {
+        when(sysParamLoader.getInt(eq(CargoNestGate.LOCK_TIMEOUT_KEY), anyInt())).thenReturn(180);
+
+        emitter.onOrderStateChanged(event(WaitReason.WAIT_CARGO));
+
+        assertEquals(180.0, mqMessages.get(0).thresholdValue().doubleValue(), 1e-9);
+        assertFalse(mqMessages.get(0).alertType().contains("180"),
+                "展示名不带宽限秒数：" + mqMessages.get(0).alertType());
     }
 
     @Test
@@ -81,6 +107,7 @@ class WaitReasonAlertEmitterTest {
         assertEquals(AlertType.WAIT_RESOURCE.getValue(), alertTable.get(0).getAlertType());
         assertEquals(1, mqMessages.size());
         assertEquals(AlertType.WAIT_RESOURCE.getValue(), mqMessages.get(0).alertType());
+        assertNull(mqMessages.get(0).thresholdValue(), "等待资源不带宽限秒数");
     }
 
     @Test
