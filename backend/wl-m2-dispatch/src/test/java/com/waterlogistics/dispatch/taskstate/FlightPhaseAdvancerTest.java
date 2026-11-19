@@ -2,12 +2,15 @@ package com.waterlogistics.dispatch.taskstate;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.waterlogistics.contract.order.OrderView;
 import com.waterlogistics.contract.state.OrderStatus;
 import com.waterlogistics.contract.order.OrderStateChangedEvent;
+import com.waterlogistics.dispatch.goods.GoodsLifecycleService;
 import com.waterlogistics.rendezvous.port.DroneContext;
 import com.waterlogistics.rendezvous.port.DroneContextPort;
 import com.waterlogistics.storage.entity.OrderTaskEntity;
@@ -177,6 +180,44 @@ class FlightPhaseAdvancerTest {
         // 交接时长取 sys_param 默认值 120 s（测试的 SysParamLoader 无库，走默认）
         assertEquals(meetMs + 120_000L, etas.get(etas.size() - 1),
                 "末值＝实际送达时刻＝会面时刻＋交接时长，实际序列 " + etas);
+    }
+
+    @Test
+    @DisplayName("★ 投放回执后同进程推进到终态：交付凭证落库即解开 D-14，无需重启（D-1 复核）")
+    void deliveryReceipt_shouldReachFinishedInSameProcess() throws Exception {
+        // 会面在 400 s 前：交接 120 s + 返航约 111 s，FINISHED 到期时刻早已过
+        long meetMs = NOW - 400_000L;
+        long createMs = NOW - 900_000L;
+        // 周期已推进到返航中，但交付凭证还没到（D-14 应把订单挡在返航中）
+        TaskLogEntity returningLog = flightLog("O1", OrderStatus.RETURNING, NOW - 270_000L);
+        List<TaskLogEntity> inserted = new ArrayList<>();
+
+        GoodsLifecycleService goods = mock(GoodsLifecycleService.class);
+        when(goods.isDelivered("O1")).thenReturn(false, true); // 回执前未交付，回执后已交付
+
+        FlightPhaseAdvancer advancer = advancer(
+                List.of(order(meetMs, createMs)),
+                dispatchLog(createMs),
+                List.of(returningLog),
+                inserted,
+                null);
+        // goods 服务是 @Autowired 字段，包内构造器不覆盖；用反射注入
+        var field = FlightPhaseAdvancer.class.getDeclaredField("goodsLifecycleService");
+        field.setAccessible(true);
+        field.set(advancer, goods);
+
+        // ① 回执未到：时间虽已过、仍须停在返航中（D-14 的真实约束）
+        advancer.tick();
+        assertTrue(inserted.stream().noneMatch(
+                        l -> OrderStatus.FINISHED.getValue().equals(l.getToStatus())),
+                "无真实交付凭证时不得推进到已完成");
+
+        // ② 回执到达：凭证已落库；同一进程下一拍即推进，无需重启
+        advancer.tick();
+        assertTrue(inserted.stream().anyMatch(
+                        l -> OrderStatus.FINISHED.getValue().equals(l.getToStatus())),
+                "投放回执写入交付凭证后，同一进程下一拍应推进到已完成");
+        assertEquals(0, advancer.trackedCycleCount(), "终态当拍淘汰缓存");
     }
 
     // ---------------------------------------------------------------- 被测对象装配
