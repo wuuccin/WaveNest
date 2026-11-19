@@ -23,6 +23,8 @@ export const api = {
   cargoTypes: (options = {}) => request('/api/cargo-types', { ...options }),
   // 货物到巢登记：必须带货物实际到达的巢编号，后端与订单货巢比对一致后才放行
   cargoReady: (orderId, cargoNestId) => request(`/api/orders/${encodeURIComponent(orderId)}/cargo-ready`, { method: 'POST', body: JSON.stringify({ cargoNestId }) }),
+  confirmRecycle: ({ orderId, goodsId, uavId, nestId }) => request(`/sim/recycle?${new URLSearchParams({ orderId, goodsId, uavId, nestId })}`, { method: 'POST' }),
+  confirmDelivery: ({ orderId, uavId }) => request(`/sim/delivery?${new URLSearchParams({ taskId: orderId, orderId, uavId })}`, { method: 'POST' }),
   replay: taskId => request(`/api/replay/${encodeURIComponent(taskId)}`),
   intervene: body => request('/api/intervene', { method: 'POST', body: JSON.stringify(body) }),
   resetShip: (options = {}) => request('/sim/ship/reset', { ...options, method: 'POST' }),

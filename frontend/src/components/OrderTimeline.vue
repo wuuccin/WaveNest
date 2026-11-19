@@ -28,4 +28,24 @@ async function registerCargoReady(){
   finally{cargoBusy.value=false}
 }
 </script>
-<template><section class="timeline-panel"><div class="section-heading"><span>订单进展</span><span class="eyebrow">ORDER STATUS</span></div><template v-if="current"><div class="order-summary"><div><small>{{ current.orderId }}</small><strong>{{ current.orderStatus }}</strong></div><span class="status-indicator" :class="{'done':current.orderStatus==='已完成','warn':['失败','异常终止'].includes(current.orderStatus)}"></span></div><div v-if="review" class="detail-text" aria-label="在飞安全复核结论">在飞安全复核：{{ review.verdict }}<span v-if="review.opType"> · {{ review.opType }}</span><time v-if="review.eventTs"> · {{ time(review.eventTs) }}</time></div><div class="detail-text">预计送达：{{ etaText(current) }}</div><div class="detail-text">货物所在巢：{{ current.cargoNestId || '未指定货巢' }}</div><div class="detail-text">配送品类：{{ cargoTypeText(current) }}</div><div v-if="current.orderStatus==='已受理待唤醒'" class="detail-text">{{ waitText(current) }} · {{ wakeText(current) }}</div><div v-if="cargoRegistrable" class="detail-text">货物实际到巢后登记，登记的巢必须与订单货巢一致：<button class="button-primary crew-button" type="button" :disabled="cargoBusy" @click="registerCargoReady">{{ cargoBusy?'登记中':'登记货物到巢' }}</button></div><p v-if="cargoMessage" class="action-feedback" role="status">{{ cargoMessage }}</p><div v-if="current.orderStatus==='失败'" class="detail-text">已迫降，待人工回收 · {{ current.emergencyLandingPoint ? `${current.emergencyLandingPoint.lon}, ${current.emergencyLandingPoint.lat}` : '迫降位置待更新' }}</div><div v-if="current.orderStatus==='异常终止'" class="detail-text">货物灭失，任务终止</div><div v-if="current.handoverPhase" class="detail-text">末段阶段：{{ current.handoverPhase }}</div><ol class="timeline"><li v-for="entry in entries" :key="entry.version"><span class="timeline-marker"></span><span class="timeline-label">{{ entry.status }}</span><time>{{ time(entry.ts) }}</time></li></ol></template><div v-else class="empty-state">暂无订单记录</div></section></template>
+<template>
+  <section class="timeline-panel">
+    <div class="section-heading"><span>订单进展</span><span class="eyebrow">ORDER STATUS</span></div>
+    <template v-if="current">
+      <div class="order-summary"><div><small>{{ current.orderId }}</small><strong>{{ current.orderStatus }}</strong></div><span class="status-indicator" :class="{'done':current.orderStatus==='已完成','warn':['失败','异常终止'].includes(current.orderStatus)}"></span></div>
+      <div v-if="review" class="detail-text" aria-label="在飞安全复核结论">在飞安全复核：{{ review.verdict }}<span v-if="review.opType"> · {{ review.opType }}</span><time v-if="review.eventTs"> · {{ time(review.eventTs) }}</time></div>
+      <div class="detail-text">预计送达：{{ etaText(current) }}</div>
+      <div class="detail-text">货物所在巢：{{ current.cargoNestId || '未指定货巢' }}</div>
+      <div class="detail-text">配送品类：{{ cargoTypeText(current) }}</div>
+      <div v-if="current.orderStatus==='已受理待唤醒' && current.waitReason==='WAIT_RESOURCE'" class="detail-text resource-wait-notice">等待人工处置：货物未到巢。请在调度台执行资源释放后重新调度。</div>
+      <div v-if="current.orderStatus==='已受理待唤醒' && current.waitReason!=='WAIT_RESOURCE'" class="detail-text">{{ waitText(current) }} · {{ wakeText(current) }}</div>
+      <div v-if="cargoRegistrable" class="detail-text">货物实际到巢后登记，登记的巢必须与订单货巢一致：<button class="button-primary crew-button" type="button" :disabled="cargoBusy" @click="registerCargoReady">{{ cargoBusy?'登记中':'登记货物到巢' }}</button></div>
+      <p v-if="cargoMessage" class="action-feedback" role="status">{{ cargoMessage }}</p>
+      <div v-if="current.orderStatus==='失败'" class="detail-text">已迫降，待人工回收 · {{ current.emergencyLandingPoint ? `${current.emergencyLandingPoint.lon}, ${current.emergencyLandingPoint.lat}` : '迫降位置待更新' }}</div>
+      <div v-if="current.orderStatus==='异常终止'" class="detail-text">货物灭失，任务终止</div>
+      <div v-if="current.handoverPhase" class="detail-text">末段阶段：{{ current.handoverPhase }}</div>
+      <ol class="timeline"><li v-for="entry in entries" :key="entry.version"><span class="timeline-marker"></span><span class="timeline-label">{{ entry.status }}</span><time>{{ time(entry.ts) }}</time></li></ol>
+    </template>
+    <div v-else class="empty-state">暂无订单记录</div>
+  </section>
+</template>
