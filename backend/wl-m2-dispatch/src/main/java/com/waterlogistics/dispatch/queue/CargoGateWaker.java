@@ -2,6 +2,7 @@ package com.waterlogistics.dispatch.queue;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.waterlogistics.contract.state.OrderStatus;
+import com.waterlogistics.dispatch.alert.ResourceWaitAlertPublisher;
 import com.waterlogistics.dispatch.reschedule.RescheduleService;
 import com.waterlogistics.dispatch.resource.OccupancySlotService;
 import com.waterlogistics.storage.entity.OccupancySlotEntity;
@@ -37,11 +38,14 @@ import org.springframework.stereotype.Component;
  *       不会重复占位；</li>
  *   <li>货未就绪且锁龄（now − slot.t1）超过 {@code sys_param.cargoLockTimeoutSec}，
  *       或锁已失踪（被终态释放/人工清库）→ {@link TaskQueueService#markResourceWaiting}
- *       释锁并置 WAIT_RESOURCE（事件照常发布，告警链路由宋冰鑫序号 2 消费）；</li>
+ *       释锁并置 WAIT_RESOURCE，同时发「订单待处置」告警（11-19 序号 1-2）；</li>
  *   <li>其余（货未就绪、锁未超时）→ 不动。</li>
  * </ol>
- * WAIT_RESOURCE 的订单本类<b>不自动重试</b>——资源释放时机不由本关掌握，
- * 交给告警/人工处置，避免对锁不到的巢每拍重放「重入队→门关→再延后」刷 task_log。</p>
+ * WAIT_RESOURCE 的订单<b>默认不自动重试</b>——资源释放时机不由本关掌握，
+ * 交给告警/人工处置（{@code POST /api/orders/{orderId}/resource-release}），
+ * 避免对锁不到的巢每拍重放「重入队→门关→再延后」刷 task_log。
+ * 无人值守场景可把 {@code wavenest.m2.resource-wait.auto-retry-enabled} 置 true：
+ * 每拍额外扫 WAIT_RESOURCE，仅当货物已就绪时重入队续编排（货未就绪不动，仍不刷日志）。</p>
  *
  * <p>纪律：自带单线程守护调度器（项目未开 {@code @EnableScheduling}）；
  * keyset 分页单页 200（同 WeatherClearWaker 的 MEDIUM.1 口径）；
@@ -62,6 +66,7 @@ public class CargoGateWaker {
     private final OccupancySlotService occupancySlotService;
     private final TaskQueueService taskQueueService;
     private final RescheduleService rescheduleService;
+    private final ResourceWaitAlertPublisher resourceWaitAlertPublisher;
 
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread thread = new Thread(r, "wavenest-cargo-gate-poll");
@@ -75,14 +80,20 @@ public class CargoGateWaker {
     @Value("${wavenest.m2.cargo-gate-poll-interval-sec:2}")
     private long pollIntervalSec;
 
+    /** 资源等待自动重试开关：默认关闭，无人值守时改配置开启，不改代码。 */
+    @Value("${wavenest.m2.resource-wait.auto-retry-enabled:false}")
+    private boolean resourceWaitAutoRetryEnabled;
+
     public CargoGateWaker(OrderTaskMapper orderTaskMapper, CargoNestGate cargoNestGate,
             OccupancySlotService occupancySlotService, TaskQueueService taskQueueService,
-            RescheduleService rescheduleService) {
+            RescheduleService rescheduleService,
+            ResourceWaitAlertPublisher resourceWaitAlertPublisher) {
         this.orderTaskMapper = orderTaskMapper;
         this.cargoNestGate = cargoNestGate;
         this.occupancySlotService = occupancySlotService;
         this.taskQueueService = taskQueueService;
         this.rescheduleService = rescheduleService;
+        this.resourceWaitAlertPublisher = resourceWaitAlertPublisher;
     }
 
     @PostConstruct
@@ -151,6 +162,51 @@ public class CargoGateWaker {
                 break;
             }
         }
+        if (resourceWaitAutoRetryEnabled) {
+            released += retryResourceWait();
+        }
+        return released;
+    }
+
+    /**
+     * 资源等待自动重试（开关开启时才执行）：扫 {@code ACCEPTED_WAIT_WAKE + WAIT_RESOURCE}，
+     * 货物已就绪的单重入队并续编排；货未就绪的单不动，因此不会每拍刷 {@code task_log}。
+     *
+     * @return 本拍自动放行的订单数
+     */
+    private int retryResourceWait() {
+        int released = 0;
+        String cursor = null;
+        while (true) {
+            List<OrderTaskEntity> page = orderTaskMapper.selectList(
+                    new LambdaQueryWrapper<OrderTaskEntity>()
+                            .eq(OrderTaskEntity::getStatus, OrderStatus.ACCEPTED_WAIT_WAKE.getValue())
+                            .eq(OrderTaskEntity::getWaitReason, "WAIT_RESOURCE")
+                            .gt(cursor != null, OrderTaskEntity::getOrderId, cursor)
+                            .orderByAsc(OrderTaskEntity::getOrderId)
+                            .last("LIMIT " + BACKLOG_PAGE_SIZE));
+            if (page == null || page.isEmpty()) {
+                break;
+            }
+            for (OrderTaskEntity order : page) {
+                String orderId = order.getOrderId();
+                try {
+                    if (cargoNestGate.isCargoReady(orderId, order.getCargoNestId())) {
+                        rescheduleService.reschedule(orderId);
+                        released++;
+                        log.info("资源等待自动重试放行：orderId={} cargoNestId={}（货已就绪）",
+                                orderId, order.getCargoNestId());
+                    }
+                } catch (Exception e) {
+                    log.warn("资源等待自动重试处理订单 {} 失败，跳过不影响其余：{}",
+                            orderId, e.getMessage());
+                }
+            }
+            cursor = page.get(page.size() - 1).getOrderId();
+            if (page.size() < BACKLOG_PAGE_SIZE || cursor == null) {
+                break;
+            }
+        }
         return released;
     }
 
@@ -169,6 +225,7 @@ public class CargoGateWaker {
         if (slot.isEmpty()) {
             log.info("货到巢关待货单锁失踪，转资源等待：orderId={}", orderId);
             taskQueueService.markResourceWaiting(orderId);
+            resourceWaitAlertPublisher.publishOrderPending(orderId, "货巢时隙锁已不存在");
             return false;
         }
         long lockAcquiredMs = slot.get().getT1().atZone(DB_ZONE).toInstant().toEpochMilli();
@@ -176,6 +233,7 @@ public class CargoGateWaker {
             log.info("货到巢关锁超时（锁龄 {}ms > {}ms），转资源等待：orderId={} slotId={}",
                     nowMs - lockAcquiredMs, timeoutMs, orderId, slot.get().getSlotId());
             taskQueueService.markResourceWaiting(orderId);
+            resourceWaitAlertPublisher.publishOrderPending(orderId, "货巢时隙锁宽限期到期");
         }
         return false;
     }

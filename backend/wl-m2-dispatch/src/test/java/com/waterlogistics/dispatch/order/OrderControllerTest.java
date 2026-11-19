@@ -10,10 +10,12 @@ import com.waterlogistics.contract.rest.GateSource;
 import com.waterlogistics.contract.rest.GateStatus;
 import com.waterlogistics.contract.state.OrderStatus;
 import com.waterlogistics.dispatch.gate.DispatchGateService;
+import com.waterlogistics.dispatch.queue.TaskQueueService;
 import com.waterlogistics.dispatch.record.TaskLogRecorder;
 import com.waterlogistics.storage.entity.OrderTaskEntity;
 import com.waterlogistics.storage.repository.GoodsMapper;
 import com.waterlogistics.storage.repository.OrderTaskMapper;
+import com.waterlogistics.storage.repository.TaskLogMapper;
 
 import java.lang.reflect.Proxy;
 import java.util.List;
@@ -46,7 +48,8 @@ class OrderControllerTest {
         admissionService = new OrderAdmissionService(new TaskLogRecorder(), event -> { },
                 null, null, null);
         controller = new OrderController(admissionService, gateService,
-                new CargoReadyService(stubGoodsMapper(), stubOrderMapper()));
+                new CargoReadyService(stubGoodsMapper(), stubOrderMapper(),
+                        new TaskQueueService(stubOrderMapper(), stubTaskLogMapper(), gateService)));
     }
 
     /** 全返回 null 的货物映射器桩（本类不断言货物路径）。 */
@@ -68,6 +71,19 @@ class OrderControllerTest {
                         return order;
                     }
                     return null;
+                });
+    }
+
+    /** {@code task_log} 桩：本类不断言留痕，仅满足构造依赖。 */
+    private static TaskLogMapper stubTaskLogMapper() {
+        return (TaskLogMapper) Proxy.newProxyInstance(
+                TaskLogMapper.class.getClassLoader(), new Class<?>[]{TaskLogMapper.class},
+                (proxy, method, args) -> {
+                    Class<?> rt = method.getReturnType();
+                    if (rt == int.class) {
+                        return 1;
+                    }
+                    return rt == boolean.class ? false : null;
                 });
     }
 

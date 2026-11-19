@@ -245,6 +245,20 @@ public class TaskQueueService {
      */
     @Transactional
     public void requeue(String orderId) {
+        requeue(orderId, "重入队");
+    }
+
+    /**
+     * 重入队（自定义留痕动作名）。
+     *
+     * <p>11-19 序号 1-2：人工受控动作「资源等待释放」也走同一条状态机，
+     * 只把 {@code task_log.op_type} 换成「资源释放-人工」，让事后按动作名即可
+     * 区分「会面放弃重入队」与「人工处置资源等待」，不另写一套状态迁移。
+     *
+     * @param opType {@code task_log.op_type}，调用方给中文动作名
+     */
+    @Transactional
+    public void requeue(String orderId, String opType) {
         OrderTaskEntity order = orderTaskMapper.selectById(orderId);
         if (order == null) {
             throw new IllegalStateException("订单不存在：" + orderId);
@@ -279,7 +293,7 @@ public class TaskQueueService {
         order.setMeetTime(null);
         order.setMeetLon(null);
         order.setMeetLat(null);
-        transition(order, current, OrderStatus.WAIT_DISPATCH, "重入队", null);
+        transition(order, current, OrderStatus.WAIT_DISPATCH, opType, null);
     }
 
     /**
