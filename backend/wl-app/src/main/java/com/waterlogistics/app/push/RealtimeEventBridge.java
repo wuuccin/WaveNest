@@ -3,6 +3,7 @@ package com.waterlogistics.app.push;
 import com.waterlogistics.contract.mq.AlertEventMessage;
 import com.waterlogistics.contract.mq.TopicName;
 import com.waterlogistics.contract.mq.UavTelemetry;
+import com.waterlogistics.contract.mq.WeatherData;
 import com.waterlogistics.contract.state.AlertLevel;
 import com.waterlogistics.contract.state.AlertType;
 import com.waterlogistics.contract.ws.AlarmFrame;
@@ -146,6 +147,28 @@ public final class RealtimeEventBridge {
                 // 订单号：发送侧带了就用带上的；没带则按机号反查在飞订单（口径见 alertOrderIdOf）。
                 alertOrderIdOf(event),
                 event.eventId()));
+    }
+
+    /**
+     * M5 独立队列消费网格点风况（《22》§1.2 注 6：M2／M4／M5 各建独立队列，不竞争消费）；
+     * 本层只把刚到的观测原样转发为天气帧，不判气象、不缓存、不合成「全局代表值」。
+     *
+     * <p>发布节奏与 {@code data.weather} 的到达节奏一致（仿真为每节拍九个网格点各一条）：
+     * 前端气象仓库按网格点留存最新一条，其一等风况回落后帧随流到达——
+     * 帧携带的是系统此刻的真实观测值，不是「已解除」标志；置真时机的过滤
+     * （返航已发生且风速低于预警阈值）由前端判据完成。
+     */
+    @RabbitListener(bindings = @QueueBinding(
+            value = @Queue(
+                    name = "${wavenest.mq.m5-data-weather-queue:wavenest.m5.data-weather}",
+                    durable = "true"),
+            exchange = @Exchange(
+                    name = "${wavenest.mq.exchange:wavenest.data}",
+                    type = ExchangeTypes.TOPIC,
+                    durable = "true"),
+            key = TopicName.DATA_WEATHER))
+    public void onWeatherData(WeatherData message) {
+        endpoint.publish(WsFrameType.WEATHER, message);
     }
 
     /**
