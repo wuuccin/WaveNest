@@ -12,6 +12,7 @@ import { drawNests } from '../layers/nestLayer'
 import { drawFleet, drawStaticFeatures } from '../layers/staticFeatureLayer'
 import { systemMapPoint, toMapLatLng } from '../map/coordinates'
 import { candidateAssessment } from '../realtime/candidateAssessment'
+import { missionPosition } from '../realtime/missionPosition'
 import { drawWeatherScale } from '../layers/weatherScaleLayer'
 import { resolveThresholds } from '../api/weather'
 
@@ -255,6 +256,22 @@ function drawPlanTrackOverlay() {
   markMissingSegments(planTrackGroup, target)
 }
 
+/**
+ * 给执行任务的飞机换上「任务位置」显示坐标。
+ *
+ * <p>仿真遥测让每架机绕巢做 27.8 m 小圈，图标因此始终贴在机巢上，无法从图上看出飞到哪了。
+ * 有在飞订单且有规划航迹时，改用航点 `tMs` 时间轴上的插值位置（与订单阶段推进同源）；
+ * 无机/无航迹/航迹不可用时保持遥测位置不变，不改变无任务飞机的原有表现。
+ */
+function positionedAircraft(aircraft) {
+  if (!aircraft) return aircraft
+  const orderId = aircraft.activeOrderId || ''
+  if (!orderId) return aircraft
+  const position = missionPosition(planTrack.ofOrder(orderId), Date.now())
+  if (!position) return aircraft
+  return { ...aircraft, lon: position.lon, lat: position.lat, headingDeg: position.headingDeg }
+}
+
 const update = () => {
   if (!map) return
   drawComparison()
@@ -262,7 +279,7 @@ const update = () => {
   for (const vessel of ship.ships) drawShip(map, shipGroup, vessel, ship.tracks[vessel.mmsi] || [], debugEnabled, false)
   drawMeeting(map, meetingGroup, order.rendezvous)
   droneGroup.clearLayers()
-  for (const aircraft of visibleDrones.value) drawDrone(map, droneGroup, aircraft, aircraft.activeOrderId || '', debugEnabled, false)
+  for (const aircraft of visibleDrones.value) drawDrone(map, droneGroup, positionedAircraft(aircraft), aircraft.activeOrderId || '', debugEnabled, false)
   drawNests(nestGroup, displayNests.value, assessment.value, debugEnabled)
   drawFleet(fleetGroup, fleet.items, displayNests.value)
   drawStaticFeatures(staticGroup, displayAirspace.value)
