@@ -109,10 +109,14 @@ class ContractDoctrineTest {
         assertEquals(List.of("提示", "警告", "严重"), values(AlertLevel.values()));
     }
 
-    /** 《22》§4 六类 WS 帧 */
+    /**
+     * 《22》§4 WS 帧。11-19 起为七类：新增天气帧 {@code weather}（网格点风况，
+     * 载荷即 {@code WeatherData}），写入方为 M5 独立队列消费 {@code data.weather} 后转发；
+     * 前端消费分支已随 11-14 任务 2-7 先行落地。
+     */
     @Test
-    void wsFrameTypes_shouldBeSix() {
-        assertEquals(List.of("ship_traj", "drone_state", "rendezvous", "alarm", "order_state", "plan_track"),
+    void wsFrameTypes_shouldBeSeven() {
+        assertEquals(List.of("ship_traj", "drone_state", "rendezvous", "alarm", "order_state", "plan_track", "weather"),
                 Arrays.stream(WsFrameType.values()).map(WsFrameType::getType).toList());
     }
 

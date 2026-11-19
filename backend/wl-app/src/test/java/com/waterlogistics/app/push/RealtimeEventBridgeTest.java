@@ -10,6 +10,7 @@ import static org.mockito.Mockito.when;
 
 import com.waterlogistics.contract.mq.AlertEventMessage;
 import com.waterlogistics.contract.mq.UavTelemetry;
+import com.waterlogistics.contract.mq.WeatherData;
 import com.waterlogistics.contract.order.OrderView;
 import com.waterlogistics.contract.state.OrderStatus;
 import com.waterlogistics.contract.ws.AlarmFrame;
@@ -133,6 +134,18 @@ class RealtimeEventBridgeTest {
         bridge.onAlertEvent(event);
 
         verify(endpoint).publish(eq(WsFrameType.ALARM), any(AlarmFrame.class));
+    }
+
+    /** 11-19 天气帧：M5 独立队列消费网格点风况后原样转发，不判气象、不缓存、不改字段。 */
+    @Test
+    void weatherData_shouldForwardObservationAsIs() {
+        WeatherData observation = new WeatherData(115.862, 28.666,
+                16.0, 135.0, 19.2, 1_700_000_000_000L, 1_700_000_300_000L, 1_700_000_000_000L);
+
+        bridge.onWeatherData(observation);
+
+        verify(endpoint).publish(WsFrameType.WEATHER, observation);
+        verify(endpoint, never()).publish(eq(WsFrameType.ALARM), any());
     }
 
     /** T1-2：告警帧的位置、订单号、事件号由发送侧写入，出口层原样透传，不补默认坐标。 */
