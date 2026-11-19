@@ -100,11 +100,11 @@ class ContractDoctrineTest {
         assertEquals(List.of("人工冻结", "自动熔断"), values(GateSource.values()));
     }
 
-    /** 《22》§2 告警类型五类检测告警 ＋ 两类 M2 等待原因透出告警、级别三级（以《37》§5.12 alert 表为准） */
+    /** 《22》§2 告警类型五类检测告警 ＋ 三类订单级告警、级别三级（以《37》§5.12 alert 表为准） */
     @Test
     void alert_shouldFollow37Section512() {
         assertEquals(List.of("失联", "低电量", "偏航", "气象超限", "链路异常",
-                        "装货超时", "等待资源"),
+                        "等待货物到巢", "等待资源", "订单待处置"),
                 values(AlertType.values()));
         assertEquals(List.of("提示", "警告", "严重"), values(AlertLevel.values()));
     }

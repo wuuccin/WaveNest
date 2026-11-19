@@ -169,7 +169,7 @@ public class AlertDrivenDispatcher {
             case LINK_ERROR -> log.info(
                     "链路异常告警无订单侧动作：eventId={} orderId={}",
                     message.eventId(), message.orderId());
-            case WAIT_CARGO_TIMEOUT, WAIT_RESOURCE -> log.info(
+            case WAIT_CARGO_TIMEOUT, WAIT_RESOURCE, ORDER_PENDING -> log.info(
                     "等待原因告警 {} 无调度侧动作：eventId={} orderId={}（透出与展示由 M2 WaitReasonAlertEmitter 负责）",
                     type.getValue(), message.eventId(), message.orderId());
         }
