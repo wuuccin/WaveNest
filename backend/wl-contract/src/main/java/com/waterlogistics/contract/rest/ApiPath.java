@@ -27,6 +27,14 @@ public final class ApiPath {
      */
     public static final String RESOURCE_RELEASE_TEMPLATE = "/api/orders/{orderId}/resource-release";
 
+    /**
+     * 候选留痕回查（GET，无请求体）；需替换 {@code {orderId}}。
+     *
+     * <p>语义：按订单返回该单历次派单决策的逐候选九项留痕（《11-19 任务清单》§3 张睿哲·二）。
+     * 查无记录回空数组，不返回 404——「还没派过单」与「订单不存在」在展示上是同一件事。
+     */
+    public static final String CANDIDATES_TEMPLATE = "/api/orders/{orderId}/candidates";
+
     /** 机队状态（GET） */
     public static final String DRONES = "/api/drones";
 
@@ -79,5 +87,15 @@ public final class ApiPath {
      */
     public static String resourceRelease(String orderId) {
         return "/api/orders/" + orderId + "/resource-release";
+    }
+
+    /**
+     * 生成指定订单的「候选留痕」查询路径。
+     *
+     * @param orderId 订单标识
+     * @return 具体路径
+     */
+    public static String candidates(String orderId) {
+        return "/api/orders/" + orderId + "/candidates";
     }
 }
