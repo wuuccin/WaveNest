@@ -6,6 +6,7 @@ import com.waterlogistics.contract.state.OrderStatus;
 import com.waterlogistics.contract.ws.OccupancySlotView;
 import com.waterlogistics.contract.ws.PlanTrackFrame;
 import com.waterlogistics.contract.ws.StaggerResultView;
+import com.waterlogistics.dispatch.candidate.CandidateSnapshotService;
 import com.waterlogistics.dispatch.feasibility.CandidateFeasibilityPlanner;
 import com.waterlogistics.dispatch.frame.RendezvousFrameProjector;
 import com.waterlogistics.dispatch.queue.TaskQueueService;
@@ -81,6 +82,12 @@ public class DispatchOrchestrator {
     private final OccupancySlotService occupancySlotService;
 
     /**
+     * 候选留痕（11-19 序号 3-1 · 张睿哲）：把本次决策的逐候选九项写进
+     * {@code candidate_snapshot}，与派单同一事务；写失败只 WARN，不影响派单。
+     */
+    private final CandidateSnapshotService candidateSnapshotService;
+
+    /**
      * C1：选机段的可行性择优（卢肄文）。生成 → 逐个判可行性 → 取最近的可飞候选。
      *
      * <p>取代原先单点调用 {@code candidateSelector.selectBest}（只选不判）——
@@ -97,7 +104,8 @@ public class DispatchOrchestrator {
             TaskLogRecorder taskLogRecorder,
             DispatchPlanVerifier planVerifier,
             PlanTrackWriter planTrackWriter,
-            OccupancySlotService occupancySlotService) {
+            OccupancySlotService occupancySlotService,
+            CandidateSnapshotService candidateSnapshotService) {
         this.taskQueueService = taskQueueService;
         this.rendezvous = rendezvous;
         this.orderTaskMapper = orderTaskMapper;
@@ -108,6 +116,7 @@ public class DispatchOrchestrator {
         this.planVerifier = planVerifier;
         this.planTrackWriter = planTrackWriter;
         this.occupancySlotService = occupancySlotService;
+        this.candidateSnapshotService = candidateSnapshotService;
     }
 
     /**
@@ -191,6 +200,10 @@ public class DispatchOrchestrator {
         // 契约 §2.2：先落 plan_track 再推 plan_track WS 帧；落库失败抛异常并回滚派单事务。
         int pointCount = planTrackWriter.write(finalFrame);
         OccupancySlotView occupancy = occupyDroneSlot(orderId, best.droneId(), committedMeetTime, nowMs);
+        // 候选留痕（11-19 序号 3-1）：本次决策的逐候选九项与本单同一事务落库，供按订单回查。
+        // 只进 candidate_snapshot，不写 task_log；写失败由服务内 fail-soft 兜住，不阻断派单。
+        candidateSnapshotService.record(order, selection, committedMeetTime,
+                plan.snapshotVersion(), nowMs);
         // 错峰结果随会面帧带出：applied/shiftMs 与时移前后会面时刻同源，前端据此显示「错峰 +N ms」
         // 并核对会面时刻已同步时移。无冲突时用 none(meetTs) 而不是 null，以区分「无冲突」与「未校验」。
         long originalMeetMs = plan.meetTime().atZone(DB_ZONE).toInstant().toEpochMilli();
