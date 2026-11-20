@@ -3,18 +3,23 @@ package com.waterlogistics.collector.simulator;
 import com.waterlogistics.collector.connector.DataSourceConnector;
 import com.waterlogistics.collector.publisher.MqDataPublisher;
 import com.waterlogistics.contract.mq.UavTelemetry;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ThreadLocalRandom;
 
 /**
  * 无人机遥测仿真连接器。
  *
  * <p>按《编码分工表》：演示期无人机遥测（位置／电量／阶段），供 M4（宋冰鑫）消费。
- * 生成策略：每架演示机绕自己的机巢做小半径巡航，电量线性消耗，叠加位置噪声。
+ * 生成策略分两种：<b>没有在飞订单</b>时每架机绕自己的机巢做小半径巡航；
+ * <b>有在飞订单</b>时位置改由 {@link SimUavFlightPlan} 按计划航迹给出，飞机才会真的往船飞。
+ * 电量线性消耗，两种情形都叠加位置噪声。
  * 真实遥测走 MQTT（Mosquitto，完整版），演示期不发真实 MQTT，直接产业务 MQ（技术栈 §五）。
  *
  * <p>巡航中心必须落在所属机巢上。偏航判据的基线是「机巢到会面点」的直线，
@@ -58,6 +63,20 @@ public class SimUavTelemetryConnector implements DataSourceConnector {
     private static final double DEFAULT_TICK_SEC = 1.0;
 
     private final MqDataPublisher publisher;
+
+    /**
+     * 计划航迹位置来源：有在飞订单时按航迹飞，没有时退回圆周巡航。
+     *
+     * <p>用可选注入（{@code required = false}）而不是构造参数：连接器的既有单测直接
+     * {@code new SimUavTelemetryConnector(publisher)} 起两台仿真器逐拍比对，
+     * 不该为了本类被迫接数据库。运行期由 Spring 注入，单测里为空即走圆周。
+     */
+    private SimUavFlightPlan flightPlan;
+
+    @Autowired(required = false)
+    public void setFlightPlan(SimUavFlightPlan flightPlan) {
+        this.flightPlan = flightPlan;
+    }
 
     /** 演示机数量——与台账机队规模对齐（T1-5 重配后为四架，两巢各两架） */
     @Value("${wavenest.sim.uav.count:4}")
@@ -159,19 +178,32 @@ public class SimUavTelemetryConnector implements DataSourceConnector {
         // 节拍间隔按真实时间算：调度抖动时每拍位移不跟着抖，反算速度才稳在 speedMs 附近
         double dtSec = tickSeconds(tickTs);
         ThreadLocalRandom rnd = ThreadLocalRandom.current();
+        Map<String, SimUavFlightPlan.Fix> fixes = fixesAt(tickTs);
         for (int i = 0; i < uavCount; i++) {
-            // 每架机绕自己的机巢巡航，偏航基线才从同一位置起算
-            phases[i] += phaseStep;
+            // 机巢位置双重用途：没有在飞任务时绕它巡航，有任务时它是回程终点
             double nestLon = nestCenterLon(i);
             double nestLat = nestCenterLat(i);
-            double lon = nestLon + radiusDeg * Math.cos(phases[i]) + rnd.nextDouble(-noise, noise);
-            double lat = nestLat + radiusDeg * Math.sin(phases[i]) + rnd.nextDouble(-noise, noise);
-            // 注入的偏航位移叠加在巡航位置之上（按拍渐进，复位同样渐进）
+            phases[i] += phaseStep;
+            double lon;
+            double lat;
+            double heading;
+            SimUavFlightPlan.Fix fix = fixes.get(uavId(i));
+            if (fix != null) {
+                // 有在飞订单：位置与航向按计划航迹走，圆周位置让位
+                lon = fix.lon();
+                lat = fix.lat();
+                heading = normalize(fix.headingDeg());
+            } else {
+                // 停在机巢：绕自己的机巢巡航，偏航基线才从同一位置起算
+                lon = nestLon + radiusDeg * Math.cos(phases[i]) + rnd.nextDouble(-noise, noise);
+                lat = nestLat + radiusDeg * Math.sin(phases[i]) + rnd.nextDouble(-noise, noise);
+                // 航向＝圆周切向
+                heading = normalize(Math.toDegrees(phases[i]) + 90.0);
+            }
+            // 注入的偏航位移叠加在当前位置之上（按拍渐进，复位同样渐进）
             advanceOffset(i, nestLat, dtSec);
             lon += offtrackLonDeg[i];
             lat += offtrackLatDeg[i];
-            // 航向＝圆周切向
-            double heading = normalize(Math.toDegrees(phases[i]) + 90.0);
             // 电量线性消耗（演示：每节拍 0.02%），下限 5
             batteries[i] = Math.max(5.0, batteries[i] - 0.02);
 
@@ -185,6 +217,25 @@ public class SimUavTelemetryConnector implements DataSourceConnector {
                     tickTs));
         }
         lastTickTs = tickTs;
+    }
+
+    /**
+     * 本轮各机按计划航迹应处的位置。
+     *
+     * <p>没有注入位置来源（单测直接构造连接器）或本轮没有在飞订单时返回空表，
+     * 调用方据此退回圆周巡航。查库异常在 {@link SimUavFlightPlan} 内部吞掉并降级，
+     * 这里不再包一层，避免把「没有在飞订单」与「查询失败」混成同一条日志。
+     */
+    private Map<String, SimUavFlightPlan.Fix> fixesAt(long tickTs) {
+        if (flightPlan == null) {
+            return Map.of();
+        }
+        Map<String, SimUavFlightPlan.Home> homes = new LinkedHashMap<>();
+        for (int i = 0; i < uavCount; i++) {
+            homes.put(uavId(i), new SimUavFlightPlan.Home(nestCenterLon(i), nestCenterLat(i)));
+        }
+        Map<String, SimUavFlightPlan.Fix> fixes = flightPlan.fixes(tickTs, homes, speedMs);
+        return fixes == null ? Map.of() : fixes;
     }
 
     // ------------------------------------------------------------------
