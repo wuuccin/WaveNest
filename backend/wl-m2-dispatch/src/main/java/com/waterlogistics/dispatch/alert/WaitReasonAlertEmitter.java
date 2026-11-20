@@ -6,8 +6,10 @@ import com.waterlogistics.contract.rest.WaitReason;
 import com.waterlogistics.contract.state.AlertLevel;
 import com.waterlogistics.contract.state.AlertType;
 import com.waterlogistics.contract.order.OrderStateChangedEvent;
+import com.waterlogistics.dispatch.queue.CargoNestGate;
 import com.waterlogistics.storage.entity.AlertEntity;
 import com.waterlogistics.storage.entity.OrderTaskEntity;
+import com.waterlogistics.storage.param.SysParamLoader;
 import com.waterlogistics.storage.repository.AlertMapper;
 import com.waterlogistics.storage.repository.OrderTaskMapper;
 import java.time.Instant;
@@ -34,11 +36,16 @@ import org.springframework.transaction.event.TransactionalEventListener;
  *
  * <p>两类等待告警口径：
  * <ul>
- *   <li>{@link WaitReason#WAIT_CARGO} → {@link AlertType#WAIT_CARGO_TIMEOUT}（装货超时）：
- *       订单因货物未就绪进入等待，货物所在巢时隙锁超时未释放；</li>
+ *   <li>{@link WaitReason#WAIT_CARGO} → {@link AlertType#WAIT_CARGO_TIMEOUT}（等待货物到巢）：
+ *       订单因货物未就绪进入等待，货物所在巢时隙锁在宽限期内未释放；</li>
  *   <li>{@link WaitReason#WAIT_RESOURCE} → {@link AlertType#WAIT_RESOURCE}（等待资源）：
  *       订单因资源不足转入等待队列；</li>
  * </ul>
+ *
+ * <p>展示名与宽限期：等待货物到巢的展示名固定为「等待货物到巢」，宽限秒数不进展示名，
+ * 而是随 {@code alert.event} 的 {@code thresholdValue} 带给出口层拼进提示语。秒数取自
+ * {@code sys_param} 的 {@code cargoLockTimeoutSec}（缺省 300），参数改了提示语跟着变，
+ * 不在代码里写死。判定条件、签发时机与去重口径不因展示调整而改变。
  *
  * <p>11-06 序号 1：原第三类「货到巢超时」已裁撤（无生产调用点）。
  * 货物到巢关的锁超时实际走 {@code WAIT_RESOURCE} 分支，由本类按等待原因自动发「等待资源」。
@@ -62,16 +69,19 @@ public class WaitReasonAlertEmitter {
     private final AlertMapper alertMapper;
     private final OrderTaskMapper orderTaskMapper;
     private final RabbitTemplate rabbitTemplate;
+    private final SysParamLoader sysParamLoader;
 
     @Value("${wavenest.mq.exchange:wavenest.data}")
     private String exchange;
 
     public WaitReasonAlertEmitter(AlertMapper alertMapper,
             OrderTaskMapper orderTaskMapper,
-            RabbitTemplate rabbitTemplate) {
+            RabbitTemplate rabbitTemplate,
+            SysParamLoader sysParamLoader) {
         this.alertMapper = alertMapper;
         this.orderTaskMapper = orderTaskMapper;
         this.rabbitTemplate = rabbitTemplate;
+        this.sysParamLoader = sysParamLoader;
     }
 
     /**
@@ -115,6 +125,7 @@ public class WaitReasonAlertEmitter {
         String droneId = order == null ? null : order.getDroneId();
         long now = System.currentTimeMillis();
         String eventId = UUID.randomUUID().toString();
+        Double graceLimitSec = graceLimitOf(type);
 
         AlertEntity entity = new AlertEntity();
         entity.setAlertId(eventId);
@@ -140,12 +151,26 @@ public class WaitReasonAlertEmitter {
                 orderId,
                 now,
                 null,
-                null,
+                graceLimitSec,
                 null,
                 null);
         publish(message);
         log.info("等待原因告警已发出：orderId={} type={} droneId={} eventId={}",
                 orderId, type.getValue(), droneId, eventId);
+    }
+
+    /**
+     * 等待货物到巢时随事件带出的宽限秒数。
+     *
+     * <p>秒数取自 {@code sys_param} 的 {@code cargoLockTimeoutSec}，缺省值沿用门关登记的
+     * 300 秒；其他告警类型不带该值。出口层据此把秒数拼进提示语，展示名本身不含数字。
+     */
+    private Double graceLimitOf(AlertType type) {
+        if (type != AlertType.WAIT_CARGO_TIMEOUT) {
+            return null;
+        }
+        return (double) sysParamLoader.getInt(CargoNestGate.LOCK_TIMEOUT_KEY,
+                CargoNestGate.DEFAULT_LOCK_TIMEOUT_SEC);
     }
 
     /**

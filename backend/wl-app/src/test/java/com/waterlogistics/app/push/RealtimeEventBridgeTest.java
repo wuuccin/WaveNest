@@ -1,7 +1,9 @@
 package com.waterlogistics.app.push;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
@@ -10,7 +12,9 @@ import static org.mockito.Mockito.when;
 
 import com.waterlogistics.contract.mq.AlertEventMessage;
 import com.waterlogistics.contract.mq.UavTelemetry;
+import com.waterlogistics.contract.mq.WeatherData;
 import com.waterlogistics.contract.order.OrderView;
+import com.waterlogistics.contract.state.AlertType;
 import com.waterlogistics.contract.state.OrderStatus;
 import com.waterlogistics.contract.ws.AlarmFrame;
 import com.waterlogistics.contract.ws.DroneStateFrame;
@@ -135,6 +139,18 @@ class RealtimeEventBridgeTest {
         verify(endpoint).publish(eq(WsFrameType.ALARM), any(AlarmFrame.class));
     }
 
+    /** 11-19 天气帧：M5 独立队列消费网格点风况后原样转发，不判气象、不缓存、不改字段。 */
+    @Test
+    void weatherData_shouldForwardObservationAsIs() {
+        WeatherData observation = new WeatherData(115.862, 28.666,
+                16.0, 135.0, 19.2, 1_700_000_000_000L, 1_700_000_300_000L, 1_700_000_000_000L);
+
+        bridge.onWeatherData(observation);
+
+        verify(endpoint).publish(WsFrameType.WEATHER, observation);
+        verify(endpoint, never()).publish(eq(WsFrameType.ALARM), any());
+    }
+
     /** T1-2：告警帧的位置、订单号、事件号由发送侧写入，出口层原样透传，不补默认坐标。 */
     @Test
     void alertEvent_shouldCarryPositionOrderIdAndEventIdFromMessage() {
@@ -196,5 +212,43 @@ class RealtimeEventBridgeTest {
         ArgumentCaptor<AlarmFrame> captor = ArgumentCaptor.forClass(AlarmFrame.class);
         verify(endpoint).publish(eq(WsFrameType.ALARM), captor.capture());
         assertNull(captor.getValue().orderId());
+    }
+
+    /** 订单级告警只写订单号与展示名，宽限秒数来自事件载荷，不出现「无人机 null」。 */
+    @Test
+    void alertEvent_orderLevel_shouldNotMentionDrone() {
+        bridge.onAlertEvent(new AlertEventMessage(
+                "event-2", AlertType.WAIT_CARGO_TIMEOUT.getValue(), "警告", 0, null, "ORD-1",
+                1_700_000_000_000L, null, 300.0));
+
+        ArgumentCaptor<AlarmFrame> captor = ArgumentCaptor.forClass(AlarmFrame.class);
+        verify(endpoint).publish(eq(WsFrameType.ALARM), captor.capture());
+        assertEquals("订单 ORD-1：等待货物到巢（宽限期 300 秒）", captor.getValue().message());
+        assertFalse(captor.getValue().message().contains("无人机"));
+    }
+
+    /** 订单待处置同为订单级：只写订单号，不因机号为空退化成无人机级。 */
+    @Test
+    void alertEvent_orderPending_shouldStayOrderLevelWithoutDrone() {
+        bridge.onAlertEvent(new AlertEventMessage(
+                "event-3", AlertType.ORDER_PENDING.getValue(), "警告", 0, null, "ORD-2",
+                1_700_000_000_000L, null, null));
+
+        ArgumentCaptor<AlarmFrame> captor = ArgumentCaptor.forClass(AlarmFrame.class);
+        verify(endpoint).publish(eq(WsFrameType.ALARM), captor.capture());
+        assertEquals("订单 ORD-2：订单待处置", captor.getValue().message());
+    }
+
+    /** 无人机级告警保留真实机号、当前值与阈值。 */
+    @Test
+    void alertEvent_droneLevel_shouldKeepRealDroneId() {
+        bridge.onAlertEvent(new AlertEventMessage(
+                "event-4", AlertType.DEVIATION.getValue(), "警告", 8, "UAV-07", "ORD-1",
+                1_700_000_000_000L, 42.0, 30.0));
+
+        ArgumentCaptor<AlarmFrame> captor = ArgumentCaptor.forClass(AlarmFrame.class);
+        verify(endpoint).publish(eq(WsFrameType.ALARM), captor.capture());
+        assertEquals("无人机 UAV-07：偏航，当前值 42.0，阈值 30.0", captor.getValue().message());
+        assertTrue(captor.getValue().message().contains("UAV-07"));
     }
 }

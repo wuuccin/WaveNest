@@ -29,7 +29,16 @@ public enum WsFrameType {
      * 规划航迹：三段航迹点列（去程／末段交接／返程），前端按段着色。
      * 写入方为 M2（派发编排产出航迹后推送）。
      */
-    PLAN_TRACK("plan_track");
+    PLAN_TRACK("plan_track"),
+
+    /**
+     * 网格点风况：经度、纬度、风速、风向、阵风与观测时刻，载荷即 {@code data.weather} 的
+     * {@code WeatherData}（U-05 甲案按位置发多条，一帧对应一个网格点）。
+     * 写入方为 M5——按《22》§1.2 注 6 以独立队列 {@code wavenest.m5.data-weather}
+     * 消费 {@code data.weather} 后转发，不判气象、不缓存。前端按网格点入气象仓库，
+     * 气象标尺与一键演示的风况回落判据以本帧为唯一实时来源（11-14 任务 2-7 已备消费分支）。
+     */
+    WEATHER("weather");
 
     private final String type;
 

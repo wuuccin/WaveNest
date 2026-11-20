@@ -5,14 +5,23 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
+import com.waterlogistics.contract.rest.WaitReason;
 import com.waterlogistics.contract.state.GoodsStatus;
+import com.waterlogistics.contract.state.OrderStatus;
+import com.waterlogistics.dispatch.queue.TaskQueueService;
 import com.waterlogistics.storage.entity.GoodsEntity;
 import com.waterlogistics.storage.entity.OrderTaskEntity;
+import com.waterlogistics.storage.entity.TaskLogEntity;
 import com.waterlogistics.storage.repository.GoodsMapper;
 import com.waterlogistics.storage.repository.OrderTaskMapper;
+import com.waterlogistics.storage.repository.TaskLogMapper;
 import java.lang.reflect.Proxy;
 import java.util.ArrayList;
 import java.util.List;
+import org.apache.ibatis.builder.MapperBuilderAssistant;
+import org.apache.ibatis.session.Configuration;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -45,7 +54,27 @@ class CargoReadyServiceTest {
     /** 订单是否存在。 */
     private boolean orderExists = true;
 
+    /** 订单当前状态（资源释放用例用）。 */
+    private String orderStatus = OrderStatus.WAIT_DISPATCH.getValue();
+
+    /** 订单当前等待原因（资源释放用例用）。 */
+    private String orderWaitReason;
+
+    /** {@code task_log} 写入的动作名——受控动作留痕的直接证据。 */
+    private final List<String> taskLogOpTypes = new ArrayList<>();
+
     private CargoReadyService service;
+
+    /** Lambda 条件更新需要 MyBatis-Plus 的 TableInfo 缓存（无 Spring 上下文时手工初始化）。 */
+    @BeforeAll
+    static void initTableInfo() {
+        TableInfoHelper.initTableInfo(
+                new MapperBuilderAssistant(new Configuration(), "cargo-ready-test"),
+                OrderTaskEntity.class);
+        TableInfoHelper.initTableInfo(
+                new MapperBuilderAssistant(new Configuration(), "cargo-ready-test"),
+                TaskLogEntity.class);
+    }
 
     @BeforeEach
     void setUp() {
@@ -53,24 +82,54 @@ class CargoReadyServiceTest {
         updateCalls = 0;
         orderNestId = ORDER_NEST_ID;
         orderExists = true;
-        service = new CargoReadyService(inMemoryMapper(), inMemoryOrderMapper());
+        orderStatus = OrderStatus.WAIT_DISPATCH.getValue();
+        orderWaitReason = null;
+        taskLogOpTypes.clear();
+        OrderTaskMapper orderMapper = inMemoryOrderMapper();
+        TaskQueueService taskQueueService =
+                new TaskQueueService(orderMapper, inMemoryTaskLogMapper(), null);
+        service = new CargoReadyService(inMemoryMapper(), orderMapper, taskQueueService);
+    }
+
+    /** {@code task_log} 桩：只记录动作名。 */
+    private TaskLogMapper inMemoryTaskLogMapper() {
+        return (TaskLogMapper) Proxy.newProxyInstance(
+                TaskLogMapper.class.getClassLoader(), new Class<?>[]{TaskLogMapper.class},
+                (proxy, method, args) -> {
+                    if ("insert".equals(method.getName())) {
+                        taskLogOpTypes.add(((TaskLogEntity) args[0]).getOpType());
+                        return 1;
+                    }
+                    Class<?> rt = method.getReturnType();
+                    if (rt == int.class) {
+                        return 0;
+                    }
+                    return rt == boolean.class ? false : null;
+                });
     }
 
     /**
-     * 订单表桩：{@code selectOne} 返回一行带货巢的订单。
+     * 订单表桩：{@code selectOne}/{@code selectById} 返回一行带货巢的订单，
+     * 条件更新（{@code update}）恒回 1 行。
      */
     private OrderTaskMapper inMemoryOrderMapper() {
         return (OrderTaskMapper) Proxy.newProxyInstance(
                 OrderTaskMapper.class.getClassLoader(), new Class<?>[]{OrderTaskMapper.class},
                 (proxy, method, args) -> {
-                    if ("selectOne".equals(method.getName())) {
+                    if ("selectOne".equals(method.getName())
+                            || "selectById".equals(method.getName())) {
                         if (!orderExists) {
                             return null;
                         }
                         OrderTaskEntity order = new OrderTaskEntity();
                         order.setOrderId(ORDER_ID);
                         order.setCargoNestId(orderNestId);
+                        order.setStatus(orderStatus);
+                        order.setWaitReason(orderWaitReason);
                         return order;
+                    }
+                    if ("update".equals(method.getName())) {
+                        return 1;
                     }
                     Class<?> rt = method.getReturnType();
                     if (rt == int.class) {
@@ -274,5 +333,59 @@ class CargoReadyServiceTest {
         assertEquals(ORDER_NEST_ID, table.get(0).getLocation(),
                 "登记后货物位置必须是实际到达的巢");
         assertEquals(GoodsStatus.READY.getValue(), table.get(0).getStatus());
+    }
+
+    // ───────────── 资源等待释放（11-19 序号 1-2） ─────────────
+
+    @Test
+    @DisplayName("★ 资源等待释放：回待调度并写 task_log「资源释放-人工」")
+    void resourceWait_shouldReturnToDispatchWithLog() {
+        orderStatus = OrderStatus.ACCEPTED_WAIT_WAKE.getValue();
+        orderWaitReason = WaitReason.WAIT_RESOURCE.name();
+
+        ResourceReleaseResponse response = service.releaseResourceWait("  " + ORDER_ID + " ");
+
+        assertTrue(response.released(), "宽限期内已转资源等待的单必须可释放");
+        assertEquals(ORDER_ID, response.orderId(), "订单号回显归一后的值");
+        assertEquals(OrderStatus.WAIT_DISPATCH.getValue(), response.status());
+        assertEquals(List.of("资源释放-人工"), taskLogOpTypes,
+                "留痕动作名必须是「资源释放-人工」，与会面放弃重入队区分开");
+    }
+
+    @Test
+    @DisplayName("★ 仅等待资源的单可释放：待调度的单被拒，且不写 task_log")
+    void notResourceWait_shouldBeRejected() {
+        orderStatus = OrderStatus.WAIT_DISPATCH.getValue();
+
+        ResourceReleaseResponse response = service.releaseResourceWait(ORDER_ID);
+
+        assertFalse(response.released());
+        assertEquals(OrderStatus.WAIT_DISPATCH.getValue(), response.status(), "回显当前状态");
+        assertTrue(response.message().contains("不满足释放条件"));
+        assertTrue(taskLogOpTypes.isEmpty(), "被拒的请求不得留痕");
+    }
+
+    @Test
+    @DisplayName("★ 同为已受理待唤醒但等待原因是等货：未到期，不得释放")
+    void waitCargo_shouldBeRejected() {
+        orderStatus = OrderStatus.ACCEPTED_WAIT_WAKE.getValue();
+        orderWaitReason = WaitReason.WAIT_CARGO.name();
+
+        ResourceReleaseResponse response = service.releaseResourceWait(ORDER_ID);
+
+        assertFalse(response.released(), "等货未到期，放回待调度只会被门关再次拦下");
+        assertTrue(taskLogOpTypes.isEmpty());
+    }
+
+    @Test
+    @DisplayName("订单不存在 → 拒绝，且不抛异常")
+    void releaseMissingOrder_shouldBeRejected() {
+        orderExists = false;
+
+        ResourceReleaseResponse response = service.releaseResourceWait(ORDER_ID);
+
+        assertFalse(response.released());
+        assertNull(response.status());
+        assertTrue(taskLogOpTypes.isEmpty());
     }
 }

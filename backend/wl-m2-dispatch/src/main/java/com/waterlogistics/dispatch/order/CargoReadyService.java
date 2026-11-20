@@ -1,7 +1,10 @@
 package com.waterlogistics.dispatch.order;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.waterlogistics.contract.rest.WaitReason;
 import com.waterlogistics.contract.state.GoodsStatus;
+import com.waterlogistics.contract.state.OrderStatus;
+import com.waterlogistics.dispatch.queue.TaskQueueService;
 import com.waterlogistics.storage.entity.GoodsEntity;
 import com.waterlogistics.storage.entity.OrderTaskEntity;
 import com.waterlogistics.storage.repository.GoodsMapper;
@@ -59,11 +62,14 @@ public class CargoReadyService {
 
     private final GoodsMapper goodsMapper;
     private final OrderTaskMapper orderTaskMapper;
+    private final TaskQueueService taskQueueService;
 
     @Autowired
-    public CargoReadyService(GoodsMapper goodsMapper, OrderTaskMapper orderTaskMapper) {
+    public CargoReadyService(GoodsMapper goodsMapper, OrderTaskMapper orderTaskMapper,
+            TaskQueueService taskQueueService) {
         this.goodsMapper = goodsMapper;
         this.orderTaskMapper = orderTaskMapper;
+        this.taskQueueService = taskQueueService;
     }
 
     /**
@@ -165,5 +171,47 @@ public class CargoReadyService {
         // 全部已是「已就绪」：幂等命中
         log.info("货物到巢登记：orderId={} 货巢={} 已是「{}」，本次零写入", id, nestId, READY);
         return CargoReadyResponse.alreadyReady(id);
+    }
+
+    /**
+     * 人工释放「等待资源」的订单（M2 · 张睿哲 · 11-19 序号 1-2）。
+     *
+     * <p>只认一种单：{@code ACCEPTED_WAIT_WAKE} ＋ 等待原因 {@code WAIT_RESOURCE}，
+     * 即「货到巢关」宽限期到期、锁被释放后转入资源等待的单。动作语义是
+     * <b>送回待调度</b>（写 {@code task_log: 资源释放-人工}），由派单触发器重新取单；
+     * 本方法不占时隙、不直接派单，也不改闸门状态。
+     *
+     * <p><b>为什么未到期单必须拒</b>：宽限期内的单还在 {@code WAIT_CARGO} 等待，
+     * 此刻放回待调度会被门关再次拦下、每拍空转一次；只有已经越过宽限期的单，
+     * 业务上才允许人工兜底（例如货实际已到、但登记链路未发出）。
+     *
+     * @param orderId 订单标识（首尾空白容忍，内部 trim）
+     * @return 释放结果；不满足条件时 {@code released=false} 并回显当前状态
+     */
+    public ResourceReleaseResponse releaseResourceWait(String orderId) {
+        String id = orderId == null ? null : orderId.trim();
+        if (id == null || id.isEmpty()) {
+            return ResourceReleaseResponse.rejected(null, null, "订单标识缺失");
+        }
+        OrderTaskEntity order = orderTaskMapper.selectOne(
+                new LambdaQueryWrapper<OrderTaskEntity>().eq(OrderTaskEntity::getOrderId, id));
+        if (order == null) {
+            log.warn("资源等待释放被拒：orderId={} 查无订单", id);
+            return ResourceReleaseResponse.rejected(id, null, "该订单不存在");
+        }
+        String status = order.getStatus();
+        String waitReason = order.getWaitReason();
+        if (!OrderStatus.ACCEPTED_WAIT_WAKE.getValue().equals(status)
+                || !WaitReason.WAIT_RESOURCE.name().equals(waitReason)) {
+            log.warn("资源等待释放被拒：orderId={} 状态={} 等待原因={}", id, status, waitReason);
+            return ResourceReleaseResponse.rejected(id, status,
+                    String.format(Locale.ROOT,
+                            "不满足释放条件：当前状态「%s」、等待原因「%s」，仅宽限期到期的资源等待单可释放",
+                            status == null ? "未知" : status,
+                            waitReason == null || waitReason.isBlank() ? "无" : waitReason));
+        }
+        taskQueueService.requeue(id, "资源释放-人工");
+        log.info("资源等待释放：orderId={} {} → {}", id, status, OrderStatus.WAIT_DISPATCH.getValue());
+        return ResourceReleaseResponse.released(id, OrderStatus.WAIT_DISPATCH.getValue());
     }
 }

@@ -1,4 +1,4 @@
-export const WAIT_REASONS = { WAIT_SHIP: '等待船舶进入服务航段', WAIT_CARGO: '等待货物就绪', GATE_OR_DATA: '闸门熔断或数据不足' }
+export const WAIT_REASONS = { WAIT_SHIP: '等待船舶进入服务航段', WAIT_CARGO: '等待货物就绪', WAIT_RESOURCE: '等待人工处置：货物未到巢', GATE_OR_DATA: '闸门熔断或数据不足' }
 export const ORDER_STATES = ['待受理', '已受理待唤醒', '待调度', '调度中', '已派发', '去程中', '末段交接中', '返航中', '已完成', '已拒绝', '失败', '异常终止']
 export const TERMINAL_STATES = new Set(['已完成', '已拒绝', '失败', '异常终止'])
 const enumValues = { PENDING_ACCEPT:'待受理', ACCEPTED_WAIT_WAKE:'已受理待唤醒', WAIT_DISPATCH:'待调度', DISPATCHING:'调度中', DISPATCHED:'已派发', OUTBOUND:'去程中', HANDOVER:'末段交接中', RETURNING:'返航中', FINISHED:'已完成', REJECTED:'已拒绝', FAILED:'失败', ABORTED:'异常终止', NORMAL:'正常', BROKEN:'熔断中', MANUAL:'人工冻结', AUTO:'自动熔断', LOST_LINK:'失联', LOW_BATTERY:'低电量', DEVIATION:'偏航', WEATHER_EXCEED:'气象超限', LINK_ERROR:'链路异常', INFO:'提示', WARN:'警告', CRITICAL:'严重', WARNING:'警告', SEVERE:'严重' }
