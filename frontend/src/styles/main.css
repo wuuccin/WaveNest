@@ -247,6 +247,19 @@ h1, h2, p { margin: 0; }
 .demo-confirm-actions { display: grid; gap: 8px; margin: 12px 0; }
 .demo-confirm-actions button { min-height: 44px; width: 100%; font-weight: 800; }
 .resource-wait-notice { padding: 10px 12px; border: 1px solid #e8c585; border-radius: 7px; background: #fff8e9; color: #785015; font-weight: 700; line-height: 1.5; }
+.order-candidate-history { display: grid; gap: 12px; padding: 15px; background: #fff; border: 1px solid #d8e4e2; border-radius: 8px; }
+.order-candidate-history .panel-head { align-items: center; }
+.order-candidate-history .button-secondary { padding: 7px 10px; text-decoration: none; white-space: nowrap; }
+.history-order-facts { display: flex; flex-wrap: wrap; gap: 6px 12px; color: #49636a; font-size: 12px; }
+.history-candidate-list { display: grid; gap: 8px; max-height: 290px; overflow: auto; }
+.history-candidate-list article { padding: 10px; border: 1px solid #dce8e5; border-radius: 6px; background: #f8fbfa; }
+.history-candidate-list article.selected { border-color: #46aa91; background: #eff9f5; }
+.history-candidate-list article div { display: flex; justify-content: space-between; gap: 8px; }
+.history-candidate-list p { margin: 4px 0; font-size: 11px; line-height: 1.5; }
+.history-candidate-list small, .history-intervention small { color: #5d747a; font-size: 10px; }
+.history-intervention { border-top: 1px solid #e3ece9; padding-top: 10px; }
+.history-intervention h3 { margin: 0 0 8px; font-size: 13px; }
+.history-intervention ol { margin: 0 0 8px; padding-left: 19px; max-height: 115px; overflow: auto; font-size: 11px; }
 .state-chip, .form-status, .count-badge { display: inline-flex; align-items: center; justify-content: center; min-height: 25px; padding: 0 9px; border-radius: 999px; color: var(--teal-dark); background: var(--teal-soft); font-size: 11px; font-weight: 750; white-space: nowrap; }
 .state-chip.success { color: #267759; background: #e5f4ec; }
 .state-chip.danger { color: #9f4047; background: #f9e7e7; }

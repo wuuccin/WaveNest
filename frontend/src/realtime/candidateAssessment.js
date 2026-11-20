@@ -44,3 +44,20 @@ export function candidateAssessment(frame, assignedNestId = null) {
     stagger: frame.stagger ?? null
   }
 }
+
+export function normalizeCandidateHistory(payload) {
+  if (!Array.isArray(payload)) throw new Error('候选历史接口未返回数组')
+  return payload.map((row, index) => ({
+    key: `${row.snapshotVersion ?? 'unknown'}:${row.droneId ?? index}`,
+    orderId: text(row.orderId),
+    model: text(row.model),
+    nestId: text(row.nestId),
+    droneId: text(row.droneId),
+    distKm: row.distKm == null ? null : number(row.distKm),
+    meetTimeMs: row.meetTimeMs == null ? null : number(row.meetTimeMs),
+    rejectReason: text(row.rejectReason),
+    rankKey: text(row.rankKey),
+    snapshotVersion: text(row.snapshotVersion),
+    selected: row.rejectReason === '中选'
+  }))
+}

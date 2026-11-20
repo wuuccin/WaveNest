@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
-import { ORDER_STATES, normalizeOrder, displayEnum } from '../api/adapter'
+import { ORDER_STATES, normalizeOrder, displayEnum } from '../api/adapter.js'
+import { normalizeCandidateHistory } from '../realtime/candidateAssessment.js'
 
 export const useShipStore = defineStore('ship', {
   state: () => ({ selectedMmsi: '', byId: {}, tracks: {} }),
@@ -180,9 +181,17 @@ export const useWeatherStore = defineStore('weather', {
   }
 })
 export const useOrderStore = defineStore('order', {
-  state: () => ({ byId: {}, timeline: {}, gate: { gateStatus: '正常', gateSources: [] }, rendezvous: null, previousRendezvous: null, replaying: false }),
+  state: () => ({ byId: {}, timeline: {}, candidateHistory: {}, candidateLoading: {}, candidateError: {}, gate: { gateStatus: '正常', gateSources: [] }, rendezvous: null, previousRendezvous: null, replaying: false }),
   getters: { orders: state => Object.values(state.byId).sort((a,b) => b.eventTs - a.eventTs) },
   actions: {
+    async loadCandidateHistory(orderId, api) {
+      if (!orderId) return
+      this.candidateLoading[orderId] = true
+      this.candidateError[orderId] = ''
+      try { this.candidateHistory[orderId] = normalizeCandidateHistory(await api.candidateHistory(orderId)) }
+      catch (error) { this.candidateError[orderId] = error?.message || String(error) }
+      finally { this.candidateLoading[orderId] = false }
+    },
     apply(data) {
       if (!data?.orderId || !ORDER_STATES.includes(data.orderStatus) || !Number.isSafeInteger(data.stateVersion)) return false
       const old = this.byId[data.orderId]
