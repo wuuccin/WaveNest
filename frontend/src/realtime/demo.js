@@ -4,7 +4,9 @@ import { DEMO_DEFAULT_CARGO_TYPE } from '../api/cargoTypes.js'
 export const DEMO_STAGES = ['下单与预计会面', '首架无人机去程', '等待气象超限事件与无人机返航状态', '清除气象注入偏置', '等待风况回落与熔断解除', '等待订单重派', '等待新机交接完成']
 
 // Only real backend frames confirm progress; missing transitions stop the runner.
-export function createDemoRunner({ api, subscribe, connected, timeoutMs = 30000, dwellMs = { 1: 2500, 3: 3000, 5: 2500 } }) {
+// 第 1 段等的是「船员把货物送到机巢、投放闸门放行」，这一段的长短由人来定，不能用通用超时卡住，
+// 因此单独给 cargoWaitMs（贴合实际按 25 分钟计），其余阶段仍按 timeoutMs 判超时。
+export function createDemoRunner({ api, subscribe, connected, timeoutMs = 30000, cargoWaitMs = 25 * 60 * 1000, dwellMs = { 1: 2500, 3: 3000, 5: 2500 } }) {
   const state = reactive({ running: false, step: 0, completed: false, error: '', orderId: null, originalDroneId: null, replacementDroneId: null, recycleConfirmed: false, deliveryConfirmed: false })
   let controller
   let wake = () => {}
@@ -69,7 +71,7 @@ export function createDemoRunner({ api, subscribe, connected, timeoutMs = 30000,
       state.orderId = created.orderId
       for (const frame of pending) observe(frame)
       state.step = 1
-      await waitFor(() => seen.meet, 1)
+      await waitFor(() => seen.meet, 1, undefined, cargoWaitMs)
       state.step = 2
       await waitFor(() => seen.outbound && !!seen.original, 2)
       state.step = 3
