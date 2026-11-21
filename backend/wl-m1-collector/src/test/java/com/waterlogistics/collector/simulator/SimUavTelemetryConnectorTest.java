@@ -7,7 +7,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -50,9 +52,10 @@ class SimUavTelemetryConnectorTest {
     }
 
     @Test
-    @DisplayName("电量逐节拍递减，且永不低于 5% 下限")
-    void batteryDrainsWithFloor() {
-        for (int i = 0; i < 100; i++) {
+    @DisplayName("在巢不扣电；飞行按拍扣电且永不低于 5% 下限")
+    void batteryHoldsInNestAndDrainsInFlight() {
+        // 在巢：没有航迹源，30 拍后电量应保持满电
+        for (int i = 0; i < 30; i++) {
             sim.pollOnce(i * 1_000L);
         }
         List<UavTelemetry> sent = publisher.telemetry();
@@ -60,8 +63,21 @@ class SimUavTelemetryConnectorTest {
         UavTelemetry last = sent.get(sent.size() - 4);   // 倒数第 4 条也是 UAV-01（本轮共 4 架）
 
         assertEquals(100.0, first.battery(), 1e-9, "首帧满电");
-        assertTrue(last.battery() < first.battery(), "电量应随时间消耗");
-        assertTrue(last.battery() >= 5.0, "电量不得跌破 5% 下限");
+        assertEquals(100.0, last.battery(), 1e-9, "在巢不扣电，30 拍后仍满电");
+
+        // 飞行：UAV-01 有了航迹源，每拍扣 0.02%
+        sim.setFlightPlan(flightPlanFor("UAV-01"));
+        for (int i = 30; i < 60; i++) {
+            sim.pollOnce(i * 1_000L);
+        }
+        assertEquals(99.4, lastTelemetryOf("UAV-01").battery(), 0.1, "飞行 30 拍应扣 0.6%");
+
+        // 下限：注入 5.1 后飞行 10 拍，钳在 5.0
+        sim.injectBattery("UAV-01", 5.1);
+        for (int i = 60; i < 70; i++) {
+            sim.pollOnce(i * 1_000L);
+        }
+        assertEquals(5.0, lastTelemetryOf("UAV-01").battery(), 0.1, "飞行中电量不得跌破 5% 下限");
     }
 
     @Test
@@ -185,19 +201,26 @@ class SimUavTelemetryConnectorTest {
     }
 
     @Test
-    @DisplayName("低电量注入一步到位，此后仍按拍递减")
-    void batteryInjectionAppliesImmediatelyAndKeepsDraining() {
+    @DisplayName("低电量注入一步到位：在巢保持不动，飞行后继续按拍递减")
+    void batteryInjectionAppliesImmediatelyAndDrainsOnlyInFlight() {
         sim.injectBattery("UAV-02", 15.0);
 
-        // 首拍：15 - 0.02 = 14.98，按 0.1 精度上报仍是 15.0
+        // 首拍：在巢不扣电，电量应停在注入值
         sim.pollOnce(1_000L);
         assertEquals(15.0, lastTelemetryOf("UAV-02").battery(), 0.1, "注入后首帧即应落在 15% 附近");
 
+        // 在巢：不扣电
         for (int i = 1; i <= 10; i++) {
             sim.pollOnce(1_000L + i * 1_000L);
         }
-        double afterTen = lastTelemetryOf("UAV-02").battery();
-        assertEquals(14.8, afterTen, 0.1, "电量应继续按每拍 0.02% 递减");
+        assertEquals(15.0, lastTelemetryOf("UAV-02").battery(), 0.1, "在巢不扣电，10 拍后电量停在 15%");
+
+        // 飞行：UAV-02 有了航迹源，恢复每拍扣 0.02%
+        sim.setFlightPlan(flightPlanFor("UAV-02"));
+        for (int i = 11; i <= 20; i++) {
+            sim.pollOnce(1_000L + i * 1_000L);
+        }
+        assertEquals(14.8, lastTelemetryOf("UAV-02").battery(), 0.1, "飞行 10 拍后应扣到 14.8%");
     }
 
     @Test
@@ -247,6 +270,19 @@ class SimUavTelemetryConnectorTest {
         assertEquals(0.0, all.get(0).targetDeviationM(), 1e-9);
         assertEquals(18.0, all.get(3).batteryPercent(), 1e-9);
         assertTrue(all.get(0).targetDeviationM() == 0.0, "未注入的机不应显示偏航生效");
+    }
+
+    /** 固定给一架机返回「在飞」航迹点的假航迹源，用来验证飞行才扣电的分支。 */
+    private static SimUavFlightPlan flightPlanFor(String uavId) {
+        return new SimUavFlightPlan(null, null) {
+            @Override
+            public synchronized Map<String, SimUavFlightPlan.Fix> fixes(
+                    long nowMs, Map<String, SimUavFlightPlan.Home> homes, double speedMs) {
+                Map<String, SimUavFlightPlan.Fix> result = new HashMap<>();
+                result.put(uavId, new SimUavFlightPlan.Fix(115.8600000, 28.6600000, 90.0));
+                return result;
+            }
+        };
     }
 
     /** 与 {@link #sim} 同步起跑、不注入的对照组：两台的相位与噪声分布一致，可直接逐拍比对。 */
