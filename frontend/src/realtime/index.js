@@ -5,6 +5,10 @@ import { droneIdForOrder, normalizeReplayTasks } from '../replay/model'
 import { SCENES } from './mock'
 import { useShipStore, useDroneStore, useAlertStore, useEventStore, useOrderStore, usePlanTrackStore, useWeatherStore } from '../stores'
 
+// 帧到达记账：按帧类型记最后到达时刻、累计条数与最近五秒的到达时间戳。
+// 运行总览的通道面板据此判断「这类帧还在不在来」，不复用业务数据，避免把过期的位置当现在的。
+export const channelStats = reactive({})
+
 export function createRealtime() {
   const ship = useShipStore(), drone = useDroneStore(), alert = useAlertStore(), events = useEventStore(), orders = useOrderStore()
   const planTrack = usePlanTrackStore()
@@ -34,6 +38,11 @@ export function createRealtime() {
     }
     else return
     if (!replay && status.mode === 'live') { const frame = { type, data, receivedAt: Date.now() }; recording.push(frame); for (const fn of listeners) fn(frame) }
+    const stat = channelStats[type] || (channelStats[type] = { at: 0, total: 0, times: [] })
+    stat.at = Date.now()
+    stat.total++
+    stat.times.push(stat.at)
+    while (stat.times.length && stat.at - stat.times[0] > 5000) stat.times.shift()
     if (type === 'alarm' || type === 'order_state' || type === 'rendezvous') events.add(type, data)
   }
   const close = () => { generation++; priming = false; buffered = []; ws?.close(); sse?.close(); clearInterval(poll); clearTimeout(retry); clearInterval(scriptTimer); ws = null; sse = null; poll = null; retry = null; scriptTimer = null }
