@@ -204,8 +204,10 @@ public class SimUavTelemetryConnector implements DataSourceConnector {
             advanceOffset(i, nestLat, dtSec);
             lon += offtrackLonDeg[i];
             lat += offtrackLatDeg[i];
-            // 电量线性消耗（演示：每节拍 0.02%），下限 5
-            batteries[i] = Math.max(5.0, batteries[i] - 0.02);
+            // 电量只在飞行时消耗（演示：每节拍 0.02%），停在机巢的机不扣电，下限 5
+            if (fix != null) {
+                batteries[i] = Math.max(5.0, batteries[i] - 0.02);
+            }
 
             publisher.publishUavTelemetry(new UavTelemetry(
                     uavId(i),
